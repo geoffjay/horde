@@ -29,24 +29,26 @@ through `SpawnAgent` and `runAgent`. Until then, consider dropping the unused
 
 ### TUI path skips `Server.Run` graceful teardown
 
-`cmd/tui.go` calls `srv.Start()` but never `srv.Run()`, so the grace-period →
+~~`cmd/tui.go` calls `srv.Start()` but never `srv.Run()`, so the grace-period →
 `Kill()` fallback in `Server.Run` (`internal/server/server.go`) never executes
 on the TUI path. Teardown relies solely on the per-proc `ctx.Done()` goroutine
-in `SpawnAgent`, which sends SIGINT but never force-kills a wedged agent.
+in `SpawnAgent`, which sends SIGINT but never force-kills a wedged agent.~~
 
-**Task:** unify shutdown so both the `serve` and TUI paths run the same
-grace-period-then-kill teardown (e.g. extract a `Server.Shutdown` helper invoked
-from both, or run the server loop behind the TUI).
+**Resolved in Phase 2:** the TUI no longer starts or owns a server, so there
+is no TUI teardown path to unify. Agent teardown is solely `Server.Run`'s
+job on the `horde serve` path.
 
 ### Slave "connected" status is fake
 
-`connectLeader` (`internal/server/server.go`) sets `leaderOK = true`
+~~`connectLeader` (`internal/server/server.go`) sets `leaderOK = true`
 immediately with no real connection, and the TUI renders "leader connected" as
-truth.
+truth.~~
 
-**Task:** once the real health/registration RPC lands (Roadmap Phase 2),
-replace the placeholder; in the interim surface a "connecting…" state rather
-than reporting a connection that does not exist.
+**Resolved in Phase 2:** `connectLeader` now uses a real `leaderClient`
+(`internal/server/leaderclient.go`) that performs `POST /cluster/register`
+then loops on `GET /cluster/heartbeat`; `leaderOK` reflects the actual
+round-trip outcome. `TestStart_SlaveBecomesLeaderConnected` was rewritten
+against an `httptest` master stub.
 
 ## Robustness
 
@@ -62,12 +64,13 @@ instead of via `os.Exit` deep in the call graph.
 
 ### TUI never auto-refreshes
 
-`refreshAgents` (`internal/app/app.go`) fires once in `Init` and then only on
-the `r` key. When an agent subprocess exits it is removed from `procs`, but the
-view does not reflect it until the user refreshes manually.
+~~`refreshAgents` (`internal/app/app.go`) fires once in `Init` and then only
+on the `r` key. When an agent subprocess exits it is removed from `procs`, but
+the view does not reflect it until the user refreshes manually.~~
 
-**Task:** drive periodic refresh with a `tea.Tick`, or push an update message
-from the server when a proc exits.
+**Resolved in Phase 2:** the rewritten TUI (`internal/app/app.go`) polls the
+node API every 2 seconds via `tea.Tick` while connected, so agent
+lifecycle changes surface without manual refresh.
 
 ## Cleanup
 

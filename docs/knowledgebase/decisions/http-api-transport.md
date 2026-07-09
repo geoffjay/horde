@@ -46,9 +46,40 @@ which horde does not need.
 
 # Decision
 
-**HTTP/JSON for request/response, SSE for server→client streaming.** Use the
-stdlib (`net/http`, Go 1.22+ pattern routing) unless middleware composition
-later justifies a thin router like `chi`. API versioning under `/api/v1`.
+**HTTP/JSON for request/response, SSE for server→client streaming.** Use
+[chi](https://github.com/go-chi/chi) as a thin `net/http` router over the
+stdlib (`net/http`, Go 1.22+ pattern routing where chi does not). API
+versioning under `/api/v1`.
+
+## Router choice: chi over fiber / echo
+
+The transport decision originally leaned stdlib-only, leaving chi as a
+candidate "if middleware composition later justifies it." Phase 2 adopts
+chi up front. Why chi and not other popular routers:
+
+* **chi** is the thinnest option that stays `net/http`-native. Every chi
+  router is an `http.Handler` and every chi handler is an
+  `http.HandlerFunc`, so the slave's leader-client, the TUI client, and
+  `httptest`-based handler tests all reuse the same handlers with zero
+  adapter glue. Middleware composition (request id, recoverer, logging)
+  is composable without importing a framework.
+* **Fiber** is built on `fasthttp`, not `net/http`. It does not implement
+  the `http.Handler`/`http.HandlerFunc` interface, so handlers could not
+  be shared between the server, the slave leader-client, and tests. It is
+  also optimized for fast short-lived request/response at the expense of
+  long-lived streaming connections — the opposite of what SSE with
+  `Last-Event-ID` resume needs — and lacks HTTP/2. Fiber opts out of the
+  "curl-able, low client burden, broad tooling" ecosystem this decision is
+  built on.
+* **Echo** is a full framework with its own `echo.Context`,
+  `echo.HandlerFunc`, binding, and middleware signatures — more than the
+  "thin router" the plan asked for. It would import its own opinions at
+  the adapter layer for no ergonomics win over chi for a small, curl-able
+  surface under `/api/v1`.
+
+The escape hatch is intact: because chi is `net/http`-native, migrating any
+single route to a raw `http.HandlerFunc` (or to stdlib 1.22+ pattern
+routing) is a local change, not an architectural one.
 
 ## Pub/sub: in-process event bus, no broker
 

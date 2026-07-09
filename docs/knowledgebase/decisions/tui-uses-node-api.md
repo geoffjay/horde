@@ -28,15 +28,16 @@ in-process shortcut into `Server` methods for the co-located case.
   and keeps the TUI identical whether it talks to a local master or a remote
   node.
 * `Server` stays the node core; the TUI never imports `internal/server`
-  directly. This keeps the [architecture](/docs/knowledgebase/concepts/architecture.md)
-  clean — `internal/api` is the only adapter calling into the server.
+  directly. `internal/client` is the TUI's only adapter into the node API,
+  and `internal/api` is the only adapter calling into the server.
 * The TUI gains remote-node support for free once it speaks the API: pointing
   it at a remote `server.leader` is a config change, not a new code path.
-* The TUI must start (or attach to) a node before it can do anything useful.
-  For the default `horde` invocation this means spawning a local node — likely
-  via the existing `daemonize` path or a lightweight in-process spawn that
-  still binds the API port — rather than constructing a `Server` directly. The
-  spawn mechanism is an implementation detail of the TUI startup, not a new
-  surface.
-* The current in-process node startup in `internal/app/app.go` is superseded
-  and will be replaced during Phase 2 implementation.
+* **The TUI does not start a node.** It probes
+  `GET /api/v1/health` at the configured `host:port` on startup. If no node
+  is reachable it shows a 60-second retry countdown (with an `[r] retry now`
+  key) and never spawns a node in-process. The operator is expected to run
+  `horde serve` separately; the TUI is purely a client.
+* The in-process node startup that shipped in Phase 1
+  (`internal/app/app.go` constructing a `*server.Server`, `WithCancel`, and
+  `cmd/tui.go` calling `srv.Start`) was removed in Phase 2 and replaced with
+  the client + retry UI described above.

@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
+	"github.com/geoffjay/horde/internal/api"
 	"github.com/geoffjay/horde/internal/config"
 	"github.com/geoffjay/horde/internal/server"
 )
@@ -62,10 +64,17 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		AgentCommand:      cfg.Server.AgentCommand,
 		Leader:            cfg.Server.Leader,
 		SpawnDefaultAgent: true,
+		Port:              cfg.Server.Port,
+		ReadTimeout:       time.Duration(cfg.Server.ReadTimeout) * time.Second,
+		WriteTimeout:      time.Duration(cfg.Server.WriteTimeout) * time.Second,
+		IdleTimeout:       time.Duration(cfg.Server.IdleTimeout) * time.Second,
+		NodeID:            cfg.Cluster.NodeID,
 	})
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
 	}
+
+	srv.SetRouter(api.Router(srv, srv.EventBus()))
 
 	return srv.Run(ctx)
 }

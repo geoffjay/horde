@@ -12,10 +12,12 @@ import (
 
 	"github.com/geoffjay/horde/internal/app"
 	"github.com/geoffjay/horde/internal/config"
-	"github.com/geoffjay/horde/internal/server"
 )
 
 // runTUI is the default action when `horde` is invoked with no subcommand.
+// It launches the TUI as a pure client of the node API: it does not start a
+// node. If no node is reachable at the configured host:port the TUI shows a
+// 60-second retry countdown (with an immediate-retry key).
 func runTUI(_ *cobra.Command, _ []string) error {
 	cfg := config.Get()
 	setupLogging(cfg)
@@ -23,26 +25,9 @@ func runTUI(_ *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv, err := server.New(server.Config{
-		Mode:              server.Mode(cfg.Mode),
-		SpawnDefaultAgent: true,
-	})
-	if err != nil {
-		return fmt.Errorf("create server: %w", err)
-	}
-
-	// Allow the TUI to stop the server it manages.
-	tuiCtx := app.WithCancel(ctx, func() {
-		stop()
-	})
-
-	// Start the server in-process so the TUI can interact with it.
-	if err := srv.Start(tuiCtx); err != nil {
-		return fmt.Errorf("start server: %w", err)
-	}
-
-	logrus.Info("launching horde TUI")
-	return app.Run(tuiCtx, srv)
+	addr := fmt.Sprintf("localhost:%d", cfg.Server.Port)
+	logrus.WithField("addr", addr).Info("launching horde TUI")
+	return app.Run(ctx, addr)
 }
 
 // setupLogging configures the global logrus logger from the app config.

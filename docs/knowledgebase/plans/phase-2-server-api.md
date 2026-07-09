@@ -183,12 +183,13 @@ for the register/heartbeat payloads.
 
 # Open follow-ups (not blocking)
 
-* Stdlib `net/http` mux vs a thin router like `chi` — lean stdlib (Go 1.22+
-  pattern routing gives `GET /api/v1/agents/{id}` for free, and horde is on
-  1.26) unless middleware composition later justifies `chi`.
-* TUI node startup mechanism — the TUI must start (or attach to) a node before
-  it can do anything (see the [TUI decision](/docs/knowledgebase/decisions/tui-uses-node-api.md)).
-  Likely the existing `daemonize` path or a lightweight in-process spawn that
-  still binds the API port; to be settled when wiring the TUI end.
-* `docs/environment.md` still carries a note that the node "does not yet expose
-  a real API transport" — remove that note once the listener ships.
+* ~~Stdlib `net/http` mux vs a thin router like `chi`~~ — **resolved:** chi
+  adopted up front (see the [transport decision](/docs/knowledgebase/decisions/http-api-transport.md)
+  for the chi-vs-fiber-vs-echo rationale).
+* ~~TUI node startup mechanism~~ — **resolved:** the TUI does *not* start a
+  node. It is a pure API client (`internal/client`) that probes
+  `GET /api/v1/health` at the configured `host:port`; on failure it shows a
+  60-second retry countdown (with an immediate-retry key) and never spawns
+  a node in-process (see the [TUI decision](/docs/knowledgebase/decisions/tui-uses-node-api.md)).
+* ~~`docs/environment.md` "does not yet expose a real API transport" note~~
+  — **resolved:** the listener ships in Phase 2; the note is removed.

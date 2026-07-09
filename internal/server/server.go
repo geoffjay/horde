@@ -18,6 +18,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"sync"
@@ -52,6 +53,17 @@ type Config struct {
 	// SpawnDefaultAgent controls whether Start spawns the default greeter
 	// agent. Tests set this to false to avoid spawning real subprocesses.
 	SpawnDefaultAgent bool
+	// Port is the TCP port the node API listens on. Defaults to
+	// defaultServerPort when zero.
+	Port int
+	// ReadTimeout, WriteTimeout, IdleTimeout are the API server timeouts in
+	// seconds. Zero means use the stdlib default (no timeout).
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+	IdleTimeout  time.Duration
+	// NodeID is the unique identifier for this node within the cluster. When
+	// empty a generated id is used. Populated from cluster.node_id.
+	NodeID string
 }
 
 // Server is the horde node. It owns a set of agent subprocesses and, when
@@ -65,12 +77,29 @@ type Server struct {
 	nextID   int
 	running  bool
 	leaderOK bool
+	slaves   map[string]knownSlave
+	bus      *EventBus
+	router   http.Handler
 }
+
+// AgentState is the lifecycle state of a spawned agent subprocess.
+type AgentState string
+
+const (
+	// AgentRunning is the state of a healthy, running agent.
+	AgentRunning AgentState = "running"
+	// AgentExiting is the state of an agent that has been signaled to stop
+	// but has not yet exited.
+	AgentExiting AgentState = "exiting"
+	// AgentExited is the state of an agent whose process has terminated.
+	AgentExited AgentState = "exited"
+)
 
 // agentProc tracks one spawned agent subprocess.
 type agentProc struct {
 	id     string
 	name   string
+	state  AgentState
 	cmd    *exec.Cmd
 	doneCh chan struct{}
 }
@@ -82,10 +111,15 @@ const (
 	// agentShutdownGrace is how long we wait for an agent subprocess to exit
 	// after signaling it before force-killing.
 	agentShutdownGrace = 5 * time.Second
+	// defaultServerPort is the default TCP port for the node API listener.
+	defaultServerPort = 13420
 )
 
-// New constructs a Server for the given mode.
-func New(cfg Config) (*Server, error) {
+// New constructs a Server for the given mode. Config is a value-type config
+// bag passed once at construction; New copies the fields it needs into
+// Server.cfg, so taking a pointer would force every caller to allocate a
+// local for no real benefit.
+func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 	if cfg.Mode == "" {
 		cfg.Mode = ModeMaster
 	}
@@ -97,9 +131,13 @@ func New(cfg Config) (*Server, error) {
 	if cfg.AgentCommand == "" {
 		cfg.AgentCommand = defaultAgentCommand()
 	}
+	if cfg.Port == 0 {
+		cfg.Port = defaultServerPort
+	}
 	return &Server{
 		cfg:   cfg,
 		procs: make(map[string]*agentProc),
+		bus:   NewEventBus(),
 	}, nil
 }
 
@@ -135,32 +173,61 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-// connectLeader attempts to reach the configured master node. This is a
-// placeholder for the real cluster transport (next phase): it retries in the
-// background and records connectivity status without blocking local work.
+// connectLeader attempts to reach the configured master node over the
+// cluster API: it registers, then heartbeats on a ticker. It records
+// connectivity status (leaderOK) without blocking local work. On failure
+// it retries on the next tick.
 func (s *Server) connectLeader(ctx context.Context) {
 	if s.cfg.Leader == "" {
 		logrus.Warn("slave mode without a configured leader; running standalone")
 		return
 	}
 
+	client := newLeaderClient(s.cfg.Leader, s.cfg.NodeID, s.localAddr())
+
+	// First registration: try immediately, then loop on the ticker.
+	if leaderID, err := client.register(ctx); err != nil {
+		logrus.WithError(err).WithField("leader", s.cfg.Leader).Warn("leader register failed")
+	} else {
+		s.mu.Lock()
+		s.leaderOK = true
+		s.mu.Unlock()
+		logrus.WithFields(logrus.Fields{"leader": s.cfg.Leader, "leader_id": leaderID}).Info("registered with leader")
+	}
+
 	ticker := time.NewTicker(leaderReconnectInterval)
 	defer ticker.Stop()
 
 	for {
-		// TODO: replace with a real health/registration RPC against the
-		// leader. For now we just mark connectivity as attempted.
-		logrus.WithField("leader", s.cfg.Leader).Debug("attempting leader connection")
-		s.mu.Lock()
-		s.leaderOK = true
-		s.mu.Unlock()
-
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if !s.leaderOK {
+				if _, err := client.register(ctx); err != nil {
+					logrus.WithError(err).WithField("leader", s.cfg.Leader).Debug("leader register retry failed")
+					continue
+				}
+				s.mu.Lock()
+				s.leaderOK = true
+				s.mu.Unlock()
+				logrus.WithField("leader", s.cfg.Leader).Info("registered with leader")
+			}
+			if err := client.heartbeat(ctx); err != nil {
+				logrus.WithError(err).WithField("leader", s.cfg.Leader).Debug("heartbeat failed")
+				s.mu.Lock()
+				s.leaderOK = false
+				s.mu.Unlock()
+			}
 		}
 	}
+}
+
+// localAddr returns this slave's reachable address for the register
+// payload. In this first version it derives from the configured leader
+// plus the node's port; a real advertised address is a follow-up.
+func (s *Server) localAddr() string {
+	return fmt.Sprintf(":%d", s.cfg.Port)
 }
 
 // SpawnAgent starts a subprocess for the named agent and registers it. The
@@ -196,6 +263,7 @@ func (s *Server) SpawnAgent(ctx context.Context, name string) (string, error) {
 	proc := &agentProc{
 		id:     id,
 		name:   name,
+		state:  AgentRunning,
 		cmd:    cmd,
 		doneCh: make(chan struct{}),
 	}
@@ -208,10 +276,13 @@ func (s *Server) SpawnAgent(ctx context.Context, name string) (string, error) {
 
 	go func() {
 		_ = cmd.Wait()
-		close(proc.doneCh)
 		s.mu.Lock()
+		if p, ok := s.procs[id]; ok {
+			p.state = AgentExited
+		}
 		delete(s.procs, id)
 		s.mu.Unlock()
+		close(proc.doneCh)
 		logrus.WithField("id", id).Info("agent exited")
 	}()
 
@@ -235,15 +306,42 @@ func (s *Server) Agents() []AgentInfo {
 	defer s.mu.Unlock()
 	out := make([]AgentInfo, 0, len(s.procs))
 	for _, p := range s.procs {
-		out = append(out, AgentInfo{ID: p.id, Name: p.name})
+		out = append(out, AgentInfo{ID: p.id, Name: p.name, Status: p.state})
 	}
 	return out
 }
 
 // AgentInfo describes a running agent.
 type AgentInfo struct {
-	ID   string
-	Name string
+	ID     string
+	Name   string
+	Status AgentState
+}
+
+// StopAgent signals one agent by id to stop, mirroring Run's shutdown path:
+// SIGTERM, then SIGKILL after agentShutdownGrace. It returns an error if the
+// id is unknown or the agent has already exited.
+func (s *Server) StopAgent(id string) error {
+	s.mu.Lock()
+	p, ok := s.procs[id]
+	if !ok {
+		s.mu.Unlock()
+		return fmt.Errorf("agent %q not found", id)
+	}
+	p.state = AgentExiting
+	s.mu.Unlock()
+
+	if p.cmd.Process != nil {
+		_ = p.cmd.Process.Signal(os.Interrupt)
+	}
+	select {
+	case <-p.doneCh:
+	case <-time.After(agentShutdownGrace):
+		if p.cmd.Process != nil {
+			_ = p.cmd.Process.Kill()
+		}
+	}
+	return nil
 }
 
 // LeaderConnected reports whether the slave's leader connection is currently
@@ -260,15 +358,95 @@ func (s *Server) LeaderConnected() bool {
 // Mode returns the node's configured role.
 func (s *Server) Mode() Mode { return s.cfg.Mode }
 
+// Port returns the TCP port the node API listens on.
+func (s *Server) Port() int { return s.cfg.Port }
+
+// NodeID returns the node's cluster identifier.
+func (s *Server) NodeID() string { return s.cfg.NodeID }
+
+// EventBus returns the node's in-process event bus, used by SSE handlers
+// to stream agent invocation events to clients.
+func (s *Server) EventBus() *EventBus { return s.bus }
+
+// SetRouter injects the HTTP handler for the node API. When set before Run,
+// Run starts an http.Server on the configured Port serving this handler.
+// Injected by the caller (cmd) via api.Router to avoid an internal/api →
+// internal/server import cycle.
+func (s *Server) SetRouter(h http.Handler) { s.router = h }
+
+// knownSlave tracks a slave that has registered with this master.
+type knownSlave struct {
+	addr string
+}
+
+// RegisterSlave records a slave's registration with this master. Only
+// meaningful in master mode; in slave mode it is a no-op.
+func (s *Server) RegisterSlave(nodeID, addr string) {
+	if s.cfg.Mode != ModeMaster {
+		return
+	}
+	s.mu.Lock()
+	if s.slaves == nil {
+		s.slaves = make(map[string]knownSlave)
+	}
+	s.slaves[nodeID] = knownSlave{addr: addr}
+	s.mu.Unlock()
+	logrus.WithFields(logrus.Fields{"slave": nodeID, "addr": addr}).Debug("slave registered")
+}
+
+// Heartbeat records a heartbeat from a slave and returns the leader's node
+// id and connectivity status. Only meaningful in master mode.
+func (s *Server) Heartbeat(nodeID string) (string, bool) {
+	if s.cfg.Mode != ModeMaster {
+		return "", false
+	}
+	s.mu.Lock()
+	if _, ok := s.slaves[nodeID]; !ok {
+		s.slaves[nodeID] = knownSlave{}
+	}
+	s.mu.Unlock()
+	return s.cfg.NodeID, true
+}
+
 // Run blocks until ctx is canceled, keeping the server alive. It is the
 // main loop of `horde serve`.
+//
+// If a Router is set, Run starts an http.Server on the configured Port
+// before blocking, and shuts it down on context cancel. The Router is
+// injected (rather than Server importing internal/api) to keep the
+// dependency direction clean: internal/api → internal/server, never the
+// reverse.
 func (s *Server) Run(ctx context.Context) error {
 	if err := s.Start(ctx); err != nil {
 		return err
 	}
 
+	var httpServer *http.Server
+	if s.router != nil {
+		addr := fmt.Sprintf(":%d", s.cfg.Port)
+		httpServer = &http.Server{
+			Addr:         addr,
+			Handler:      s.router,
+			ReadTimeout:  s.cfg.ReadTimeout,
+			WriteTimeout: s.cfg.WriteTimeout,
+			IdleTimeout:  s.cfg.IdleTimeout,
+		}
+		go func() {
+			logrus.WithField("addr", addr).Info("node API listening")
+			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logrus.WithError(err).Error("node API listener failed")
+			}
+		}()
+	}
+
 	<-ctx.Done()
 	logrus.Info("horde node shutting down")
+
+	if httpServer != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), agentShutdownGrace)
+		defer cancel()
+		_ = httpServer.Shutdown(shutdownCtx)
+	}
 
 	// Tear down any remaining agent subprocesses.
 	s.mu.Lock()

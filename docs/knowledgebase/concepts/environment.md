@@ -23,7 +23,7 @@ idea.
 
 * `horde serve` — the node (master or slave).
 * `horde agent` — hidden; hosts one ADK agent per subprocess.
-* `horde` — the TUI; starts an in-process node.
+* `horde` — the TUI; a pure client of the node API (does not start a node).
 
 # Integration environment
 

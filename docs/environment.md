@@ -11,9 +11,8 @@ date as the project evolves.
 | 13420 | horde node API | inbound (HTTP)  | Default node API port (`server.port`).       |
 | 13500 | horde test API | inbound (HTTP)  | Used in test fixtures (`testdata/valid.*`).  |
 
-> The node does not yet expose a real API transport (the listener is a stub
-> for a later phase). The ports above are reserved and configured so the
-> integration environment and clients can target them once the API lands.
+The node API listener ships in Phase 2 (`internal/api`, chi over `net/http`).
+`horde serve` binds `server.port`; the TUI connects to it as a client.
 
 ## Configuration
 
@@ -64,8 +63,10 @@ the node; not intended to be invoked directly.
 
 ### horde TUI (`horde`)
 
-The terminal interface. Starts an in-process node (master mode) and
-interacts with it locally.
+The terminal interface. A pure client of the node API: it probes
+`GET /api/v1/health` at `localhost:<server.port>` and shows a 60-second
+retry countdown (with an immediate-retry key) when no node is reachable.
+It does not start a node.
 
 ## Integration environment (Docker)
 
