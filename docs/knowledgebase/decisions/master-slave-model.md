@@ -26,5 +26,7 @@ The relationship is largely invisible to the user on each system.
 
 The `--mode` flag and the `mode` config key select the role. Slaves without a
 configured leader run standalone with a warning. The real cluster transport
-(health, registration) is a stub for a later phase (see the
-[roadmap](/docs/knowledgebase/plans/roadmap.md)).
+(health, registration) is being built in Phase 2 over the
+[HTTP + SSE API](http-api-transport.md) — see the
+[Phase 2 plan](/docs/knowledgebase/plans/phase-2-server-api.md) for the
+slave↔master contract.

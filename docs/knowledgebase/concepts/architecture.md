@@ -30,15 +30,24 @@ The binary hosts its own agents as subprocesses of itself via the hidden
 
 # Surfaces
 
-* `horde` — the TUI, the primary interface. Starts an in-process node.
+* `horde` — the TUI, the primary interface. Today it starts an in-process
+  node; Phase 2 replaces that so the TUI talks to a node over the API instead
+  (see [TUI consumes the node API](/docs/knowledgebase/decisions/tui-uses-node-api.md)).
 * `horde serve` — the node server. `--daemonize` detaches it.
 * `horde agent` — hidden; one ADK agent per process, invoked by the server.
 
 # API transport
 
-The node exposes an API for communication with clients (the TUI and other
-consumers). The exact transport is intentionally a stub for a later phase
-(see the [roadmap](/docs/knowledgebase/plans/roadmap.md)).
+The node exposes an HTTP/JSON API (with SSE for streaming) for communication
+with clients (the TUI and other consumers). The transport choice is recorded
+in [HTTP + SSE for the node API transport](/docs/knowledgebase/decisions/http-api-transport.md);
+the detailed surface is in the [Phase 2 plan](/docs/knowledgebase/plans/phase-2-server-api.md).
+The TUI always consumes this API (see
+[TUI consumes the node API](/docs/knowledgebase/decisions/tui-uses-node-api.md)).
+
+Implementation of the listener is in progress as of Phase 2; until it ships,
+`Server.Run` still blocks on `<-ctx.Done()` with no listener, and the ports in
+[environment.md](/environment.md) are reserved-but-unbound.
 
 # Citations
 

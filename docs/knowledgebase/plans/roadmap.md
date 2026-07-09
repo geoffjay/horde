@@ -21,9 +21,16 @@ timestamp: 2026-07-08T00:00:00Z
 
 # Phase 2 — Server API
 
+Detailed plan: [Phase 2 — Server API](phase-2-server-api.md).
+
 * Implement the node API transport (the stub currently in `Server.Run`).
 * Define the API surface for TUI ↔ server and slave ↔ master.
 * Real leader connection / health / registration.
+
+Decisions underpinning this phase:
+
+* [HTTP + SSE transport](/docs/knowledgebase/decisions/http-api-transport.md)
+* [TUI consumes the node API](/docs/knowledgebase/decisions/tui-uses-node-api.md)
 
 # Phase 3 — Agents
 
