@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/geoffjay/horde/internal/server"
 )
 
 // nodeInfo is the GET /api/v1/node response.
@@ -51,11 +53,15 @@ func getReady(srv nodeView) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		leader := "ok"
 		status := "ready"
-		if srv.Mode() == "slave" && !srv.LeaderConnected() {
+		code := http.StatusOK
+		if srv.Mode() == server.ModeSlave && !srv.LeaderConnected() {
 			leader = "degraded"
 			status = "degraded"
+			// 503 so orchestrators that gate on HTTP status (k8s readiness
+			// probes, load balancers) pull a leaderless slave from rotation.
+			code = http.StatusServiceUnavailable
 		}
-		writeJSON(w, http.StatusOK, readyResponse{Status: status, Leader: leader})
+		writeJSON(w, code, readyResponse{Status: status, Leader: leader})
 	}
 }
 

@@ -53,7 +53,25 @@ always consumes this API (see
 TUI and reusable by the slave leader-client. `Server.Run` starts an
 `http.Server` on `server.port` (using an injected `http.Handler` to keep the
 `internal/api` → `internal/server` dependency direction clean) and serves
-until ctx canceled.
+until ctx canceled. A fatal listener error (e.g. the port is already in use)
+propagates out of `Run` rather than being logged and swallowed, so a node
+never stays up with a dead API.
+
+# Cluster & readiness
+
+A slave registers with its master (`POST /api/v1/cluster/register`) and then
+heartbeats on a ticker (`GET /api/v1/cluster/heartbeat`); the master tracks
+registered slaves in an in-memory registry initialized at construction, so a
+heartbeat that arrives before any register — e.g. after a master restart while
+a slave still believes it is connected — is handled without panicking and
+self-heals on the next register.
+
+Readiness reflects this: `GET /api/v1/ready` returns 200 for a master (always
+ready) and for a connected slave, but **503** for a slave whose leader
+connection is not established (`{status:"degraded", leader:"degraded"}`), so
+orchestrators that gate on HTTP status pull a leaderless slave from rotation.
+`GET /api/v1/health` remains a dumb liveness check (always 200 when the process
+is up).
 
 # Citations
 

@@ -17,6 +17,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -135,9 +136,10 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 		cfg.Port = defaultServerPort
 	}
 	return &Server{
-		cfg:   cfg,
-		procs: make(map[string]*agentProc),
-		bus:   NewEventBus(),
+		cfg:    cfg,
+		procs:  make(map[string]*agentProc),
+		slaves: make(map[string]knownSlave),
+		bus:    NewEventBus(),
 	}, nil
 }
 
@@ -386,9 +388,6 @@ func (s *Server) RegisterSlave(nodeID, addr string) {
 		return
 	}
 	s.mu.Lock()
-	if s.slaves == nil {
-		s.slaves = make(map[string]knownSlave)
-	}
 	s.slaves[nodeID] = knownSlave{addr: addr}
 	s.mu.Unlock()
 	logrus.WithFields(logrus.Fields{"slave": nodeID, "addr": addr}).Debug("slave registered")
@@ -422,6 +421,11 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	var httpServer *http.Server
+	// serveErr carries a fatal listener error (e.g. the port is already in
+	// use) out of the background goroutine so Run can fail loudly instead of
+	// staying up with a dead API. http.ErrServerClosed from Shutdown is not
+	// sent here.
+	serveErr := make(chan error, 1)
 	if s.router != nil {
 		addr := fmt.Sprintf(":%d", s.cfg.Port)
 		httpServer = &http.Server{
@@ -433,13 +437,20 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		go func() {
 			logrus.WithField("addr", addr).Info("node API listening")
-			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				logrus.WithError(err).Error("node API listener failed")
+				serveErr <- err
 			}
 		}()
 	}
 
-	<-ctx.Done()
+	var runErr error
+	select {
+	case <-ctx.Done():
+		runErr = ctx.Err()
+	case err := <-serveErr:
+		runErr = fmt.Errorf("node API listener: %w", err)
+	}
 	logrus.Info("horde node shutting down")
 
 	if httpServer != nil {
@@ -468,7 +479,7 @@ func (s *Server) Run(ctx context.Context) error {
 			}
 		}
 	}
-	return ctx.Err()
+	return runErr
 }
 
 // defaultAgentCommand returns the path of the current executable, so the

@@ -95,6 +95,20 @@ func TestStart_SlaveBecomesLeaderConnected(t *testing.T) {
 	require.Eventually(t, func() bool { return heartbeats.Load() > 0 }, 10*time.Second, 50*time.Millisecond)
 }
 
+func TestHeartbeat_BeforeRegister(t *testing.T) {
+	// A master may receive a heartbeat before any register — e.g. after a
+	// restart while a slave still believes it is connected. This must not
+	// panic on the (previously nil) slaves map.
+	srv, err := New(Config{Mode: ModeMaster, NodeID: "master-1"})
+	require.NoError(t, err)
+
+	assert.NotPanics(t, func() {
+		leaderID, ok := srv.Heartbeat("slave-x")
+		assert.True(t, ok)
+		assert.Equal(t, "master-1", leaderID)
+	})
+}
+
 func TestStart_SlaveWithoutLeader(t *testing.T) {
 	srv, err := New(Config{Mode: ModeSlave})
 	require.NoError(t, err)

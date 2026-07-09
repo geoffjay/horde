@@ -79,6 +79,23 @@ func TestGetReady_Master(t *testing.T) {
 	assert.Equal(t, "ok", rr.Leader)
 }
 
+func TestGetReady_SlaveDegraded(t *testing.T) {
+	// A slave with no leader connection is not ready: /ready must report
+	// degraded AND return 503 so status-gating orchestrators pull it from
+	// rotation.
+	srv, err := server.New(server.Config{Mode: server.ModeSlave, SpawnDefaultAgent: false})
+	require.NoError(t, err)
+	require.NoError(t, srv.Start(context.Background()))
+	h := Router(srv, srv.EventBus())
+
+	w := do(t, h, http.MethodGet, "/api/v1/ready", nil)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	var rr readyResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&rr))
+	assert.Equal(t, "degraded", rr.Status)
+	assert.Equal(t, "degraded", rr.Leader)
+}
+
 func TestListAgents_Empty(t *testing.T) {
 	srv := newTestServer(t)
 	h := Router(srv, srv.EventBus())
