@@ -4,6 +4,7 @@
 package config
 
 import (
+	"fmt"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
@@ -60,6 +61,9 @@ const (
 	defaultServerReadTimeout  = 30
 	defaultServerWriteTimeout = 30
 	defaultServerIdleTimeout  = 120
+
+	// maxPort is the largest valid TCP port number.
+	maxPort = 65535
 )
 
 // defaults defines the default configuration values for horde.
@@ -95,10 +99,18 @@ func Load() error {
 	if current != nil {
 		return nil
 	}
+	return loadLocked()
+}
 
+// loadLocked loads, validates, and caches the configuration. The caller must
+// hold lock.
+func loadLocked() error {
 	c := &Config{}
 	if err := LoadConfigWithDefaults("horde", c, defaults); err != nil {
 		return err
+	}
+	if err := c.Validate(); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
 	}
 	current = c
 	return nil
@@ -107,22 +119,16 @@ func Load() error {
 // Get returns the application configuration singleton, loading it on first
 // use if Load was not called explicitly.
 func Get() *Config {
-	if current != nil {
-		return current
-	}
 	lock.Lock()
-	if current != nil {
-		lock.Unlock()
-		return current
+	if current == nil {
+		if err := loadLocked(); err != nil {
+			lock.Unlock()
+			log.Fatalf("error reading config file: %s\n", err)
+		}
 	}
-	c := &Config{}
-	if err := LoadConfigWithDefaults("horde", c, defaults); err != nil {
-		lock.Unlock()
-		log.Fatalf("error reading config file: %s\n", err)
-	}
-	current = c
+	c := current
 	lock.Unlock()
-	return current
+	return c
 }
 
 // Reset clears the cached configuration. Intended for tests.
@@ -132,8 +138,32 @@ func Reset() {
 	current = nil
 }
 
-// Validate validates the configuration settings.
+// Validate validates the configuration settings. It rejects an unknown node
+// mode, an out-of-range server port, and negative timeouts.
+//
+// A slave without a configured leader is intentionally allowed: the server
+// treats that as a standalone slave (see server.connectLeader), so it is a
+// warning at runtime rather than a validation error here.
 func (c *Config) Validate() error {
-	// TODO: validate mode is master|slave, port ranges, leader set in slave.
+	switch c.Mode {
+	case "master", "slave":
+	default:
+		return fmt.Errorf("invalid mode %q: want master or slave", c.Mode)
+	}
+
+	if c.Server.Port < 1 || c.Server.Port > maxPort {
+		return fmt.Errorf("server.port %d out of range 1-%d", c.Server.Port, maxPort)
+	}
+
+	for name, v := range map[string]int{
+		"server.read_timeout":  c.Server.ReadTimeout,
+		"server.write_timeout": c.Server.WriteTimeout,
+		"server.idle_timeout":  c.Server.IdleTimeout,
+	} {
+		if v < 0 {
+			return fmt.Errorf("%s must not be negative, got %d", name, v)
+		}
+	}
+
 	return nil
 }

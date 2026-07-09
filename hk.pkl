@@ -2,6 +2,11 @@ amends "package://github.com/jdx/hk/releases/download/v1.48.0/hk@1.48.0#/Config.
 import "package://github.com/jdx/hk/releases/download/v1.48.0/hk@1.48.0#/Builtins.pkl"
 
 local linters = new Mapping<String, Step> {
+  // prevent hk changes from braking things
+  ["pkl"] = Builtins.pkl
+  ["hk test"] = Builtins.hk_test
+
+  // common go linters and checks
   ["go-fmt"] = Builtins.go_fmt
   ["go-fumpt"] = Builtins.go_fumpt
   ["go-imports"] = Builtins.go_imports
@@ -9,6 +14,9 @@ local linters = new Mapping<String, Step> {
   ["go-vet"] = Builtins.go_vet
   ["golangci-lint"] = Builtins.golangci_lint
   ["gomod-tidy"] = Builtins.gomod_tidy
+
+  // cleanup
+  ["newlines"] = Builtins.newlines
 }
 
 hooks {

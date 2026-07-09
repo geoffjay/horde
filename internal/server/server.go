@@ -170,8 +170,10 @@ func (s *Server) SpawnAgent(ctx context.Context, name string) (string, error) {
 		return "", fmt.Errorf("verify agent %q: %w", name, err)
 	}
 
+	s.mu.Lock()
 	id := fmt.Sprintf("agent-%d-%d", s.nextID, time.Now().UnixNano())
 	s.nextID++
+	s.mu.Unlock()
 
 	cmdCtx, cancel := context.WithCancel(context.Background())
 	args := []string{"agent", "--name", name}

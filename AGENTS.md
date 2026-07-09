@@ -48,3 +48,10 @@ Required order when changing code: fmt → vet → lint → test → build. The 
 ## Knowledge base
 
 `docs/knowledgebase/` conforms to [OKF v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md). Concept docs require YAML frontmatter with a `type` field; `index.md`/`log.md` are reserved. Update `docs/environment.md` (ports/env vars) and the knowledge base when adding config keys or services.
+
+**Consult/update policy for agents** lives in `docs/knowledgebase/index.md` ("For agents (policy)") — that file is the single source of truth. It is injected into context automatically so it does not depend on this file being read:
+
+- **Claude Code:** `.claude/hooks/kb-inject.py` (a `SessionStart` hook) injects the KB index every session; `.claude/hooks/kb-reminder.py` nudges on `PostToolUse` and, once per session, on `Stop` when KB-relevant files changed but the KB was not updated. Neither hard-blocks edits.
+- **opencode:** the `instructions` array in `.opencode/opencode.jsonc` lists `docs/knowledgebase/index.md`.
+
+Edit the policy in the index; the tooling picks it up from there.

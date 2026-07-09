@@ -115,6 +115,43 @@ func TestLoadConfig_RejectsUnsupportedExtension(t *testing.T) {
 }
 
 func TestConfig_Validate(t *testing.T) {
-	c := &Config{Mode: "master"}
-	assert.NoError(t, c.Validate())
+	valid := func() *Config {
+		return &Config{
+			Mode:   "master",
+			Server: ServerConfig{Port: defaultServerPort},
+		}
+	}
+
+	t.Run("valid master", func(t *testing.T) {
+		assert.NoError(t, valid().Validate())
+	})
+
+	t.Run("valid slave without leader", func(t *testing.T) {
+		c := valid()
+		c.Mode = "slave"
+		assert.NoError(t, c.Validate())
+	})
+
+	t.Run("unknown mode", func(t *testing.T) {
+		c := valid()
+		c.Mode = "bogus"
+		err := c.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid mode")
+	})
+
+	t.Run("port out of range", func(t *testing.T) {
+		c := valid()
+		c.Server.Port = 0
+		assert.Error(t, c.Validate())
+
+		c.Server.Port = 70000
+		assert.Error(t, c.Validate())
+	})
+
+	t.Run("negative timeout", func(t *testing.T) {
+		c := valid()
+		c.Server.ReadTimeout = -1
+		assert.Error(t, c.Validate())
+	})
 }
