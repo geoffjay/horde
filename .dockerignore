@@ -1,0 +1,16 @@
+# Exclude everything not needed for the Docker build from the image context.
+.opencode/
+.github/
+.git/
+docs/
+docker/
+*.md
+*.log
+horde
+bin/
+dist/
+tmp/
+.env
+.envrc
+hk.pkl
+Otterfile

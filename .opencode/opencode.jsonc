@@ -1,0 +1,40 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "glm-5.2:cloud",
+  "lsp": {
+    "markdown": {
+      "command": [
+        "markdown-oxide"
+      ],
+      "extensions": [
+        ".md"
+      ]
+    },
+  },
+  "mcp": {
+    "overmind": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "--from",
+        "git+https://github.com/geoffjay/mcp-servers#subdirectory=overmind",
+        "mcp-server-overmind"
+      ],
+      "enabled": true
+    },
+  },
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama (local)",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {
+        "glm-5.2:cloud": {
+          "name": "glm-5.2:cloud"
+        }
+      }
+    }
+  }
+}

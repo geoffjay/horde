@@ -1,0 +1,18 @@
+env = "testing"
+
+mode = "slave"
+
+[server]
+port = 13500
+leader = "master:13420"
+
+[cluster]
+node_id = "test-node"
+discovery_mechanism = "static"
+
+[log]
+formatter = "json"
+level = "debug"
+
+[service]
+id = "org.horde.Test"
