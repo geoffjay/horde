@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/signal"
 	"syscall"
@@ -76,5 +77,8 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	srv.SetRouter(api.Router(srv, srv.EventBus()))
 
-	return srv.Run(ctx)
+	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
 }

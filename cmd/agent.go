@@ -53,5 +53,7 @@ func runAgent(_ *cobra.Command, _ []string) error {
 	// will be driven by the server API in the next phase.
 	_ = a
 	<-ctx.Done()
-	return ctx.Err()
+	// A signal-driven shutdown (SIGINT/SIGTERM) is a normal exit, not an
+	// error; returning context.Canceled makes cobra print "Error: ...".
+	return nil
 }
