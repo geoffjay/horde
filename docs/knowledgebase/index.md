@@ -57,6 +57,7 @@ every edit.
 * [logrus for logging](decisions/logrus-for-logging.md) - logging library choice.
 * [Master/slave cluster model](decisions/master-slave-model.md) - distributed topology and its trade-offs.
 * [HTTP + SSE for the node API transport](decisions/http-api-transport.md) - HTTP/JSON + SSE over chi (net/http-native), in-process event bus now, brokerless messaging deferred to Phase 4.
+* [HTTP over unix domain sockets for agent invocation](decisions/agent-invocation-transport.md) - agent subprocess serves a local HTTP API on a unix socket; the node reverse-proxies invoke requests.
 * [The TUI consumes the node API](decisions/tui-uses-node-api.md) - the TUI always goes over the API; it does not start a node and retries with a 60s countdown.
 
 ## Patterns
@@ -70,6 +71,7 @@ every edit.
 
 * [Roadmap](plans/roadmap.md) - phasing of horde capabilities.
 * [Phase 2 — Server API](plans/phase-2-server-api.md) - node API transport, event streaming, slave↔master contract.
+* [Phase 3 — Agent mechanism](plans/phase-3-agents.md) - long-lived agent subprocesses invoked over HTTP on unix sockets, streaming, resume, agent registry.
 
 ## References
 
