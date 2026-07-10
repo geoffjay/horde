@@ -44,6 +44,10 @@ type Model struct {
 	node   client.NodeInfo
 	agents []client.Agent
 
+	// status line + command palette overlay
+	status      *StatusLine
+	paletteOpen bool
+
 	width    int
 	height   int
 	quitting bool
@@ -53,9 +57,10 @@ type Model struct {
 // addr (host:port).
 func New(ctx context.Context, addr string) *Model {
 	return &Model{
-		ctx:  ctx,
-		c:    client.New(addr),
-		node: client.NodeInfo{Mode: "unknown"},
+		ctx:    ctx,
+		c:      client.New(addr),
+		node:   client.NodeInfo{Mode: "unknown"},
+		status: DefaultStatusLine(),
 	}
 }
 
@@ -153,14 +158,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleKey dispatches key presses. "q"/ctrl+c quits, "r" refreshes when
-// connected or triggers an immediate retry when in the retry state.
+// handleKey dispatches key presses. "q"/ctrl+c quits, ctrl+p toggles the
+// command palette, esc closes it, and "r" refreshes when connected or triggers
+// an immediate retry when in the retry state.
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		m.quitting = true
 		return m, tea.Quit
+	case "ctrl+p":
+		m.paletteOpen = !m.paletteOpen
+		return m, nil
+	case "esc":
+		m.paletteOpen = false
+		return m, nil
 	case "r":
+		m.paletteOpen = false
 		if m.connected {
 			return m, m.loadNode
 		}
@@ -186,7 +199,39 @@ func (m *Model) View() tea.View {
 	if m.quitting {
 		return tea.NewView("Shutting down horde...\n")
 	}
-	return tea.NewView(m.fill(m.renderBody(), m.footerHelp()))
+
+	background := m.fill(m.renderBody(), m.status.Render(m, m.width))
+	if !m.paletteOpen {
+		return tea.NewView(background)
+	}
+
+	// Palette overlay: dim the whole background (it was rendered plain — see
+	// paint) and composite the command dialog centered on top of it.
+	dimmed := lipgloss.NewStyle().Faint(true).Foreground(dimColor).Render(background)
+	dialog := m.renderPalette()
+	x, y := m.paletteOffset(dialog)
+	comp := lipgloss.NewCompositor(
+		lipgloss.NewLayer(dimmed),
+		lipgloss.NewLayer(dialog).X(x).Y(y).Z(1),
+	)
+	return tea.NewView(comp.Render())
+}
+
+// dimColor is the foreground applied to the whole background while the command
+// palette overlay is open.
+var dimColor = lipgloss.Color("240")
+
+// paint applies a style's render function to s, except while the command
+// palette overlay is open, when it returns s unstyled. This lets View dim the
+// entire background with a single faint wrapper: because the background carries
+// no inner color/reset escapes, the wrapper applies uniformly. Callers pass a
+// style's bound Render method (e.g. someStyle.Render) so the heavy Style struct
+// is not copied by value.
+func (m *Model) paint(render func(...string) string, s string) string {
+	if m.paletteOpen {
+		return s
+	}
+	return render(s)
 }
 
 // fill lays out the view so it occupies the full terminal height: the body is
@@ -209,7 +254,7 @@ func (m *Model) fill(body, footer string) string {
 // title plus either the retry panel or the connected node/agents view.
 func (m *Model) renderBody() string {
 	var b strings.Builder
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).Render("horde")
+	title := m.paint(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).Render, "horde")
 	b.WriteString(title + "\n\n")
 
 	if !m.connected {
@@ -218,9 +263,9 @@ func (m *Model) renderBody() string {
 	}
 
 	modeStyle := lipgloss.NewStyle().Faint(true)
-	b.WriteString(modeStyle.Render(fmt.Sprintf("mode: %s", m.node.Mode)))
+	b.WriteString(m.paint(modeStyle.Render, fmt.Sprintf("mode: %s", m.node.Mode)))
 	if m.node.LeaderConnected {
-		b.WriteString(modeStyle.Render("  • leader connected"))
+		b.WriteString(m.paint(modeStyle.Render, "  • leader connected"))
 	}
 	b.WriteString("\n\n")
 
@@ -236,15 +281,6 @@ func (m *Model) renderBody() string {
 	return b.String()
 }
 
-// footerHelp renders the key-hint line pinned to the bottom of the screen.
-func (m *Model) footerHelp() string {
-	helpStyle := lipgloss.NewStyle().Faint(true)
-	if m.connected {
-		return helpStyle.Render("[r] refresh  [q] quit")
-	}
-	return helpStyle.Render("[r] retry now  [q] quit")
-}
-
 // renderRetry builds the "no server available" panel shown while the TUI
 // waits to retry.
 func renderRetry(m *Model) string {
@@ -252,7 +288,7 @@ func renderRetry(m *Model) string {
 	secs := int(m.retryIn.Seconds())
 	var b strings.Builder
 	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
-	b.WriteString(warnStyle.Render("No horde node available"))
+	b.WriteString(m.paint(warnStyle.Render, "No horde node available"))
 	b.WriteString("\n\n")
 	fmt.Fprintf(&b, "The TUI could not reach a node at %s.\n", addr)
 	fmt.Fprintf(&b, "Retrying in %ds...\n", secs)
