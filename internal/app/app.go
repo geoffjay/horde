@@ -45,8 +45,8 @@ type Model struct {
 	agents []client.Agent
 
 	// status line + command palette overlay
-	status      *StatusLine
-	paletteOpen bool
+	status *StatusLine
+	pal    palette
 
 	width    int
 	height   int
@@ -158,22 +158,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleKey dispatches key presses. "q"/ctrl+c quits, ctrl+p toggles the
-// command palette, esc closes it, and "r" refreshes when connected or triggers
-// an immediate retry when in the retry state.
+// handleKey dispatches key presses. When the command palette is open all keys
+// are routed to it (see handlePaletteKey). Otherwise "q"/ctrl+c quits, ctrl+p
+// opens the palette, and "r" refreshes when connected or triggers an immediate
+// retry when in the retry state.
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.pal.open {
+		return m.handlePaletteKey(msg)
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		m.quitting = true
 		return m, tea.Quit
 	case "ctrl+p":
-		m.paletteOpen = !m.paletteOpen
-		return m, nil
-	case "esc":
-		m.paletteOpen = false
+		m.openPalette()
 		return m, nil
 	case "r":
-		m.paletteOpen = false
 		if m.connected {
 			return m, m.loadNode
 		}
@@ -201,7 +202,7 @@ func (m *Model) View() tea.View {
 	}
 
 	background := m.fill(m.renderBody(), m.status.Render(m, m.width))
-	if !m.paletteOpen {
+	if !m.pal.open {
 		return tea.NewView(background)
 	}
 
@@ -228,7 +229,7 @@ var dimColor = lipgloss.Color("240")
 // style's bound Render method (e.g. someStyle.Render) so the heavy Style struct
 // is not copied by value.
 func (m *Model) paint(render func(...string) string, s string) string {
-	if m.paletteOpen {
+	if m.pal.open {
 		return s
 	}
 	return render(s)

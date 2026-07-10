@@ -64,6 +64,7 @@ every edit.
 * [One file per cobra command](patterns/one-file-per-command.md) - cmd/ package layout.
 * [Config extension pattern](patterns/config-extension.md) - embedding generic config + app-specific sections.
 * [Subprocess agent hosting](patterns/subprocess-agent-hosting.md) - the binary hosts its own agents.
+* [TUI status line and command palette](patterns/tui-status-line-and-palette.md) - configurable status blocks + a ctrl+p palette over a dimmed background.
 
 ## Plans
 

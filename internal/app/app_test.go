@@ -49,6 +49,12 @@ func escKey() tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: tea.KeyEscape}
 }
 
+// namedKey constructs a KeyPressMsg for a special key by its rune code
+// (e.g. tea.KeyUp, tea.KeyEnter).
+func namedKey(code rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: code}
+}
+
 func TestModel_ConnectsToReachableNode(t *testing.T) {
 	stub := httptest.NewServer(newTestHandler())
 	defer stub.Close()
@@ -94,25 +100,73 @@ func TestModel_ImmediateRetryResetsTimer(t *testing.T) {
 
 func TestModel_PaletteToggle(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
-	require.False(t, m.paletteOpen)
+	require.False(t, m.pal.open)
 
 	// ctrl+p opens, then closes.
 	m.Update(ctrlKey('p'))
-	assert.True(t, m.paletteOpen)
+	assert.True(t, m.pal.open)
 	m.Update(ctrlKey('p'))
-	assert.False(t, m.paletteOpen)
+	assert.False(t, m.pal.open)
 
 	// esc always closes.
 	m.Update(ctrlKey('p'))
-	require.True(t, m.paletteOpen)
+	require.True(t, m.pal.open)
 	m.Update(escKey())
-	assert.False(t, m.paletteOpen)
+	assert.False(t, m.pal.open)
+}
 
-	// A command key ("r") also dismisses the palette.
-	m.Update(ctrlKey('p'))
-	require.True(t, m.paletteOpen)
-	m.Update(keyPress("r"))
-	assert.False(t, m.paletteOpen)
+func TestPalette_SearchFiltersAndTypesIntoQuery(t *testing.T) {
+	m := New(context.Background(), "127.0.0.1:1")
+	m.connected = true // commands: Refresh, Quit
+	m.openPalette()
+
+	// Typing while the palette is open edits the query rather than acting as
+	// a global shortcut.
+	m.Update(keyPress("q"))
+	assert.Equal(t, "q", m.pal.query)
+	assert.False(t, m.quitting, "typing q must not quit while the palette is open")
+
+	// The query filters the command list to matching labels ("Quit").
+	cmds := m.filteredCommands()
+	require.Len(t, cmds, 1)
+	assert.Equal(t, "Quit", cmds[0].label)
+
+	// Backspace clears the query and restores the full list.
+	m.Update(namedKey(tea.KeyBackspace))
+	assert.Equal(t, "", m.pal.query)
+	assert.Len(t, m.filteredCommands(), 2)
+}
+
+func TestPalette_CursorNavigationClamps(t *testing.T) {
+	m := New(context.Background(), "127.0.0.1:1")
+	m.connected = true // 2 commands
+	m.openPalette()
+	require.Equal(t, 0, m.pal.cursor)
+
+	// Up at the top stays at the top.
+	m.Update(namedKey(tea.KeyUp))
+	assert.Equal(t, 0, m.pal.cursor)
+
+	// Down moves to the last command and clamps there.
+	m.Update(namedKey(tea.KeyDown))
+	assert.Equal(t, 1, m.pal.cursor)
+	m.Update(namedKey(tea.KeyDown))
+	assert.Equal(t, 1, m.pal.cursor)
+}
+
+func TestPalette_EnterRunsSelectedCommand(t *testing.T) {
+	m := New(context.Background(), "127.0.0.1:1")
+	m.connected = true
+	m.openPalette()
+
+	// Filter down to Quit and run it with enter.
+	m.Update(keyPress("Q"))
+	require.Equal(t, "Quit", m.filteredCommands()[0].label)
+
+	_, cmd := m.Update(namedKey(tea.KeyEnter))
+	assert.True(t, m.quitting, "enter should run the selected command (Quit)")
+	assert.False(t, m.pal.open, "running a command closes the palette")
+	require.NotNil(t, cmd)
 }
 
 func TestStatusLine_RightAlignedBlocks(t *testing.T) {
@@ -154,7 +208,7 @@ func TestModel_ViewOverlaysPaletteWhenOpen(t *testing.T) {
 
 	assert.NotContains(t, m.View().Content, "Commands")
 
-	m.paletteOpen = true
+	m.openPalette()
 	content := m.View().Content
 	assert.Contains(t, content, "Commands")
 	assert.Contains(t, content, "Refresh")
