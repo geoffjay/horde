@@ -6,6 +6,10 @@ import (
 	"github.com/geoffjay/horde/internal/server"
 )
 
+// errInvalidBody is the error message returned when a request body fails to
+// decode as JSON.
+const errInvalidBody = "invalid request body"
+
 // nodeView is the subset of *server.Server that node-control handlers need.
 // Defined as an interface so handlers can be tested with a fake.
 type nodeView interface {
@@ -26,7 +30,8 @@ type clusterView interface {
 	Mode() server.Mode
 	NodeID() string
 	RegisterSlave(nodeID, addr string)
-	Heartbeat(nodeID string) (leaderID string, ok bool)
+	Heartbeat(nodeID string, agents []string) (leaderID string, ok bool)
+	Slaves() []server.SlaveInfo
 }
 
 // compile-time: *server.Server satisfies the handler interfaces.

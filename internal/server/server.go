@@ -81,7 +81,16 @@ type Server struct {
 	slaves   map[string]knownSlave
 	bus      *EventBus
 	router   http.Handler
+
+	// now returns the current time. A field so tests can inject a clock when
+	// exercising slave staleness; defaults to time.Now.
+	now func() time.Time
 }
+
+// ErrAgentNotFound is returned by StopAgent when the given id is unknown.
+// Callers (e.g. the API's DELETE handler) match it with errors.Is rather
+// than string-comparing the error message.
+var ErrAgentNotFound = errors.New("agent not found")
 
 // AgentState is the lifecycle state of a spawned agent subprocess.
 type AgentState string
@@ -112,6 +121,10 @@ const (
 	// agentShutdownGrace is how long we wait for an agent subprocess to exit
 	// after signaling it before force-killing.
 	agentShutdownGrace = 5 * time.Second
+	// slaveStaleAfter is how long since a slave's last register/heartbeat
+	// before the master marks it stale in the cluster view. Three missed
+	// heartbeat intervals.
+	slaveStaleAfter = 3 * leaderReconnectInterval
 	// defaultServerPort is the default TCP port for the node API listener.
 	defaultServerPort = 13420
 )
@@ -140,6 +153,7 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 		procs:  make(map[string]*agentProc),
 		slaves: make(map[string]knownSlave),
 		bus:    NewEventBus(),
+		now:    time.Now,
 	}, nil
 }
 
@@ -215,7 +229,7 @@ func (s *Server) connectLeader(ctx context.Context) {
 				s.mu.Unlock()
 				logrus.WithField("leader", s.cfg.Leader).Info("registered with leader")
 			}
-			if err := client.heartbeat(ctx); err != nil {
+			if err := client.heartbeat(ctx, s.agentNames()); err != nil {
 				logrus.WithError(err).WithField("leader", s.cfg.Leader).Debug("heartbeat failed")
 				s.mu.Lock()
 				s.leaderOK = false
@@ -328,7 +342,7 @@ func (s *Server) StopAgent(id string) error {
 	p, ok := s.procs[id]
 	if !ok {
 		s.mu.Unlock()
-		return fmt.Errorf("agent %q not found", id)
+		return fmt.Errorf("stop agent %q: %w", id, ErrAgentNotFound)
 	}
 	p.state = AgentExiting
 	s.mu.Unlock()
@@ -378,7 +392,20 @@ func (s *Server) SetRouter(h http.Handler) { s.router = h }
 
 // knownSlave tracks a slave that has registered with this master.
 type knownSlave struct {
-	addr string
+	addr     string
+	agents   []string
+	lastSeen time.Time
+}
+
+// SlaveInfo is a snapshot of a registered slave, as surfaced by the cluster
+// view (GET /api/v1/cluster/nodes). Stale is computed against slaveStaleAfter
+// at snapshot time.
+type SlaveInfo struct {
+	NodeID   string
+	Addr     string
+	Agents   []string
+	LastSeen time.Time
+	Stale    bool
 }
 
 // RegisterSlave records a slave's registration with this master. Only
@@ -388,23 +415,60 @@ func (s *Server) RegisterSlave(nodeID, addr string) {
 		return
 	}
 	s.mu.Lock()
-	s.slaves[nodeID] = knownSlave{addr: addr}
+	sl := s.slaves[nodeID]
+	sl.addr = addr
+	sl.lastSeen = s.now()
+	s.slaves[nodeID] = sl
 	s.mu.Unlock()
 	logrus.WithFields(logrus.Fields{"slave": nodeID, "addr": addr}).Debug("slave registered")
 }
 
-// Heartbeat records a heartbeat from a slave and returns the leader's node
-// id and connectivity status. Only meaningful in master mode.
-func (s *Server) Heartbeat(nodeID string) (string, bool) {
+// Heartbeat records a heartbeat from a slave — refreshing its last-seen time
+// and reported agents — and returns the leader's node id and connectivity
+// status. Only meaningful in master mode.
+func (s *Server) Heartbeat(nodeID string, agentList []string) (string, bool) {
 	if s.cfg.Mode != ModeMaster {
 		return "", false
 	}
 	s.mu.Lock()
-	if _, ok := s.slaves[nodeID]; !ok {
-		s.slaves[nodeID] = knownSlave{}
-	}
+	sl := s.slaves[nodeID]
+	sl.lastSeen = s.now()
+	sl.agents = agentList
+	s.slaves[nodeID] = sl
 	s.mu.Unlock()
 	return s.cfg.NodeID, true
+}
+
+// Slaves returns a snapshot of the slaves registered with this master, each
+// marked stale if its last register/heartbeat is older than slaveStaleAfter.
+// Empty for a slave node (which keeps no registry).
+func (s *Server) Slaves() []SlaveInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	out := make([]SlaveInfo, 0, len(s.slaves))
+	for id, sl := range s.slaves {
+		out = append(out, SlaveInfo{
+			NodeID:   id,
+			Addr:     sl.addr,
+			Agents:   sl.agents,
+			LastSeen: sl.lastSeen,
+			Stale:    now.Sub(sl.lastSeen) > slaveStaleAfter,
+		})
+	}
+	return out
+}
+
+// agentNames returns the names of the currently running local agents, sent to
+// the master on each heartbeat so the cluster view reflects slave workloads.
+func (s *Server) agentNames() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	names := make([]string, 0, len(s.procs))
+	for _, p := range s.procs {
+		names = append(names, p.name)
+	}
+	return names
 }
 
 // Run blocks until ctx is canceled, keeping the server alive. It is the

@@ -60,11 +60,22 @@ never stays up with a dead API.
 # Cluster & readiness
 
 A slave registers with its master (`POST /api/v1/cluster/register`) and then
-heartbeats on a ticker (`GET /api/v1/cluster/heartbeat`); the master tracks
-registered slaves in an in-memory registry initialized at construction, so a
-heartbeat that arrives before any register — e.g. after a master restart while
-a slave still believes it is connected — is handled without panicking and
-self-heals on the next register.
+heartbeats on a ticker (`POST /api/v1/cluster/heartbeat`, carrying the slave's
+node id and the names of its running agents); the master tracks registered
+slaves in an in-memory registry initialized at construction, so a heartbeat
+that arrives before any register — e.g. after a master restart while a slave
+still believes it is connected — is handled without panicking and self-heals
+on the next register. Each register/heartbeat refreshes the slave's last-seen
+time; a slave not seen within three heartbeat intervals is marked stale.
+
+The registry is observable via `GET /api/v1/cluster/nodes`, which returns the
+leader id plus every registered slave (`node_id`, `addr`, `agents`,
+`last_seen`, `stale`). On a slave node the registry is empty. The slave
+leader-client (`internal/server/leaderclient.go`) and the master handlers
+(`internal/api/cluster.go`) hand-mirror the register/heartbeat request and
+response structs; an integration test
+(`internal/server/integration_test.go`) drives the real leader-client against
+the real `api.Router` to catch drift between the two.
 
 Readiness reflects this: `GET /api/v1/ready` returns 200 for a master (always
 ready) and for a connected slave, but **503** for a slave whose leader

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -38,7 +39,7 @@ func createAgent(srv agentView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createAgentRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: errInvalidBody})
 			return
 		}
 		if req.Name == "" {
@@ -84,7 +85,7 @@ func deleteAgent(srv agentView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		if err := srv.StopAgent(id); err != nil {
-			if err.Error() == `agent "`+id+`" not found` {
+			if errors.Is(err, server.ErrAgentNotFound) {
 				writeJSON(w, http.StatusNotFound, errorResponse{Error: "agent not found"})
 				return
 			}

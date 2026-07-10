@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 // leaderClient is a thin HTTP client over the master node's cluster API.
@@ -74,13 +72,20 @@ func (c *leaderClient) register(ctx context.Context) (string, error) {
 	return r.LeaderID, nil
 }
 
-// heartbeat calls GET /api/v1/cluster/heartbeat?node_id=<id> on the master.
-func (c *leaderClient) heartbeat(ctx context.Context) error {
-	url := fmt.Sprintf("http://%s/api/v1/cluster/heartbeat?node_id=%s", c.leader, c.nodeID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+// heartbeat calls POST /api/v1/cluster/heartbeat on the master, reporting this
+// slave's node id and the names of its currently running agents.
+func (c *leaderClient) heartbeat(ctx context.Context, agents []string) error {
+	body, err := json.Marshal(heartbeatPayload{NodeID: c.nodeID, Agents: agents})
 	if err != nil {
 		return err
 	}
+
+	url := fmt.Sprintf("http://%s/api/v1/cluster/heartbeat", c.leader)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -108,5 +113,8 @@ type registerResponse struct {
 	LeaderID string `json:"leader_id"`
 }
 
-// keep logrus referenced for future logging in heartbeat loops.
-var _ = logrus.Debug
+// heartbeatPayload mirrors the heartbeatRequest shape in internal/api.
+type heartbeatPayload struct {
+	NodeID string   `json:"node_id"`
+	Agents []string `json:"agents"`
+}

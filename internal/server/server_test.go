@@ -103,10 +103,37 @@ func TestHeartbeat_BeforeRegister(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotPanics(t, func() {
-		leaderID, ok := srv.Heartbeat("slave-x")
+		leaderID, ok := srv.Heartbeat("slave-x", nil)
 		assert.True(t, ok)
 		assert.Equal(t, "master-1", leaderID)
 	})
+}
+
+func TestSlaves_MarkedStale(t *testing.T) {
+	srv, err := New(Config{Mode: ModeMaster, NodeID: "master-1"})
+	require.NoError(t, err)
+
+	base := time.Unix(1_700_000_000, 0)
+	srv.now = func() time.Time { return base }
+	srv.RegisterSlave("slave-1", "slave1:13420")
+
+	// Fresh registration is not stale.
+	slaves := srv.Slaves()
+	require.Len(t, slaves, 1)
+	assert.False(t, slaves[0].Stale)
+
+	// Advance the clock past the staleness window without a heartbeat.
+	srv.now = func() time.Time { return base.Add(slaveStaleAfter + time.Second) }
+	slaves = srv.Slaves()
+	require.Len(t, slaves, 1)
+	assert.True(t, slaves[0].Stale)
+
+	// A heartbeat refreshes last-seen and clears staleness.
+	srv.Heartbeat("slave-1", []string{"greeter"})
+	slaves = srv.Slaves()
+	require.Len(t, slaves, 1)
+	assert.False(t, slaves[0].Stale)
+	assert.Equal(t, []string{"greeter"}, slaves[0].Agents)
 }
 
 func TestStart_SlaveWithoutLeader(t *testing.T) {

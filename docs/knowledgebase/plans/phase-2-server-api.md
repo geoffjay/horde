@@ -116,10 +116,19 @@ code:
 POST   /api/v1/cluster/register     slave→master on connect:
                                  {node_id, mode:"slave", addr:"..."}
                                  → {ok, node_id, leader_id}
-GET    /api/v1/cluster/heartbeat    slave→master every N s:
+POST   /api/v1/cluster/heartbeat    slave→master every N s:
                                  {node_id, agents:[...]}
                                  → {ok, leader_id}
+GET    /api/v1/cluster/nodes        master's cluster view:
+                                 → {leader_id, nodes:[{node_id, addr,
+                                    agents, last_seen, stale}]}
 ```
+
+As shipped, heartbeat is a `POST` with a JSON body (it carries the `agents`
+list, so a GET-with-body was dropped in favour of POST). `/cluster/nodes`
+makes the otherwise write-only registry observable: register/heartbeat feed an
+in-memory registry, and this endpoint reads it back (slaves marked `stale`
+after three missed heartbeat intervals).
 
 `connectLeader` becomes a real client: dial `s.cfg.Leader`, call
 `/cluster/register`, set `leaderOK` from the response, then loop on

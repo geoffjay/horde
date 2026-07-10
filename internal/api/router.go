@@ -41,7 +41,8 @@ func Router(srv *server.Server, bus *server.EventBus) http.Handler {
 
 		// Cluster (slave ↔ master)
 		r.Post("/cluster/register", registerSlave(srv))
-		r.Get("/cluster/heartbeat", heartbeat(srv))
+		r.Post("/cluster/heartbeat", heartbeat(srv))
+		r.Get("/cluster/nodes", listNodes(srv))
 	})
 
 	return r

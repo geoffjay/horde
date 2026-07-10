@@ -164,7 +164,9 @@ func TestClusterHeartbeat(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, w.Code)
 
-	w = do(t, h, http.MethodGet, "/api/v1/cluster/heartbeat?node_id=slave-1", nil)
+	w = do(t, h, http.MethodPost, "/api/v1/cluster/heartbeat", heartbeatRequest{
+		NodeID: "slave-1", Agents: []string{"greeter"},
+	})
 	require.Equal(t, http.StatusOK, w.Code)
 	var hb heartbeatResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&hb))
@@ -175,6 +177,32 @@ func TestClusterHeartbeat_RequiresNodeID(t *testing.T) {
 	srv := newTestServer(t)
 	h := Router(srv, srv.EventBus())
 
-	w := do(t, h, http.MethodGet, "/api/v1/cluster/heartbeat", nil)
+	w := do(t, h, http.MethodPost, "/api/v1/cluster/heartbeat", heartbeatRequest{Agents: []string{"x"}})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestClusterNodes(t *testing.T) {
+	srv := newTestServer(t)
+	h := Router(srv, srv.EventBus())
+
+	// Register a slave, then heartbeat with an agent list.
+	w := do(t, h, http.MethodPost, "/api/v1/cluster/register", registerRequest{
+		NodeID: "slave-1", Mode: "slave", Addr: "slave1:13420",
+	})
+	require.Equal(t, http.StatusOK, w.Code)
+	w = do(t, h, http.MethodPost, "/api/v1/cluster/heartbeat", heartbeatRequest{
+		NodeID: "slave-1", Agents: []string{"greeter"},
+	})
+	require.Equal(t, http.StatusOK, w.Code)
+
+	w = do(t, h, http.MethodGet, "/api/v1/cluster/nodes", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp clusterNodesResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp.Nodes, 1)
+	assert.Equal(t, "slave-1", resp.Nodes[0].NodeID)
+	assert.Equal(t, "slave1:13420", resp.Nodes[0].Addr)
+	assert.Equal(t, []string{"greeter"}, resp.Nodes[0].Agents)
+	assert.False(t, resp.Nodes[0].Stale)
+	assert.NotEmpty(t, resp.Nodes[0].LastSeen)
 }
