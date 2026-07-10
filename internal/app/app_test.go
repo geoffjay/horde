@@ -172,18 +172,52 @@ func TestPalette_EnterRunsSelectedCommand(t *testing.T) {
 func TestStatusLine_RightAlignedBlocks(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
+	m.node.Mode = "master"
+	m.node.NodeID = "n1"
 
 	const width = 80
 	out := m.status.Render(m, width)
 
-	// Both blocks and the default separator are present, and the whole line
-	// is padded to the full width (right-aligned).
-	assert.Contains(t, out, "connected")
+	// The node block summarizes mode / id / agent count, the commands block
+	// and the default separator are present, and the whole line is padded to
+	// the full width (right-aligned).
+	assert.Contains(t, out, "master")
+	assert.Contains(t, out, "n1")
+	assert.Contains(t, out, "0 agents")
 	assert.Contains(t, out, "ctrl+p")
 	assert.Contains(t, out, "commands")
 	assert.Contains(t, out, defaultSeparator)
 	assert.Equal(t, width, lipgloss.Width(out))
 	assert.True(t, strings.HasPrefix(out, " "), "expected left padding for right alignment")
+}
+
+func TestAgentCountLabel(t *testing.T) {
+	assert.Equal(t, "0 agents", agentCountLabel(0))
+	assert.Equal(t, "1 agent", agentCountLabel(1))
+	assert.Equal(t, "3 agents", agentCountLabel(3))
+}
+
+func TestPaletteWindow(t *testing.T) {
+	// Fits within maxRows: show everything.
+	start, end := paletteWindow(3, 0, 8)
+	assert.Equal(t, 0, start)
+	assert.Equal(t, 3, end)
+
+	// Cursor near the top clamps the window to the start.
+	start, end = paletteWindow(20, 1, 8)
+	assert.Equal(t, 0, start)
+	assert.Equal(t, 8, end)
+
+	// Cursor near the bottom clamps the window to the end.
+	start, end = paletteWindow(20, 19, 8)
+	assert.Equal(t, 12, start)
+	assert.Equal(t, 20, end)
+
+	// Cursor in the middle centers the window.
+	start, end = paletteWindow(20, 10, 8)
+	assert.LessOrEqual(t, start, 10)
+	assert.Greater(t, end, 10)
+	assert.Equal(t, 8, end-start)
 }
 
 func TestStatusLine_AddRemove(t *testing.T) {
@@ -199,6 +233,27 @@ func TestStatusLine_AddRemove(t *testing.T) {
 	assert.False(t, s.Remove("a"), "removing a missing block returns false")
 	assert.NotContains(t, s.Render(m, 0), "A")
 	assert.Contains(t, s.Render(m, 0), "B")
+}
+
+func TestView_EdgePadding(t *testing.T) {
+	m := New(context.Background(), "127.0.0.1:1")
+	m.connected = true
+	m.width, m.height = 40, 10
+
+	lines := strings.Split(m.View().Content, "\n")
+
+	// The block fills the full height and no line exceeds the width.
+	require.Len(t, lines, m.height)
+	for _, ln := range lines {
+		assert.LessOrEqual(t, lipgloss.Width(ln), m.width)
+	}
+
+	// Top is flush (title on the first row); left is inset by exactly one
+	// column; the bottom row is reserved blank spacing.
+	assert.True(t, strings.HasPrefix(lines[0], " ") && !strings.HasPrefix(lines[0], "  "),
+		"expected 1-col left inset, got %q", lines[0])
+	assert.Contains(t, lines[0], "horde")
+	assert.Equal(t, "", strings.TrimSpace(lines[m.height-1]), "expected blank bottom row")
 }
 
 func TestModel_ViewOverlaysPaletteWhenOpen(t *testing.T) {

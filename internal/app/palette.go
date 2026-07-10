@@ -19,6 +19,9 @@ const (
 	paletteInner = paletteWidth - palettePadX*2
 	// centerDivisor halves free space to center the dialog on each axis.
 	centerDivisor = 2
+	// paletteMaxRows caps how many command rows are shown at once; longer
+	// lists scroll to keep the cursor visible.
+	paletteMaxRows = 8
 )
 
 // palette is the state of the ctrl+p command overlay: whether it is open, the
@@ -165,37 +168,16 @@ func (m *Model) renderPalette() string {
 	b.WriteString(spread(paletteInner, titleStyle.Render("Commands"), faint.Render("esc")))
 	b.WriteString("\n\n")
 
-	// Search field: the query, or a faint placeholder when empty.
+	// Search field: the query followed by a block cursor, or a faint
+	// placeholder after the cursor when empty.
+	cursor := lipgloss.NewStyle().Reverse(true).Render(" ")
+	b.WriteString(m.pal.query + cursor)
 	if m.pal.query == "" {
-		b.WriteString(faint.Render("Search"))
-	} else {
-		b.WriteString(m.pal.query)
+		b.WriteString(faint.Render(" Search"))
 	}
 	b.WriteString("\n\n")
 
-	cmds := m.filteredCommands()
-	if len(cmds) == 0 {
-		b.WriteString(faint.Render("(no matching commands)"))
-	}
-	selStyle := lipgloss.NewStyle().
-		Width(paletteInner).
-		Background(lipgloss.Color("62")).
-		Foreground(lipgloss.Color("255"))
-	for i, c := range cmds {
-		selected := i == m.pal.cursor
-		key := c.key
-		if !selected {
-			key = faint.Render(c.key)
-		}
-		row := spread(paletteInner, c.label, key)
-		if selected {
-			row = selStyle.Render(row)
-		}
-		b.WriteString(row)
-		if i < len(cmds)-1 {
-			b.WriteString("\n")
-		}
-	}
+	b.WriteString(m.renderCommandRows())
 
 	box := lipgloss.NewStyle().
 		Width(paletteWidth).
@@ -205,6 +187,65 @@ func (m *Model) renderPalette() string {
 		Background(lipgloss.Color("235")).
 		Foreground(lipgloss.Color("252"))
 	return box.Render(b.String())
+}
+
+// renderCommandRows renders the filtered command list, scrolled to keep the
+// cursor visible and with "↑ / ↓ more" hints when rows are hidden above or
+// below the visible window. The highlighted row is shown with a filled
+// background spanning the dialog's inner width.
+func (m *Model) renderCommandRows() string {
+	cmds := m.filteredCommands()
+	if len(cmds) == 0 {
+		return lipgloss.NewStyle().Faint(true).Render("(no matching commands)")
+	}
+
+	faint := lipgloss.NewStyle().Faint(true)
+	selStyle := lipgloss.NewStyle().
+		Width(paletteInner).
+		Background(lipgloss.Color("62")).
+		Foreground(lipgloss.Color("255"))
+
+	start, end := paletteWindow(len(cmds), m.pal.cursor, paletteMaxRows)
+
+	var rows []string
+	if start > 0 {
+		rows = append(rows, faint.Render("↑ more"))
+	}
+	for i := start; i < end; i++ {
+		c := cmds[i]
+		selected := i == m.pal.cursor
+		key := c.key
+		if !selected {
+			key = faint.Render(c.key)
+		}
+		row := spread(paletteInner, c.label, key)
+		if selected {
+			row = selStyle.Render(row)
+		}
+		rows = append(rows, row)
+	}
+	if end < len(cmds) {
+		rows = append(rows, faint.Render("↓ more"))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// paletteWindow returns the [start, end) slice of command indices to display
+// so that cursor stays visible within maxRows rows.
+func paletteWindow(total, cursor, maxRows int) (start, end int) {
+	if total <= maxRows {
+		return 0, total
+	}
+	start = cursor - maxRows/centerDivisor
+	if start < 0 {
+		start = 0
+	}
+	end = start + maxRows
+	if end > total {
+		end = total
+		start = end - maxRows
+	}
+	return start, end
 }
 
 // spread lays out left and right within width, pushing right to the far edge

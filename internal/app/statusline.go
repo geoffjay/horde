@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -86,26 +87,51 @@ func (s *StatusLine) Render(m *Model, width int) string {
 	return lipgloss.NewStyle().Width(width).Align(lipgloss.Right).Render(content)
 }
 
-// nodeStatusBlock reports whether the TUI is connected to a node.
+// nodeStatusBlock reports the connection state as a colored dot (green when
+// connected, red when not) followed by a faint summary: the node mode, node
+// id, and running-agent count when connected, or "disconnected" otherwise.
 func nodeStatusBlock() StatusBlock {
 	return StatusBlock{
 		Name: "node",
 		Render: func(m *Model) string {
-			if m.connected {
-				return m.paint(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render, "connected")
+			faint := lipgloss.NewStyle().Faint(true)
+			if !m.connected {
+				dot := m.paint(lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render, "●")
+				return dot + m.paint(faint.Render, " disconnected")
 			}
-			return m.paint(lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render, "disconnected")
+			dot := m.paint(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render, "●")
+			return dot + m.paint(faint.Render, " "+nodeSummary(m))
 		},
 	}
 }
 
-// commandsBlock renders the "ctrl+p commands" hint, with the key chord in bold.
+// nodeSummary formats the connected node's mode, id, and agent count as a
+// separator-joined string (e.g. "master · n1 · 2 agents").
+func nodeSummary(m *Model) string {
+	parts := []string{m.node.Mode}
+	if m.node.NodeID != "" {
+		parts = append(parts, m.node.NodeID)
+	}
+	parts = append(parts, agentCountLabel(len(m.agents)))
+	return strings.Join(parts, " · ")
+}
+
+// agentCountLabel renders the agent count with a correctly pluralized noun.
+func agentCountLabel(n int) string {
+	if n == 1 {
+		return "1 agent"
+	}
+	return fmt.Sprintf("%d agents", n)
+}
+
+// commandsBlock renders the "ctrl+p commands" hint, with the key chord in bold
+// and the "commands" label in the same faint gray as the block separator.
 func commandsBlock() StatusBlock {
 	return StatusBlock{
 		Name: "commands",
 		Render: func(m *Model) string {
 			key := m.paint(lipgloss.NewStyle().Bold(true).Render, "ctrl+p")
-			return key + m.paint(lipgloss.NewStyle().Render, " commands")
+			return key + m.paint(lipgloss.NewStyle().Faint(true).Render, " commands")
 		},
 	}
 }

@@ -201,7 +201,7 @@ func (m *Model) View() tea.View {
 		return tea.NewView("Shutting down horde...\n")
 	}
 
-	background := m.fill(m.renderBody(), m.status.Render(m, m.width))
+	background := m.fill(m.renderBody(), m.status.Render(m, m.innerWidth()))
 	if !m.pal.open {
 		return tea.NewView(background)
 	}
@@ -235,20 +235,36 @@ func (m *Model) paint(render func(...string) string, s string) string {
 	return render(s)
 }
 
+// edgePad is the one-cell breathing room applied on the left, right, and
+// bottom edges of the view. The top is intentionally flush, both because it
+// reads fine and because padding it would complicate overlay positioning.
+const edgePad = 1
+
+// innerWidth is the usable content width after reserving the left/right edge
+// padding.
+func (m *Model) innerWidth() int {
+	return max(m.width-edgePad-edgePad, 0)
+}
+
 // fill lays out the view so it occupies the full terminal height: the body is
 // pinned to the top, the footer to the bottom, and the gap between them is
-// padded with blank lines. Before the first WindowSizeMsg arrives (height 0)
+// padded with blank lines. The whole block is then inset by edgePad on the
+// left, right, and bottom. Before the first WindowSizeMsg arrives (height 0)
 // it falls back to a fixed single-line separator.
 func (m *Model) fill(body, footer string) string {
 	body = strings.TrimRight(body, "\n")
 	if m.height <= 0 {
 		return body + "\n\n" + footer + "\n"
 	}
-	gap := m.height - lipgloss.Height(body) - lipgloss.Height(footer)
+	// Reserve the bottom edge row (added by the padding below); the top stays
+	// flush. Joining with N newlines yields N-1 blank rows between body and
+	// footer, hence the +1 so the block is exactly m.height-edgePad rows tall.
+	gap := m.height - edgePad - lipgloss.Height(body) - lipgloss.Height(footer) + 1
 	if gap < 1 {
 		gap = 1
 	}
-	return body + strings.Repeat("\n", gap) + footer
+	inner := body + strings.Repeat("\n", gap) + footer
+	return lipgloss.NewStyle().Padding(0, edgePad, edgePad, edgePad).Render(inner)
 }
 
 // renderBody builds the main content area (everything above the footer): the

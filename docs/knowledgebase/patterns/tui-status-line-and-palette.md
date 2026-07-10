@@ -38,15 +38,19 @@ segment's (styled) text; returning `""` omits the block and its separator.
 
 ```go
 s := NewStatusLine()          // Separator defaults to ">"
-s.Add(nodeStatusBlock())      // "connected" / "disconnected"
-s.Add(commandsBlock())        // "ctrl+p commands" (chord in bold)
+s.Add(nodeStatusBlock())      // "● master · n1 · 2 agents" / "● disconnected"
+s.Add(commandsBlock())        // "ctrl+p commands" (chord bold, label faint)
 s.Remove("node")              // blocks are removable by name
 
-// Render: "connected > ctrl+p commands", right-aligned in `width`.
+// Render: "● master · n1 · 2 agents > ctrl+p commands", right-aligned in width.
 line := s.Render(m, width)
 ```
 
-`DefaultStatusLine()` is what `New()` installs.
+`DefaultStatusLine()` is what `New()` installs. The `node` block shows a
+connection dot (green connected / red disconnected) followed by a faint summary
+(`nodeSummary`: mode, node id, agent count). The `commands` block renders the
+`ctrl+p` chord in bold and the "commands" label in the same faint gray as the
+separator so it does not compete with the chord.
 
 # Command palette
 
@@ -57,6 +61,21 @@ opens it; while open, `handleKey` routes everything to `handlePaletteKey`:
 printable keystroke is appended to the search query. Commands are built
 per-state by `Model.commands()` and filtered by a case-insensitive label match
 in `filteredCommands()`.
+
+The dialog renders a search field with a reverse-video block cursor (a faint
+`Search` placeholder when empty) and the filtered command list via
+`renderCommandRows`. Lists longer than `paletteMaxRows` scroll: `paletteWindow`
+returns the `[start, end)` slice that keeps the cursor visible, and `↑ / ↓ more`
+hints mark hidden rows above/below.
+
+# Layout and spacing
+
+`Model.fill` pins the body to the top and the status line to the bottom, padding
+the gap so the view fills the terminal height, then insets the whole block by
+`edgePad` (one cell) on the left, right, and bottom — the top is left flush.
+`Model.innerWidth()` (width minus the two side insets) is the width the status
+line is right-aligned to. Note the `+1` in the gap calculation: joining body and
+footer with N newlines produces N-1 blank rows between them.
 
 # Dimming the background (the `paint` trick)
 
