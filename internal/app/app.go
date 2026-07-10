@@ -198,12 +198,12 @@ func (m *Model) armRetry() tea.Cmd {
 // View implements tea.Model.
 func (m *Model) View() tea.View {
 	if m.quitting {
-		return tea.NewView("Shutting down horde...\n")
+		return altView("Shutting down horde...\n")
 	}
 
 	background := m.fill(m.renderBody(), m.status.Render(m, m.innerWidth()))
 	if !m.pal.open {
-		return tea.NewView(background)
+		return altView(background)
 	}
 
 	// Palette overlay: dim the whole background (it was rendered plain — see
@@ -215,7 +215,18 @@ func (m *Model) View() tea.View {
 		lipgloss.NewLayer(dimmed),
 		lipgloss.NewLayer(dialog).X(x).Y(y).Z(1),
 	)
-	return tea.NewView(comp.Render())
+	return altView(comp.Render())
+}
+
+// altView wraps content in a full-window (alternate-screen) view. The TUI
+// always runs in the alt screen: the frame is a fixed full-terminal-height
+// buffer, so the top-flush / full-height layout is anchored to the terminal
+// and trailing blank rows (the bottom edge inset) actually render — unlike
+// inline mode, which trims trailing blank lines.
+func altView(content string) tea.View {
+	v := tea.NewView(content)
+	v.AltScreen = true
+	return v
 }
 
 // dimColor is the foreground applied to the whole background while the command

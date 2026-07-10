@@ -77,6 +77,14 @@ the gap so the view fills the terminal height, then insets the whole block by
 line is right-aligned to. Note the `+1` in the gap calculation: joining body and
 footer with N newlines produces N-1 blank rows between them.
 
+**Alt-screen is required for this layout.** `View` returns its views via
+`altView`, which sets `tea.View.AltScreen = true`. In inline (non-alt) mode
+bubbletea sizes the frame to `content.Height()` and trims trailing blank
+lines, so the bottom edge inset (a blank final row) would silently disappear.
+Alt-screen uses a fixed full-terminal-height buffer, so trailing blank rows are
+real cells that render and the top-flush / full-height model is anchored to the
+terminal instead of relying on inline scrolling.
+
 # Dimming the background (the `paint` trick)
 
 `View` composites two layers with lipgloss's `Compositor`: the dimmed background
