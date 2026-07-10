@@ -186,18 +186,35 @@ func (m *Model) View() tea.View {
 	if m.quitting {
 		return tea.NewView("Shutting down horde...\n")
 	}
+	return tea.NewView(m.fill(m.renderBody(), m.footerHelp()))
+}
 
+// fill lays out the view so it occupies the full terminal height: the body is
+// pinned to the top, the footer to the bottom, and the gap between them is
+// padded with blank lines. Before the first WindowSizeMsg arrives (height 0)
+// it falls back to a fixed single-line separator.
+func (m *Model) fill(body, footer string) string {
+	body = strings.TrimRight(body, "\n")
+	if m.height <= 0 {
+		return body + "\n\n" + footer + "\n"
+	}
+	gap := m.height - lipgloss.Height(body) - lipgloss.Height(footer)
+	if gap < 1 {
+		gap = 1
+	}
+	return body + strings.Repeat("\n", gap) + footer
+}
+
+// renderBody builds the main content area (everything above the footer): the
+// title plus either the retry panel or the connected node/agents view.
+func (m *Model) renderBody() string {
 	var b strings.Builder
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).Render("horde")
 	b.WriteString(title + "\n\n")
 
 	if !m.connected {
 		b.WriteString(renderRetry(m))
-		b.WriteString("\n")
-		helpStyle := lipgloss.NewStyle().Faint(true)
-		b.WriteString(helpStyle.Render("[r] retry now  [q] quit"))
-		b.WriteString("\n")
-		return tea.NewView(b.String())
+		return b.String()
 	}
 
 	modeStyle := lipgloss.NewStyle().Faint(true)
@@ -216,12 +233,16 @@ func (m *Model) View() tea.View {
 		b.WriteString(line + "\n")
 	}
 
-	b.WriteString("\n")
-	helpStyle := lipgloss.NewStyle().Faint(true)
-	b.WriteString(helpStyle.Render("[r] refresh  [q] quit"))
-	b.WriteString("\n")
+	return b.String()
+}
 
-	return tea.NewView(b.String())
+// footerHelp renders the key-hint line pinned to the bottom of the screen.
+func (m *Model) footerHelp() string {
+	helpStyle := lipgloss.NewStyle().Faint(true)
+	if m.connected {
+		return helpStyle.Render("[r] refresh  [q] quit")
+	}
+	return helpStyle.Render("[r] retry now  [q] quit")
 }
 
 // renderRetry builds the "no server available" panel shown while the TUI
