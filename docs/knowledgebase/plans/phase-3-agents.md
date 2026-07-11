@@ -15,6 +15,7 @@ subprocess serve the agent and the node proxy invocations to it.
 * Transport decision: [HTTP over unix domain sockets for agent invocation](/docs/knowledgebase/decisions/agent-invocation-transport.md)
 * Node API transport: [HTTP + SSE](/docs/knowledgebase/decisions/http-api-transport.md)
 * Topology context: [master/slave model](/docs/knowledgebase/decisions/master-slave-model.md)
+* Sibling path (external agents): [Agent Adapter Protocol (AAP)](/docs/knowledgebase/decisions/agent-adapter-protocol.md)
 
 # Scope boundary
 
@@ -22,6 +23,19 @@ Phase 3 delivers the **mechanism**: the transport, the invocation loop,
 streaming, resume, and a real agent registry. It does **not** introduce
 users, projects, teams, permissions, or LLM-backed agents. Those are a
 separate phase (see the roadmap) that builds on the mechanism delivered here.
+
+Phase 3 is the **native ADK** invocation path: horde-built agents running
+in-process on `google.golang.org/adk/v2`, driven over HTTP+SSE on a unix
+socket. **External coding agents** (Claude Code and the like) are a *separate*
+path over the [Agent Adapter Protocol (AAP)](/docs/knowledgebase/decisions/agent-adapter-protocol.md)
+— NDJSON over a full-duplex stdio/websocket binding, delivered by a later
+AAP-host phase. The HTTP+SSE transport used here is **not** an AAP binding
+(SSE is one-directional; AAP is bidirectional). The two paths coexist at
+different seams; nothing in Phase 3 covers external coding agents. Where terms
+overlap they mean different things: "resume" below is SSE `Last-Event-ID`
+replay (not AAP's `resume_token`), and the "permissions" Phase 3 defers is the
+node/cluster authorization model, of which AAP's `initialize.permissions`
+scope is one enforcement point.
 
 # Agent subprocess as a mini-server
 
@@ -144,12 +158,18 @@ resume in Phase 4) is a follow-up.
 The subprocess emits a single NDJSON line on stdout at startup:
 
 ```json
-{"type":"ready","socket":"/tmp/horde-agent-{id}.sock"}
+{"type":"spawn_ready","socket":"/tmp/horde-agent-{id}.sock"}
 ```
+
+The `type` is `spawn_ready`, **not** `ready`: this is the internal
+ADK-subprocess spawn handshake announcing a unix socket, and it is unrelated to
+AAP's `ready` message (which announces `protocol_version` + `capabilities` over
+stdio). Keeping the tags distinct avoids confusing the two when both exist in
+the codebase.
 
 The server reads this during `SpawnAgent` (scanning the first stdout line
 before recording the proc). The socket path is stored on `agentProc`. If no
-ready line arrives within a timeout (e.g. 5s), spawn fails.
+`spawn_ready` line arrives within a timeout (e.g. 5s), spawn fails.
 
 The subprocess owns the socket file lifecycle: it creates the socket on
 start and removes it on graceful exit. The server cleans up stale sockets
@@ -260,7 +280,7 @@ The current `runAgent` constructs the agent, discards it, and blocks on
 4. Start an HTTP server on the unix socket (`net.Listen("unix", socketPath)`).
 5. Wire a chi router with `GET /health` and `POST /invoke` (SSE), passing the
    runner into the handlers (`internal/agentapi`).
-6. Emit the ready handshake on stdout: `{"type":"ready","socket":"..."}`.
+6. Emit the ready handshake on stdout: `{"type":"spawn_ready","socket":"..."}`.
 7. Block on `<-ctx.Done()`, then shut down the HTTP server and remove the
    socket file.
 
