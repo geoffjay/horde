@@ -32,7 +32,7 @@ Decisions underpinning this phase:
 * [HTTP + SSE transport](/docs/knowledgebase/decisions/http-api-transport.md)
 * [TUI consumes the node API](/docs/knowledgebase/decisions/tui-uses-node-api.md)
 
-# Phase 3 — Agent mechanism (current)
+# Phase 3 — Agent mechanism (complete)
 
 Detailed plan: [Phase 3 — Agent mechanism](phase-3-agents.md).
 

@@ -61,21 +61,24 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	defer stop()
 
 	srv, err := server.New(server.Config{
-		Mode:              server.Mode(cfg.Mode),
-		AgentCommand:      cfg.Server.AgentCommand,
-		Leader:            cfg.Server.Leader,
-		SpawnDefaultAgent: true,
-		Port:              cfg.Server.Port,
-		ReadTimeout:       time.Duration(cfg.Server.ReadTimeout) * time.Second,
-		WriteTimeout:      time.Duration(cfg.Server.WriteTimeout) * time.Second,
-		IdleTimeout:       time.Duration(cfg.Server.IdleTimeout) * time.Second,
-		NodeID:            cfg.Cluster.NodeID,
+		Mode:               server.Mode(cfg.Mode),
+		AgentCommand:       cfg.Server.AgentCommand,
+		Leader:             cfg.Server.Leader,
+		SpawnDefaultAgent:  true,
+		Port:               cfg.Server.Port,
+		ReadTimeout:        time.Duration(cfg.Server.ReadTimeout) * time.Second,
+		WriteTimeout:       time.Duration(cfg.Server.WriteTimeout) * time.Second,
+		IdleTimeout:        time.Duration(cfg.Server.IdleTimeout) * time.Second,
+		NodeID:             cfg.Cluster.NodeID,
+		SocketDir:          cfg.Agent.SocketDir,
+		ReadyTimeout:       time.Duration(cfg.Agent.ReadyTimeout) * time.Second,
+		HealthPollInterval: time.Duration(cfg.Agent.HealthPollInterval) * time.Second,
 	})
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
 	}
 
-	srv.SetRouter(api.Router(srv, srv.EventBus()))
+	srv.SetRouter(api.Router(srv))
 
 	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err

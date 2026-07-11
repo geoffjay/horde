@@ -168,7 +168,7 @@ Sent once the adapter has started its native agent and is prepared to accept pro
   "agent": { "name": "claude-code", "version": "2.1.x" },
   "capabilities": ["streaming", "thinking", "tool_approval", "usage_reporting",
                    "cost_reporting", "context_clear", "cancel", "mcp",
-                   "system_prompt_append", "permissions"],
+                   "system_prompt_append", "permissions", "execution_context"],
   "models": ["claude-sonnet-5", "claude-opus-4-8"]
 }
 ```
@@ -342,6 +342,46 @@ scope the adapter enforces locally; `tool_approval` is the host's dynamic per-ca
 strict requirements SHOULD both send a `permissions` scope and act as approval authority, and MAY refuse
 to launch an agent that advertises neither for a restricted principal.
 
+### 6.7 Execution context (capability `execution_context`)
+
+An agent self-reports fine-grained runtime state a host cannot otherwise
+observe. This is distinct from `status` (which is only coarse busy/idle) and
+from the turn output frames: it is the agent's own account of *what it is doing
+and whether it can proceed*, which a host may materialize and expose to
+operators or other agents.
+
+#### `context` (A→H)
+
+```json
+{
+  "type": "context",
+  "turn_id": "t1",
+  "issue": "proj-42",
+  "blocked": true,
+  "blocked_reason": "needs an API key",
+  "waiting_model": false,
+  "note": "extracting the tokenizer"
+}
+```
+
+- Every field except `type` is **optional**; a `context` frame is a partial
+  update, and a receiver merges present fields over the last known state.
+- `turn_id` (string, optional): the turn this update pertains to, if any.
+- `issue` (string, optional): the agent's refinement of the issue it is working
+  (the host sets the initial project/issue out of band; the agent may narrow
+  it).
+- `blocked` (bool, optional) / `blocked_reason` (string, optional): the agent
+  cannot proceed without external input (e.g. a decision, a credential).
+- `waiting_model` (bool, optional): the agent is awaiting a model response (a
+  refinement of "busy").
+- `note` (string, optional): short free-text progress.
+
+The host owns *project* and *issue* assignment at launch; the agent only refines
+`issue` and reports the runtime fields. A host that does not track execution
+context ignores `context` frames per §3. `status` remains the coarse
+activity signal and is unchanged — the richer state lives here rather than
+expanding the `status` state enum.
+
 ## 7. Capabilities and graceful degradation
 
 Adapters advertise capability tokens in `ready.capabilities`. The host adapts its behavior when a
@@ -360,6 +400,7 @@ capability is absent:
 | `system_prompt_append` | Supports `system_prompt.mode = "append"` | Host must send `replace` |
 | `resume` | Emits/consumes `resume_token` | Resume unavailable |
 | `permissions` | Self-enforces `initialize.permissions` scope | Host relies on node policy + `tool_approval` only; may refuse a restricted principal |
+| `execution_context` | Emits `context` frames (blocked, waiting-for-model, issue, progress) | Host derives only coarse state from `status`/`error`/`approval_request`; no blocked / waiting-for-model fidelity |
 
 Unknown capability tokens MUST be ignored by the host.
 
@@ -402,9 +443,10 @@ An adapter is AAP v1 compliant if it:
 6. If it advertises `tool_approval`, emits `approval_request` for gated calls and honors
    `approval_response` (including `updated_input` passthrough) before proceeding.
 7. If it advertises `permissions`, self-enforces the `initialize.permissions` scope (§6.6).
-8. Ignores unknown fields and unknown message types without failing.
-9. Handles `shutdown` by terminating its native agent and exiting cleanly.
-10. Writes only human-readable logs to stderr (stdio binding).
+8. If it advertises `execution_context`, emits `context` frames reflecting its blocked / waiting-for-model / progress state (§6.7).
+9. Ignores unknown fields and unknown message types without failing.
+10. Handles `shutdown` by terminating its native agent and exiting cleanly.
+11. Writes only human-readable logs to stderr (stdio binding).
 
 ## 10. Conformance kit
 
@@ -422,8 +464,9 @@ adapters and hosts:
 ## 11. Compatibility and versioning
 
 - The v1 message schema is a **compatible superset** of agentd's original v1: every `type` tag and field
-  agentd defines has identical meaning here. Fields added by this specification (`initialize.permissions`
-  and its `permissions` capability) are **optional and additive**; a receiver that does not know them
+  agentd defines has identical meaning here. Fields and messages added by this specification (the
+  `initialize.permissions` scope + `permissions` capability, and the `context` message + its
+  `execution_context` capability) are **optional and additive**; a receiver that does not know them
   ignores them per §3, so an agentd host and a horde host interoperate with the same adapter.
 - Within v1, evolution is additive only: new optional fields, new message types, new capability tokens.
   Removing or repurposing a field, or changing a `type` tag's meaning, requires a new

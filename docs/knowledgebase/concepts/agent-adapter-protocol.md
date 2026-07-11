@@ -39,7 +39,8 @@ jobs.
   **full-duplex**.
 * **Capabilities.** Adapters advertise tokens (`streaming`, `thinking`,
   `tool_approval`, `usage_reporting`, `cost_reporting`, `context_clear`,
-  `cancel`, `mcp`, `system_prompt_append`, `resume`, `permissions`); the host
+  `cancel`, `mcp`, `system_prompt_append`, `resume`, `permissions`,
+  `execution_context`); the host
   degrades gracefully when one is absent.
 
 # Bindings

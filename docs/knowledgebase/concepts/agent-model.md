@@ -19,14 +19,27 @@ See `agents/agents.go` for the `greeter` hello-world example.
 
 Agents are hosted as subprocesses, not in-process. The server spawns the
 horde binary itself with the hidden `agent` subcommand
-(`horde agent --name <name>`). See
-[subprocess agent hosting](/docs/knowledgebase/patterns/subprocess-agent-hosting.md).
+(`horde agent --name <name> --socket <path>`). Each agent subprocess serves
+a local HTTP API (`GET /health`, `POST /invoke` with SSE) on a unix domain
+socket. The node server reads a `spawn_ready` handshake on the subprocess's
+stdout to discover the socket path, then reverse-proxies invocation
+requests to it. See
+[subprocess agent hosting](/docs/knowledgebase/patterns/subprocess-agent-hosting.md)
+and the [agent invocation transport decision](/docs/knowledgebase/decisions/agent-invocation-transport.md).
 
 # Invocation
 
-For this first version the agent host blocks until asked to stop; the agent
-is constructed to validate wiring. Real invocation driven by the server API
-is a later phase (see the [roadmap](/docs/knowledgebase/plans/roadmap.md)).
+The agent is run through a `runner.Runner` (from `google.golang.org/adk/v2/runner`)
+with an in-memory session service. The `/invoke` handler calls
+`runner.Run(ctx, userID, sessionID, msg, runConfig)` and streams the
+returned `iter.Seq2[*session.Event, error]` as SSE events. Each event
+carries a sequential `id:` field for `Last-Event-ID` resume.
+
+The run is decoupled from the HTTP request lifecycle: a background
+goroutine appends events to a per-invocation ring buffer, and the HTTP
+handler is a reader/tailer that replays from the buffer and tails new
+events. Client disconnect does not cancel the run, so a reconnecting client
+can resume from the buffer with `Last-Event-ID`.
 
 # Streaming
 

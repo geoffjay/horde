@@ -46,7 +46,7 @@ func do(t *testing.T, h http.Handler, method, target string, body any) *httptest
 
 func TestGetNode(t *testing.T) {
 	srv := newTestServer(t)
-	h := Router(srv, srv.EventBus())
+	h := Router(srv)
 
 	w := do(t, h, http.MethodGet, "/api/v1/node", nil)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -58,7 +58,7 @@ func TestGetNode(t *testing.T) {
 
 func TestGetHealth(t *testing.T) {
 	srv := newTestServer(t)
-	h := Router(srv, srv.EventBus())
+	h := Router(srv)
 
 	w := do(t, h, http.MethodGet, "/api/v1/health", nil)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -69,7 +69,7 @@ func TestGetHealth(t *testing.T) {
 
 func TestGetReady_Master(t *testing.T) {
 	srv := newTestServer(t)
-	h := Router(srv, srv.EventBus())
+	h := Router(srv)
 
 	w := do(t, h, http.MethodGet, "/api/v1/ready", nil)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -86,7 +86,7 @@ func TestGetReady_SlaveDegraded(t *testing.T) {
 	srv, err := server.New(server.Config{Mode: server.ModeSlave, SpawnDefaultAgent: false})
 	require.NoError(t, err)
 	require.NoError(t, srv.Start(context.Background()))
-	h := Router(srv, srv.EventBus())
+	h := Router(srv)
 
 	w := do(t, h, http.MethodGet, "/api/v1/ready", nil)
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
@@ -98,7 +98,7 @@ func TestGetReady_SlaveDegraded(t *testing.T) {
 
 func TestListAgents_Empty(t *testing.T) {
 	srv := newTestServer(t)
-	h := Router(srv, srv.EventBus())
+	h := Router(srv)
 
 	w := do(t, h, http.MethodGet, "/api/v1/agents", nil)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -109,7 +109,7 @@ func TestListAgents_Empty(t *testing.T) {
 
 func TestCreateAgent_RequiresName(t *testing.T) {
 	srv := newTestServer(t)
-	h := Router(srv, srv.EventBus())
+	h := Router(srv)
 
 	w := do(t, h, http.MethodPost, "/api/v1/agents", createAgentRequest{})
 	require.Equal(t, http.StatusBadRequest, w.Code)
@@ -117,7 +117,7 @@ func TestCreateAgent_RequiresName(t *testing.T) {
 
 func TestCreateAgent_MissingBody(t *testing.T) {
 	srv := newTestServer(t)
-	h := Router(srv, srv.EventBus())
+	h := Router(srv)
 
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewReader([]byte("not json")))
 	w := httptest.NewRecorder()
@@ -127,7 +127,7 @@ func TestCreateAgent_MissingBody(t *testing.T) {
 
 func TestDeleteAgent_NotFound(t *testing.T) {
 	srv := newTestServer(t)
-	h := Router(srv, srv.EventBus())
+	h := Router(srv)
 
 	w := do(t, h, http.MethodDelete, "/api/v1/agents/agent-doesnotexist", nil)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -135,7 +135,7 @@ func TestDeleteAgent_NotFound(t *testing.T) {
 
 func TestClusterRegister(t *testing.T) {
 	srv := newTestServer(t)
-	h := Router(srv, srv.EventBus())
+	h := Router(srv)
 
 	w := do(t, h, http.MethodPost, "/api/v1/cluster/register", registerRequest{
 		NodeID: "slave-1", Mode: "slave", Addr: "slave1:13420",
@@ -149,7 +149,7 @@ func TestClusterRegister(t *testing.T) {
 
 func TestClusterRegister_RequiresNodeID(t *testing.T) {
 	srv := newTestServer(t)
-	h := Router(srv, srv.EventBus())
+	h := Router(srv)
 
 	w := do(t, h, http.MethodPost, "/api/v1/cluster/register", registerRequest{Mode: "slave"})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -157,7 +157,7 @@ func TestClusterRegister_RequiresNodeID(t *testing.T) {
 
 func TestClusterHeartbeat(t *testing.T) {
 	srv := newTestServer(t)
-	h := Router(srv, srv.EventBus())
+	h := Router(srv)
 
 	w := do(t, h, http.MethodPost, "/api/v1/cluster/register", registerRequest{
 		NodeID: "slave-1", Mode: "slave", Addr: "slave1:13420",
@@ -175,7 +175,7 @@ func TestClusterHeartbeat(t *testing.T) {
 
 func TestClusterHeartbeat_RequiresNodeID(t *testing.T) {
 	srv := newTestServer(t)
-	h := Router(srv, srv.EventBus())
+	h := Router(srv)
 
 	w := do(t, h, http.MethodPost, "/api/v1/cluster/heartbeat", heartbeatRequest{Agents: []string{"x"}})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -183,7 +183,7 @@ func TestClusterHeartbeat_RequiresNodeID(t *testing.T) {
 
 func TestClusterNodes(t *testing.T) {
 	srv := newTestServer(t)
-	h := Router(srv, srv.EventBus())
+	h := Router(srv)
 
 	// Register a slave, then heartbeat with an agent list.
 	w := do(t, h, http.MethodPost, "/api/v1/cluster/register", registerRequest{

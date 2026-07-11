@@ -142,6 +142,19 @@
       "name": "error_fatal",
       "direction": "agent",
       "message": { "type": "error", "fatal": true, "code": "spawn_failed", "message": "claude not found on PATH" }
+    },
+    {
+      "name": "context_blocked",
+      "direction": "agent",
+      "message": {
+        "type": "context",
+        "turn_id": "t1",
+        "issue": "proj-42",
+        "blocked": true,
+        "blocked_reason": "needs an API key",
+        "waiting_model": false,
+        "note": "extracting the tokenizer"
+      }
     }
   ]
 }

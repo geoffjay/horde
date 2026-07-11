@@ -16,12 +16,17 @@
 package server
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -65,6 +70,15 @@ type Config struct {
 	// NodeID is the unique identifier for this node within the cluster. When
 	// empty a generated id is used. Populated from cluster.node_id.
 	NodeID string
+	// SocketDir is the directory for agent unix socket files. Defaults to
+	// os.TempDir when empty.
+	SocketDir string
+	// ReadyTimeout is how long to wait for an agent subprocess ready
+	// handshake. Defaults to defaultReadyTimeout when zero.
+	ReadyTimeout time.Duration
+	// HealthPollInterval is how often to poll each agent's /health. Defaults
+	// to defaultHealthPollInterval when zero. Zero disables polling.
+	HealthPollInterval time.Duration
 }
 
 // Server is the horde node. It owns a set of agent subprocesses and, when
@@ -107,11 +121,13 @@ const (
 
 // agentProc tracks one spawned agent subprocess.
 type agentProc struct {
-	id     string
-	name   string
-	state  AgentState
-	cmd    *exec.Cmd
-	doneCh chan struct{}
+	id         string
+	name       string
+	state      AgentState
+	cmd        *exec.Cmd
+	doneCh     chan struct{}
+	socketPath string // populated from the subprocess ready handshake
+	healthy    bool   // true unless a health poll has failed
 }
 
 const (
@@ -127,6 +143,17 @@ const (
 	slaveStaleAfter = 3 * leaderReconnectInterval
 	// defaultServerPort is the default TCP port for the node API listener.
 	defaultServerPort = 13420
+	// idTimeDivisor truncates the UnixNano component of agent ids to keep
+	// them short (unix socket paths have a 104-char limit on macOS).
+	idTimeDivisor = 100000
+	// defaultReadyTimeout is the default time to wait for an agent
+	// subprocess ready handshake.
+	defaultReadyTimeout = 5 * time.Second
+	// defaultHealthPollInterval is the default interval for polling agent
+	// /health endpoints to detect hung processes.
+	defaultHealthPollInterval = 30 * time.Second
+	// healthPollTimeout is the timeout for a single agent health poll.
+	healthPollTimeout = 5 * time.Second
 )
 
 // New constructs a Server for the given mode. Config is a value-type config
@@ -147,6 +174,12 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 	}
 	if cfg.Port == 0 {
 		cfg.Port = defaultServerPort
+	}
+	if cfg.ReadyTimeout == 0 {
+		cfg.ReadyTimeout = defaultReadyTimeout
+	}
+	if cfg.HealthPollInterval == 0 {
+		cfg.HealthPollInterval = defaultHealthPollInterval
 	}
 	return &Server{
 		cfg:    cfg,
@@ -185,6 +218,9 @@ func (s *Server) Start(ctx context.Context) error {
 	if s.cfg.Mode == ModeSlave {
 		go s.connectLeader(ctx)
 	}
+
+	// Start background health polling for agent subprocesses.
+	s.startHealthPolling(ctx)
 
 	return nil
 }
@@ -247,60 +283,55 @@ func (s *Server) localAddr() string {
 }
 
 // SpawnAgent starts a subprocess for the named agent and registers it. The
-// name must correspond to an agent the binary knows how to host.
+// name must correspond to an agent in the registry (agents.Get).
 func (s *Server) SpawnAgent(ctx context.Context, name string) (string, error) {
-	if _, err := agents.New(); err != nil {
+	// Verify the agent exists in the registry before spawning.
+	if _, err := agents.Get(name); err != nil {
 		return "", fmt.Errorf("verify agent %q: %w", name, err)
 	}
 
 	s.mu.Lock()
-	id := fmt.Sprintf("agent-%d-%d", s.nextID, time.Now().UnixNano())
+	id := fmt.Sprintf("a%d-%d", s.nextID, time.Now().UnixNano()%idTimeDivisor)
 	s.nextID++
 	s.mu.Unlock()
 
-	cmdCtx, cancel := context.WithCancel(context.Background())
-	args := []string{"agent", "--name", name}
-	// AgentCommand is operator-controlled config, not untrusted user input.
-	cmd := exec.CommandContext(cmdCtx, s.cfg.AgentCommand, args...) //#nosec G204
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Cancel = func() error {
-		// Send SIGTERM for a graceful shutdown, fall back to SIGKILL after
-		// a grace period handled by exec.CommandContext.
-		_ = cmd.Process.Signal(os.Interrupt)
-		return nil
+	socketPath := s.agentSocketPath(id)
+
+	cmd, cancel, err := s.startAgentProcess(name, socketPath)
+	if err != nil {
+		cancel()
+		return "", err
 	}
 
-	if err := cmd.Start(); err != nil {
+	// Read the spawn_ready handshake from stdout with a timeout.
+	confirmedSocket, readyErr := readReadyHandshake(cmd.stdout, s.cfg.ReadyTimeout)
+	if readyErr != nil {
+		_ = cmd.Process.Signal(os.Interrupt)
+		_ = cmd.Wait()
 		cancel()
-		return "", fmt.Errorf("start agent %q: %w", name, err)
+		_ = os.Remove(socketPath)
+		return "", fmt.Errorf("agent %q ready handshake: %w", name, readyErr)
 	}
 
 	proc := &agentProc{
-		id:     id,
-		name:   name,
-		state:  AgentRunning,
-		cmd:    cmd,
-		doneCh: make(chan struct{}),
+		id:         id,
+		name:       name,
+		state:      AgentRunning,
+		cmd:        cmd.Cmd,
+		doneCh:     make(chan struct{}),
+		socketPath: confirmedSocket,
+		healthy:    true,
 	}
 
 	s.mu.Lock()
 	s.procs[id] = proc
 	s.mu.Unlock()
 
-	logrus.WithFields(logrus.Fields{"agent": name, "id": id}).Info("agent started")
+	logrus.WithFields(logrus.Fields{
+		"agent": name, "id": id, "socket": confirmedSocket,
+	}).Info("agent started")
 
-	go func() {
-		_ = cmd.Wait()
-		s.mu.Lock()
-		if p, ok := s.procs[id]; ok {
-			p.state = AgentExited
-		}
-		delete(s.procs, id)
-		s.mu.Unlock()
-		close(proc.doneCh)
-		logrus.WithField("id", id).Info("agent exited")
-	}()
+	s.trackAgentExit(proc, id, confirmedSocket)
 
 	// Wire cancellation to the caller's ctx so stopping the server tears
 	// down spawned agents.
@@ -316,22 +347,85 @@ func (s *Server) SpawnAgent(ctx context.Context, name string) (string, error) {
 	return id, nil
 }
 
+// agentSocketPath returns the unix socket path for a given agent id.
+func (s *Server) agentSocketPath(id string) string {
+	socketDir := s.cfg.SocketDir
+	if socketDir == "" {
+		socketDir = os.TempDir()
+	}
+	return filepath.Join(socketDir, id+".sock")
+}
+
+// agentCmd wraps exec.Cmd with a reference to the stdout pipe for the
+// ready handshake.
+type agentCmd struct {
+	*exec.Cmd
+	stdout io.ReadCloser
+}
+
+// startAgentProcess creates and starts the agent subprocess, returning the
+// cmd and a cancel func. The caller is responsible for cancel() on error.
+func (s *Server) startAgentProcess(name, socketPath string) (*agentCmd, func(), error) {
+	cmdCtx, cancel := context.WithCancel(context.Background())
+	args := []string{"agent", "--name", name, "--socket", socketPath}
+	// AgentCommand is operator-controlled config, not untrusted user input.
+	cmd := exec.CommandContext(cmdCtx, s.cfg.AgentCommand, args...) //#nosec G204
+	cmd.Stderr = os.Stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, cancel, fmt.Errorf("create stdout pipe for agent %q: %w", name, err)
+	}
+	cmd.Cancel = func() error {
+		_ = cmd.Process.Signal(os.Interrupt)
+		return nil
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, cancel, fmt.Errorf("start agent %q: %w", name, err)
+	}
+	return &agentCmd{Cmd: cmd, stdout: stdout}, cancel, nil
+}
+
+// trackAgentExit starts a goroutine that cleans up the agent proc when the
+// subprocess exits.
+func (s *Server) trackAgentExit(proc *agentProc, id, socketPath string) {
+	go func() {
+		_ = proc.cmd.Wait()
+		s.mu.Lock()
+		if p, ok := s.procs[id]; ok {
+			p.state = AgentExited
+		}
+		delete(s.procs, id)
+		s.mu.Unlock()
+		close(proc.doneCh)
+		_ = os.Remove(socketPath)
+		logrus.WithField("id", id).Info("agent exited")
+	}()
+}
+
 // Agents returns a snapshot of currently running agent subprocesses.
 func (s *Server) Agents() []AgentInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]AgentInfo, 0, len(s.procs))
 	for _, p := range s.procs {
-		out = append(out, AgentInfo{ID: p.id, Name: p.name, Status: p.state})
+		out = append(out, AgentInfo{
+			ID:      p.id,
+			Name:    p.name,
+			Status:  p.state,
+			Healthy: p.healthy,
+			Socket:  p.socketPath,
+		})
 	}
 	return out
 }
 
 // AgentInfo describes a running agent.
 type AgentInfo struct {
-	ID     string
-	Name   string
-	Status AgentState
+	ID      string
+	Name    string
+	Status  AgentState
+	Healthy bool
+	Socket  string
 }
 
 // StopAgent signals one agent by id to stop, mirroring Run's shutdown path:
@@ -469,6 +563,149 @@ func (s *Server) agentNames() []string {
 		names = append(names, p.name)
 	}
 	return names
+}
+
+// AgentSocket returns the unix socket path for the given agent id, or ""
+// if the agent is unknown or not yet ready.
+func (s *Server) AgentSocket(id string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.procs[id]
+	if !ok {
+		return ""
+	}
+	return p.socketPath
+}
+
+// IsAgentReady reports whether the agent subprocess has completed its ready
+// handshake (i.e. its socket path is populated).
+func (s *Server) IsAgentReady(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.procs[id]
+	return ok && p.socketPath != ""
+}
+
+// startHealthPolling launches a background goroutine that polls each agent's
+// /health endpoint at the configured interval. If an agent fails to respond
+// within healthPollTimeout it is marked unhealthy. The goroutine exits when
+// ctx is canceled.
+func (s *Server) startHealthPolling(ctx context.Context) {
+	if s.cfg.HealthPollInterval <= 0 {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(s.cfg.HealthPollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.pollAgentHealths(ctx)
+			}
+		}
+	}()
+}
+
+// pollAgentHealths polls every running agent's /health endpoint.
+func (s *Server) pollAgentHealths(ctx context.Context) {
+	s.mu.Lock()
+	procs := make([]*agentProc, 0, len(s.procs))
+	for _, p := range s.procs {
+		procs = append(procs, p)
+	}
+	s.mu.Unlock()
+
+	for _, p := range procs {
+		if p.socketPath == "" {
+			continue
+		}
+		healthy := s.pollOneAgent(ctx, p.socketPath)
+		s.mu.Lock()
+		if p2, ok := s.procs[p.id]; ok {
+			p2.healthy = healthy
+		}
+		s.mu.Unlock()
+	}
+}
+
+// pollOneAgent polls a single agent's /health over its unix socket. Returns
+// true if the agent responded with 200.
+func (s *Server) pollOneAgent(ctx context.Context, socketPath string) bool {
+	client := &http.Client{
+		Timeout: healthPollTimeout,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				d := net.Dialer{}
+				return d.DialContext(ctx, "unix", socketPath) //#nosec G704 // server-controlled socket path
+			},
+		},
+	}
+	pollCtx, cancel := context.WithTimeout(ctx, healthPollTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(pollCtx, http.MethodGet,
+		"http://unix/health", http.NoBody)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode == http.StatusOK
+}
+
+// readyHandshake is the NDJSON message emitted by the agent subprocess on
+// stdout to announce its unix socket is ready.
+type readyHandshake struct {
+	Type   string `json:"type"`
+	Socket string `json:"socket"`
+}
+
+// readReadyHandshake reads the first line from the agent subprocess stdout,
+// parses it as a spawn_ready JSON message, and returns the socket path. It
+// fails if no valid handshake arrives within the timeout.
+func readReadyHandshake(r io.Reader, timeout time.Duration) (string, error) {
+	type result struct {
+		socket string
+		err    error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		scanner := bufio.NewScanner(r)
+		if scanner.Scan() {
+			line := scanner.Bytes()
+			var msg readyHandshake
+			if err := json.Unmarshal(line, &msg); err != nil {
+				ch <- result{"", fmt.Errorf("parse ready handshake: %w", err)}
+				return
+			}
+			if msg.Type != "spawn_ready" {
+				ch <- result{"", fmt.Errorf("unexpected handshake type %q, want %q", msg.Type, "spawn_ready")}
+				return
+			}
+			if msg.Socket == "" {
+				ch <- result{"", errors.New("ready handshake has empty socket path")}
+				return
+			}
+			ch <- result{msg.Socket, nil}
+			return
+		}
+		if err := scanner.Err(); err != nil {
+			ch <- result{"", fmt.Errorf("read ready handshake: %w", err)}
+			return
+		}
+		ch <- result{"", errors.New("agent subprocess closed stdout before ready handshake")}
+	}()
+	select {
+	case res := <-ch:
+		return res.socket, res.err
+	case <-time.After(timeout):
+		return "", errors.New("agent subprocess ready handshake timed out")
+	}
 }
 
 // Run blocks until ctx is canceled, keeping the server alive. It is the

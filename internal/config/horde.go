@@ -37,6 +37,18 @@ type ClusterConfig struct {
 	DiscoveryMechanism string `mapstructure:"discovery_mechanism"`
 }
 
+// AgentConfig represents agent subprocess configuration.
+type AgentConfig struct {
+	// SocketDir is the directory for agent unix socket files.
+	SocketDir string `mapstructure:"socket_dir"`
+	// ReadyTimeout is how long to wait for an agent subprocess ready
+	// handshake, in seconds.
+	ReadyTimeout int `mapstructure:"ready_timeout"`
+	// HealthPollInterval is how often to poll each agent's /health, in
+	// seconds. Zero disables polling.
+	HealthPollInterval int `mapstructure:"health_poll_interval"`
+}
+
 // Config represents the configuration for the horde application.
 //
 // It embeds the generic config pieces (Log, Service) and adds horde-specific
@@ -46,6 +58,7 @@ type Config struct {
 	Mode    string        `mapstructure:"mode"`
 	Server  ServerConfig  `mapstructure:"server"`
 	Cluster ClusterConfig `mapstructure:"cluster"`
+	Agent   AgentConfig   `mapstructure:"agent"`
 	Log     LogConfig     `mapstructure:"log"`
 	Service ServiceConfig `mapstructure:"service"`
 }
@@ -61,6 +74,9 @@ const (
 	defaultServerReadTimeout  = 30
 	defaultServerWriteTimeout = 30
 	defaultServerIdleTimeout  = 120
+
+	defaultAgentReadyTimeout       = 5
+	defaultAgentHealthPollInterval = 30
 
 	// maxPort is the largest valid TCP port number.
 	maxPort = 65535
@@ -82,6 +98,11 @@ var defaults = map[string]any{
 	// Cluster defaults
 	"cluster.node_id":             "",
 	"cluster.discovery_mechanism": "static",
+
+	// Agent defaults
+	"agent.socket_dir":           "/tmp",
+	"agent.ready_timeout":        defaultAgentReadyTimeout,
+	"agent.health_poll_interval": defaultAgentHealthPollInterval,
 
 	// Logging defaults
 	"log.formatter": "text",

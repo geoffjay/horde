@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,11 +11,15 @@ import (
 	"github.com/geoffjay/horde/internal/server"
 )
 
+// errAgentNotFound is the error message for an unknown agent id.
+const errAgentNotFound = "agent not found"
+
 // agentDTO is the JSON shape for an agent in API responses.
 type agentDTO struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Healthy bool   `json:"healthy"`
 }
 
 // createAgentRequest is the body of POST /api/v1/agents.
@@ -47,7 +52,7 @@ func createAgent(srv agentView) http.HandlerFunc {
 			return
 		}
 
-		id, err := srv.SpawnAgent(r.Context(), req.Name)
+		id, err := srv.SpawnAgent(context.Background(), req.Name)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 			return
@@ -55,7 +60,7 @@ func createAgent(srv agentView) http.HandlerFunc {
 		// Reflect the freshly-spawned agent. srv.Agents() is a snapshot;
 		// the new proc may not be visible yet under contention, so fall
 		// back to a synthesized DTO.
-		dto := agentDTO{ID: id, Name: req.Name, Status: string(server.AgentRunning)}
+		dto := agentDTO{ID: id, Name: req.Name, Status: string(server.AgentRunning), Healthy: true}
 		for _, a := range srv.Agents() {
 			if a.ID == id {
 				dto = toAgentDTO(a)
@@ -76,7 +81,7 @@ func getAgent(srv agentView) http.HandlerFunc {
 				return
 			}
 		}
-		writeJSON(w, http.StatusNotFound, errorResponse{Error: "agent not found"})
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: errAgentNotFound})
 	}
 }
 
@@ -86,7 +91,7 @@ func deleteAgent(srv agentView) http.HandlerFunc {
 		id := chi.URLParam(r, "id")
 		if err := srv.StopAgent(id); err != nil {
 			if errors.Is(err, server.ErrAgentNotFound) {
-				writeJSON(w, http.StatusNotFound, errorResponse{Error: "agent not found"})
+				writeJSON(w, http.StatusNotFound, errorResponse{Error: errAgentNotFound})
 				return
 			}
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
@@ -102,7 +107,7 @@ func toAgentDTO(a server.AgentInfo) agentDTO {
 	if status == "" {
 		status = string(server.AgentRunning)
 	}
-	return agentDTO{ID: a.ID, Name: a.Name, Status: status}
+	return agentDTO{ID: a.ID, Name: a.Name, Status: status, Healthy: a.Healthy}
 }
 
 // errorResponse is a generic error envelope.

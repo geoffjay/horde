@@ -18,9 +18,9 @@ import (
 )
 
 // Router builds the chi router for the node API, wiring all /api/v1 routes
-// against the given server and event bus. It is the single entry point used
-// by Server.Run's HTTP listener.
-func Router(srv *server.Server, bus *server.EventBus) http.Handler {
+// against the given server. It is the single entry point used by Server.Run's
+// HTTP listener.
+func Router(srv *server.Server) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
@@ -37,7 +37,7 @@ func Router(srv *server.Server, bus *server.EventBus) http.Handler {
 		r.Post("/agents", createAgent(srv))
 		r.Get("/agents/{id}", getAgent(srv))
 		r.Delete("/agents/{id}", deleteAgent(srv))
-		r.Post("/agents/{id}/invoke", invokeAgent(srv, bus))
+		r.Post("/agents/{id}/invoke", invokeAgent(srv))
 
 		// Cluster (slave ↔ master)
 		r.Post("/cluster/register", registerSlave(srv))

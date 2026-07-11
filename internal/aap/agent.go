@@ -150,3 +150,33 @@ func (m Error) MarshalJSON() ([]byte, error) {
 	type body Error
 	return marshalTagged(TypeError, body(m))
 }
+
+// ContextUpdate is the agent's self-reported execution context (A→H, capability
+// execution_context; wire tag "context"). Every field is optional: a frame is a
+// partial update the host merges over the last known state. The host owns
+// project/issue assignment; the agent only refines Issue and reports runtime
+// fields.
+type ContextUpdate struct {
+	// TurnID is the turn this update pertains to, if any.
+	TurnID *string `json:"turn_id,omitempty"`
+	// Issue is the agent's refinement of the issue it is working.
+	Issue *string `json:"issue,omitempty"`
+	// Blocked reports the agent cannot proceed without external input.
+	Blocked *bool `json:"blocked,omitempty"`
+	// BlockedReason explains a blocked state.
+	BlockedReason *string `json:"blocked_reason,omitempty"`
+	// WaitingModel reports the agent is awaiting a model response.
+	WaitingModel *bool `json:"waiting_model,omitempty"`
+	// Note is short free-text progress.
+	Note *string `json:"note,omitempty"`
+}
+
+// Type implements [AgentMessage].
+func (ContextUpdate) Type() string    { return TypeContext }
+func (ContextUpdate) isAgentMessage() {}
+
+// MarshalJSON implements json.Marshaler, injecting the "type" tag.
+func (m ContextUpdate) MarshalJSON() ([]byte, error) {
+	type body ContextUpdate
+	return marshalTagged(TypeContext, body(m))
+}

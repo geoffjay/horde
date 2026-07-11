@@ -48,8 +48,9 @@ every edit.
 * [Architecture](concepts/architecture.md) - the horde node, master/slave modes, and agent subprocess model.
 * [Configuration](concepts/configuration.md) - the layered config system, search paths, and env overrides.
 * [Environment](concepts/environment.md) - ports, services, and environment variables.
-* [Agent model](concepts/agent-model.md) - how ADK agents are defined, hosted, and invoked.
+* [Agent model](concepts/agent-model.md) - how ADK agents are defined, hosted as subprocesses, and invoked over HTTP on unix sockets.
 * [Agent Adapter Protocol (AAP)](concepts/agent-adapter-protocol.md) - vendor-neutral NDJSON protocol for driving external coding agents via adapters.
+* [Agent execution context](concepts/agent-execution-context.md) - queryable per-agent work-state (project, issue, blocked, waiting, errors, approvals).
 
 ## Decisions
 
@@ -74,6 +75,7 @@ every edit.
 * [Roadmap](plans/roadmap.md) - phasing of horde capabilities.
 * [Phase 2 — Server API](plans/phase-2-server-api.md) - node API transport, event streaming, slave↔master contract.
 * [Phase 3 — Agent mechanism](plans/phase-3-agents.md) - long-lived agent subprocesses invoked over HTTP on unix sockets, streaming, resume, agent registry.
+* [Agent execution context](plans/agent-execution-context.md) - queryable per-agent work-state, materialized at the node from AAP signals, aggregated across the cluster with redacted remote access.
 
 ## References
 

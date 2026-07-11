@@ -23,6 +23,7 @@ type agentView interface {
 	Agents() []server.AgentInfo
 	SpawnAgent(ctx context.Context, name string) (string, error)
 	StopAgent(id string) error
+	AgentSocket(id string) string
 }
 
 // clusterView is the subset of *server.Server that cluster handlers need.

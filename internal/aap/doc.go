@@ -59,6 +59,9 @@ const (
 	CapResume = "resume"
 	// CapPermissions indicates the adapter self-enforces initialize.permissions.
 	CapPermissions = "permissions"
+	// CapExecutionContext indicates the adapter emits context frames reporting
+	// its blocked / waiting-for-model / progress state.
+	CapExecutionContext = "execution_context"
 )
 
 // TransportFromEnv resolves the transport binding from env, preferring the

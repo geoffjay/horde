@@ -45,6 +45,9 @@ environment variable (any extension: `yaml`, `yml`, `json`, `toml`).
 | `server.idle_timeout`            | `120`               | `HORDE_SERVER_IDLE_TIMEOUT`            | API idle timeout (seconds).             |
 | `cluster.node_id`                | *(empty)*           | `HORDE_CLUSTER_NODE_ID`                | Unique node id within the cluster.       |
 | `cluster.discovery_mechanism`    | `static`            | `HORDE_CLUSTER_DISCOVERY_MECHANISM`    | How nodes find each other (`static`).   |
+| `agent.socket_dir`               | `/tmp`              | `HORDE_AGENT_SOCKET_DIR`               | Directory for agent unix socket files.  |
+| `agent.ready_timeout`            | `5`                 | `HORDE_AGENT_READY_TIMEOUT`            | Seconds to wait for agent ready handshake. |
+| `agent.health_poll_interval`     | `30`                | `HORDE_AGENT_HEALTH_POLL_INTERVAL`     | Seconds between agent health polls.     |
 | `log.formatter`                  | `text`              | `HORDE_LOG_FORMATTER`                  | Log formatter: `text` or `json`.        |
 | `log.level`                      | `info`              | `HORDE_LOG_LEVEL`                      | Log level.                               |
 | `service.id`                     | `org.horde.Horde`   | `HORDE_SERVICE_ID`                      | Service identifier.                      |
@@ -56,10 +59,13 @@ environment variable (any extension: `yaml`, `yml`, `json`, `toml`).
 The long-running process that spawns and manages agent subprocesses. Runs
 in `master` or `slave` mode (see `--mode`). Listens on `server.port`.
 
-### horde agent subprocess (`horde agent --name <name>`, hidden)
+### horde agent subprocess (`horde agent --name <name> --socket <path>`, hidden)
 
-A subprocess of the horde binary that hosts a single ADK agent. Spawned by
-the node; not intended to be invoked directly.
+A subprocess of the horde binary that hosts a single ADK agent, serving it
+over HTTP on a unix domain socket. Spawned by the node; not intended to be
+invoked directly. The node reads a `spawn_ready` NDJSON handshake on the
+subprocess's stdout to discover the socket path, then reverse-proxies
+invocation requests to `POST /invoke` on that socket.
 
 ### horde aap-mock (`horde aap-mock`, hidden)
 

@@ -30,7 +30,7 @@ func TestSlaveRegistersWithRealMasterAPI(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, master.Start(ctx))
 
-	ts := httptest.NewServer(api.Router(master, master.EventBus()))
+	ts := httptest.NewServer(api.Router(master))
 	defer ts.Close()
 
 	slave, err := server.New(server.Config{

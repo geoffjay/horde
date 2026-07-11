@@ -28,6 +28,7 @@ const (
 	TypeLog             = "log"
 	TypeApprovalRequest = "approval_request"
 	TypeError           = "error"
+	TypeContext         = "context"
 )
 
 // HostMessage is a message sent by the host (orchestrator) to the agent
@@ -80,6 +81,7 @@ var agentDecoders = map[string]func([]byte) (AgentMessage, error){
 	TypeLog:             decodeAgent[Log],
 	TypeApprovalRequest: decodeAgent[ApprovalRequest],
 	TypeError:           decodeAgent[Error],
+	TypeContext:         decodeAgent[ContextUpdate],
 }
 
 func decodeHost[T HostMessage](data []byte) (HostMessage, error) {
