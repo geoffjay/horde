@@ -1,0 +1,147 @@
+{
+  "protocol_version": 1,
+  "description": "Canonical AAP v1 wire vectors. Each message is the minimal canonical form a conforming encoder produces (optional/empty fields omitted). Both horde and agentd validate their (de)serializers against this file.",
+  "cases": [
+    {
+      "name": "initialize_minimal",
+      "direction": "host",
+      "message": { "type": "initialize", "protocol_version": 1, "workspace": { "cwd": "/repo" } }
+    },
+    {
+      "name": "initialize_full",
+      "direction": "host",
+      "message": {
+        "type": "initialize",
+        "protocol_version": 1,
+        "model": "claude-sonnet-5",
+        "system_prompt": { "mode": "append", "text": "be terse" },
+        "workspace": { "cwd": "/repo", "additional_dirs": ["/other"], "worktree": true },
+        "tools": { "mcp_servers": { "horde": { "command": "horde", "args": ["mcp"], "env": { "K": "v" } } } },
+        "permissions": { "mode": "read_only", "writable_paths": ["docs/"], "deny_paths": [".git/", ".env"] }
+      }
+    },
+    {
+      "name": "prompt_text",
+      "direction": "host",
+      "message": { "type": "prompt", "turn_id": "t1", "content": "Refactor the parser." }
+    },
+    {
+      "name": "prompt_blocks",
+      "direction": "host",
+      "message": {
+        "type": "prompt",
+        "turn_id": "t1",
+        "content": [
+          { "type": "text", "text": "a" },
+          { "type": "thinking", "text": "z" },
+          { "type": "text", "text": "b" }
+        ]
+      }
+    },
+    {
+      "name": "cancel_turn",
+      "direction": "host",
+      "message": { "type": "cancel", "turn_id": "t1" }
+    },
+    {
+      "name": "cancel_current",
+      "direction": "host",
+      "message": { "type": "cancel" }
+    },
+    {
+      "name": "clear_context",
+      "direction": "host",
+      "message": { "type": "clear_context" }
+    },
+    {
+      "name": "shutdown",
+      "direction": "host",
+      "message": { "type": "shutdown" }
+    },
+    {
+      "name": "approval_response_allow",
+      "direction": "host",
+      "message": {
+        "type": "approval_response",
+        "request_id": "r1",
+        "decision": "allow",
+        "updated_input": { "command": "ls" }
+      }
+    },
+    {
+      "name": "ready",
+      "direction": "agent",
+      "message": {
+        "type": "ready",
+        "protocol_version": 1,
+        "agent": { "name": "claude-code", "version": "2.1.x" },
+        "capabilities": ["streaming", "tool_approval", "permissions"],
+        "models": ["claude-sonnet-5", "claude-opus-4-8"]
+      }
+    },
+    {
+      "name": "message",
+      "direction": "agent",
+      "message": {
+        "type": "message",
+        "turn_id": "t1",
+        "content": [
+          { "type": "thinking", "text": "The parser is in src/parse.rs" },
+          { "type": "text", "text": "I'll extract the tokenizer." }
+        ]
+      }
+    },
+    {
+      "name": "tool_call",
+      "direction": "agent",
+      "message": { "type": "tool_call", "turn_id": "t1", "call_id": "c1", "name": "Bash", "input": { "command": "ls" } }
+    },
+    {
+      "name": "turn_complete",
+      "direction": "agent",
+      "message": {
+        "type": "turn_complete",
+        "turn_id": "t1",
+        "is_error": false,
+        "stop_reason": "end_turn",
+        "result_text": "Done.",
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 340,
+          "cache_read_input_tokens": 800,
+          "cache_creation_input_tokens": 0,
+          "total_cost_usd": 0.0123,
+          "num_turns": 3,
+          "duration_ms": 5000,
+          "duration_api_ms": 4200
+        }
+      }
+    },
+    {
+      "name": "status_busy",
+      "direction": "agent",
+      "message": { "type": "status", "state": "busy" }
+    },
+    {
+      "name": "log",
+      "direction": "agent",
+      "message": { "type": "log", "level": "info", "message": "spawned claude pid=1234" }
+    },
+    {
+      "name": "approval_request",
+      "direction": "agent",
+      "message": {
+        "type": "approval_request",
+        "request_id": "r1",
+        "call_id": "c1",
+        "tool_name": "Bash",
+        "input": { "command": "rm -rf build" }
+      }
+    },
+    {
+      "name": "error_fatal",
+      "direction": "agent",
+      "message": { "type": "error", "fatal": true, "code": "spawn_failed", "message": "claude not found on PATH" }
+    }
+  ]
+}

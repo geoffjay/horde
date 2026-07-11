@@ -6,3 +6,4 @@ Core knowledge about what horde is and how it is built.
 * [Configuration](configuration.md) - the layered config system, search paths, and env overrides.
 * [Environment](environment.md) - ports, services, and environment variables.
 * [Agent model](agent-model.md) - how ADK agents are defined, hosted, and invoked.
+* [Agent Adapter Protocol (AAP)](agent-adapter-protocol.md) - the vendor-neutral NDJSON protocol for driving external coding agents via adapters.

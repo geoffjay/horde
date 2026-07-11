@@ -61,6 +61,24 @@ in `master` or `slave` mode (see `--mode`). Listens on `server.port`.
 A subprocess of the horde binary that hosts a single ADK agent. Spawned by
 the node; not intended to be invoked directly.
 
+### horde aap-mock (`horde aap-mock`, hidden)
+
+The Agent Adapter Protocol (AAP) mock adapter — a conformance fixture and
+reference adapter that speaks the AAP stdio binding on stdin/stdout. See the
+[AAP spec](spec/agent-adapter-protocol-v1.md) and
+[AAP concept](knowledgebase/concepts/agent-adapter-protocol.md).
+
+**AAP environment variables** (read by adapters, not by the `HORDE_HORDE_*`
+config loader):
+
+| Variable | Legacy alias | Default | Description |
+|----------|--------------|---------|-------------|
+| `AAP_TRANSPORT` | `AGENTD_AAP_TRANSPORT` | `stdio` | Binding selector: `stdio` or `websocket`. |
+| `AAP_WS_URL` | `AGENTD_AAP_WS_URL` | (unset) | WebSocket URL for the `websocket` binding. |
+
+Canonical `AAP_*` names take precedence over the deprecated `AGENTD_AAP_*`
+aliases when both are set.
+
 ### horde TUI (`horde`)
 
 The terminal interface. A pure client of the node API: it probes

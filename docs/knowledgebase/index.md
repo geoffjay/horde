@@ -49,6 +49,7 @@ every edit.
 * [Configuration](concepts/configuration.md) - the layered config system, search paths, and env overrides.
 * [Environment](concepts/environment.md) - ports, services, and environment variables.
 * [Agent model](concepts/agent-model.md) - how ADK agents are defined, hosted, and invoked.
+* [Agent Adapter Protocol (AAP)](concepts/agent-adapter-protocol.md) - vendor-neutral NDJSON protocol for driving external coding agents via adapters.
 
 ## Decisions
 
@@ -59,6 +60,7 @@ every edit.
 * [HTTP + SSE for the node API transport](decisions/http-api-transport.md) - HTTP/JSON + SSE over chi (net/http-native), in-process event bus now, brokerless messaging deferred to Phase 4.
 * [HTTP over unix domain sockets for agent invocation](decisions/agent-invocation-transport.md) - agent subprocess serves a local HTTP API on a unix socket; the node reverse-proxies invoke requests.
 * [The TUI consumes the node API](decisions/tui-uses-node-api.md) - the TUI always goes over the API; it does not start a node and retries with a 60s countdown.
+* [Adopt the Agent Adapter Protocol (AAP)](decisions/agent-adapter-protocol.md) - own a vendor-neutral, agentd-compatible NDJSON host↔adapter protocol for external coding agents; permissions/multi-user stay above it.
 
 ## Patterns
 
