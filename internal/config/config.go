@@ -3,7 +3,7 @@
 // This package is adapted from github.com/geoffjay/plantd/core/config. It
 // loads configuration from a set of search paths, supports YAML, JSON, and
 // TOML formats, and applies environment-variable overrides using the
-// HORDE_<NAME>_* prefix.
+// HORDE_ env prefix.
 package config
 
 import (
@@ -19,16 +19,20 @@ import (
 	"github.com/spf13/viper"
 )
 
+// envPrefix is the environment variable prefix for all horde config keys.
+// Viper replaces dots with underscores in key names, so server.port becomes
+// HORDE_SERVER_PORT. This is intentionally just HORDE, not HORDE_HORDE.
+const envPrefix = "HORDE"
+
 // prepare constructs a viper instance configured to load a config file named
 // `name` from the standard search paths, or from an explicit path supplied
-// via the HORDE_<NAME>_CONFIG environment variable.
+// via the HORDE_CONFIG environment variable.
 func prepare(name string) (*viper.Viper, error) {
 	home, err := homedir.Dir()
 	if err != nil {
 		return nil, err
 	}
 
-	envPrefix := fmt.Sprintf("HORDE_%s", strings.ToUpper(name))
 	envConfig := fmt.Sprintf("%s_CONFIG", envPrefix)
 
 	v := viper.New()
@@ -62,8 +66,6 @@ func prepare(name string) (*viper.Viper, error) {
 
 // LoadConfigWithDefaults loads configuration with default values.
 func LoadConfigWithDefaults(name string, c any, defaults map[string]any) error {
-	envPrefix := fmt.Sprintf("HORDE_%s", strings.ToUpper(name))
-
 	v, err := prepare(name)
 	if err != nil {
 		return err
@@ -101,7 +103,6 @@ func LoadConfig(name string, c any) error {
 		return err
 	}
 
-	envPrefix := fmt.Sprintf("HORDE_%s", strings.ToUpper(name))
 	envConfig := fmt.Sprintf("%s_CONFIG", envPrefix)
 
 	v := viper.New()

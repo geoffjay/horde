@@ -25,29 +25,29 @@ Config is loaded in this order, later layers override earlier ones:
    - `./` (current directory)
    - `~/.config/horde/`
    - `/etc/horde/`
-3. **Environment variables** prefixed `HORDE_HORDE_*` (dots become
-   underscores), e.g. `HORDE_HORDE_SERVER_PORT=14000`.
+3. **Environment variables** prefixed `HORDE_*` (dots become
+   underscores), e.g. `HORDE_SERVER_PORT=14000`.
 
-An explicit config file path can be set via the `HORDE_HORDE_CONFIG`
+An explicit config file path can be set via the `HORDE_CONFIG`
 environment variable (any extension: `yaml`, `yml`, `json`, `toml`).
 
 ### Configuration keys
 
-| Key                              | Default             | Env var                                   | Description                              |
-|----------------------------------|---------------------|-------------------------------------------|------------------------------------------|
-| `env`                            | `development`       | `HORDE_HORDE_ENV`                         | Environment name.                        |
-| `mode`                           | `master`            | `HORDE_HORDE_MODE`                        | Node role: `master` or `slave`.          |
-| `server.port`                    | `13420`             | `HORDE_HORDE_SERVER_PORT`                 | Node API listen port.                    |
-| `server.agent_command`           | *(current binary)*  | `HORDE_HORDE_SERVER_AGENT_COMMAND`        | Binary used to host agent subprocesses. |
-| `server.leader`                  | *(empty)*           | `HORDE_HORDE_SERVER_LEADER`               | Master address for a slave to connect to.|
-| `server.read_timeout`            | `30`                | `HORDE_HORDE_SERVER_READ_TIMEOUT`         | API read timeout (seconds).             |
-| `server.write_timeout`           | `30`                | `HORDE_HORDE_SERVER_WRITE_TIMEOUT`        | API write timeout (seconds).            |
-| `server.idle_timeout`            | `120`               | `HORDE_HORDE_SERVER_IDLE_TIMEOUT`         | API idle timeout (seconds).             |
-| `cluster.node_id`                | *(empty)*           | `HORDE_HORDE_CLUSTER_NODE_ID`             | Unique node id within the cluster.       |
-| `cluster.discovery_mechanism`    | `static`            | `HORDE_HORDE_CLUSTER_DISCOVERY_MECHANISM` | How nodes find each other (`static`).   |
-| `log.formatter`                  | `text`              | `HORDE_HORDE_LOG_FORMATTER`               | Log formatter: `text` or `json`.        |
-| `log.level`                      | `info`              | `HORDE_HORDE_LOG_LEVEL`                   | Log level.                               |
-| `service.id`                     | `org.horde.Horde`   | `HORDE_HORDE_SERVICE_ID`                  | Service identifier.                      |
+| Key                              | Default             | Env var                                | Description                              |
+|----------------------------------|---------------------|----------------------------------------|------------------------------------------|
+| `env`                            | `development`       | `HORDE_ENV`                            | Environment name.                        |
+| `mode`                           | `master`            | `HORDE_MODE`                           | Node role: `master` or `slave`.          |
+| `server.port`                    | `13420`             | `HORDE_SERVER_PORT`                    | Node API listen port.                    |
+| `server.agent_command`           | *(current binary)*  | `HORDE_SERVER_AGENT_COMMAND`           | Binary used to host agent subprocesses. |
+| `server.leader`                  | *(empty)*           | `HORDE_SERVER_LEADER`                  | Master address for a slave to connect to.|
+| `server.read_timeout`            | `30`                | `HORDE_SERVER_READ_TIMEOUT`            | API read timeout (seconds).             |
+| `server.write_timeout`           | `30`                | `HORDE_SERVER_WRITE_TIMEOUT`           | API write timeout (seconds).            |
+| `server.idle_timeout`            | `120`               | `HORDE_SERVER_IDLE_TIMEOUT`            | API idle timeout (seconds).             |
+| `cluster.node_id`                | *(empty)*           | `HORDE_CLUSTER_NODE_ID`                | Unique node id within the cluster.       |
+| `cluster.discovery_mechanism`    | `static`            | `HORDE_CLUSTER_DISCOVERY_MECHANISM`    | How nodes find each other (`static`).   |
+| `log.formatter`                  | `text`              | `HORDE_LOG_FORMATTER`                  | Log formatter: `text` or `json`.        |
+| `log.level`                      | `info`              | `HORDE_LOG_LEVEL`                      | Log level.                               |
+| `service.id`                     | `org.horde.Horde`   | `HORDE_SERVICE_ID`                      | Service identifier.                      |
 
 ## Services
 

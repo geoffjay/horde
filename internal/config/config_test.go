@@ -27,7 +27,7 @@ func TestLoadConfigWithDefaults_FixtureFormats(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("HORDE_HORDE_CONFIG", fixturePath(tc.fixt))
+			t.Setenv("HORDE_CONFIG", fixturePath(tc.fixt))
 			Reset()
 
 			c := &Config{}
@@ -48,7 +48,7 @@ func TestLoadConfigWithDefaults_FixtureFormats(t *testing.T) {
 
 func TestLoadConfigWithDefaults_AppliesDefaults(t *testing.T) {
 	// No config file: defaults still apply.
-	t.Setenv("HORDE_HORDE_CONFIG", fixturePath("empty.yaml"))
+	t.Setenv("HORDE_CONFIG", fixturePath("empty.yaml"))
 	Reset()
 
 	c := &Config{}
@@ -65,10 +65,10 @@ func TestLoadConfigWithDefaults_AppliesDefaults(t *testing.T) {
 }
 
 func TestLoadConfigWithDefaults_EnvOverrides(t *testing.T) {
-	t.Setenv("HORDE_HORDE_CONFIG", fixturePath("valid.yaml"))
-	t.Setenv("HORDE_HORDE_MODE", "master")
-	t.Setenv("HORDE_HORDE_SERVER_PORT", "14000")
-	t.Setenv("HORDE_HORDE_LOG_LEVEL", "warn")
+	t.Setenv("HORDE_CONFIG", fixturePath("valid.yaml"))
+	t.Setenv("HORDE_MODE", "master")
+	t.Setenv("HORDE_SERVER_PORT", "14000")
+	t.Setenv("HORDE_LOG_LEVEL", "warn")
 	Reset()
 
 	c := &Config{}
@@ -84,7 +84,7 @@ func TestLoadConfigWithDefaults_EnvOverrides(t *testing.T) {
 }
 
 func TestGet_Singleton(t *testing.T) {
-	t.Setenv("HORDE_HORDE_CONFIG", fixturePath("empty.yaml"))
+	t.Setenv("HORDE_CONFIG", fixturePath("empty.yaml"))
 	Reset()
 
 	c1 := Get()
@@ -94,7 +94,7 @@ func TestGet_Singleton(t *testing.T) {
 }
 
 func TestLoad_Idempotent(t *testing.T) {
-	t.Setenv("HORDE_HORDE_CONFIG", fixturePath("empty.yaml"))
+	t.Setenv("HORDE_CONFIG", fixturePath("empty.yaml"))
 	Reset()
 
 	require.NoError(t, Load())
@@ -107,7 +107,7 @@ func TestLoadConfig_RejectsUnsupportedExtension(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "bad.ini")
 	require.NoError(t, os.WriteFile(path, []byte("x=1"), 0o600))
-	t.Setenv("HORDE_HORDE_CONFIG", path)
+	t.Setenv("HORDE_CONFIG", path)
 
 	c := &Config{}
 	err := LoadConfig("horde", c)

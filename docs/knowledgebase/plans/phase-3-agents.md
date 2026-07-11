@@ -374,9 +374,9 @@ New keys:
 
 | Key | Default | Env var | Description |
 |-----|---------|---------|-------------|
-| `agent.socket_dir` | `/tmp` | `HORDE_HORDE_AGENT_SOCKET_DIR` | Directory for agent unix socket files. |
-| `agent.ready_timeout` | `5` | `HORDE_HORDE_AGENT_READY_TIMEOUT` | Seconds to wait for an agent subprocess ready handshake. |
-| `agent.health_poll_interval` | `30` | `HORDE_HORDE_AGENT_HEALTH_POLL_INTERVAL` | Seconds between agent health polls. |
+| `agent.socket_dir` | `/tmp` | `HORDE_AGENT_SOCKET_DIR` | Directory for agent unix socket files. |
+| `agent.ready_timeout` | `5` | `HORDE_AGENT_READY_TIMEOUT` | Seconds to wait for an agent subprocess ready handshake. |
+| `agent.health_poll_interval` | `30` | `HORDE_AGENT_HEALTH_POLL_INTERVAL` | Seconds between agent health polls. |
 
 These should be added to `internal/config/horde.go` and documented in
 `docs/environment.md` and [Environment](/docs/knowledgebase/concepts/environment.md).

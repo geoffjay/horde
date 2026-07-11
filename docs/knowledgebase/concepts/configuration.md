@@ -15,10 +15,10 @@ with the `HORDE_` prefix).
 1. **Defaults** baked into `internal/config/horde.go`.
 2. **Config file** (`horde.yaml`, `horde.json`, or `horde.toml`) searched in
    `./`, `~/.config/horde/`, and `/etc/horde/`.
-3. **Environment variables** prefixed `HORDE_HORDE_*` (dots become
-   underscores), e.g. `HORDE_HORDE_SERVER_PORT=14000`.
+3. **Environment variables** prefixed `HORDE_*` (dots become
+   underscores), e.g. `HORDE_SERVER_PORT=14000`.
 
-An explicit config file path can be set via `HORDE_HORDE_CONFIG`.
+An explicit config file path can be set via `HORDE_CONFIG`.
 
 # Extension pattern
 

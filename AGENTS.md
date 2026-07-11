@@ -25,7 +25,7 @@ Required order when changing code: fmt → vet → lint → test → build. The 
 ## Conventions that differ from defaults
 
 - **Logging:** `github.com/sirupsen/logrus` (not `log`/`slog`). Formatter/level come from the `log` config section. **No Loki** — do not add Loki hooks/config despite the upstream plantd config having them.
-- **Config env prefix:** `HORDE_HORDE_*` (the app name is `horde`, so the prefix is doubled). Dots become underscores, e.g. `HORDE_HORDE_SERVER_PORT`.
+- **Config env prefix:** `HORDE_*` (dots become underscores, e.g. `HORDE_SERVER_PORT`).
 - **Config loader:** a missing config file is **not** fatal — defaults + env overrides still apply. Preserve this when editing `internal/config/config.go`.
 - **TUI:** `charm.land/bubbletea/v2` + `charm.land/lipgloss/v2`. `github.com/charmbracelet/crush` is a standalone app, **not** a reusable library — never import it.
 - **Model receivers:** the bubbletea `Model` in `internal/app/app.go` uses **pointer** receivers (satisfies `tea.Model` and avoids a gocritic hugeParam lint).
@@ -34,7 +34,7 @@ Required order when changing code: fmt → vet → lint → test → build. The 
 ## Tests
 
 - Uses `github.com/stretchr/testify` (assert/require). Table-driven where possible.
-- `internal/config` tests load fixtures from `internal/config/testdata/` (yaml/json/toml). They set `HORDE_HORDE_CONFIG` and call `config.Reset()` to clear the singleton — **always call `Reset()` before relying on `Get()`** in a test.
+- `internal/config` tests load fixtures from `internal/config/testdata/` (yaml/json/toml). They set `HORDE_CONFIG` and call `config.Reset()` to clear the singleton — **always call `Reset()` before relying on `Get()`** in a test.
 - `internal/server` tests set `SpawnDefaultAgent: false` in `server.Config` to avoid spawning real subprocesses. Keep doing this; do not spawn the `horde agent` subprocess from unit tests.
 - `TestStart_SlaveBecomesLeaderConnected` relies on a goroutine marking `leaderOK`; if you change `connectLeader`, keep the background + non-blocking contract.
 

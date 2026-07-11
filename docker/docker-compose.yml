@@ -1,7 +1,7 @@
 # Integration environment for horde: one master and two slaves.
 #
 # All three services use the same image built from the repo Dockerfile. Slaves
-# connect to the master via `HORDE_HORDE_SERVER_LEADER=master:13420` and run in
+# connect to the master via `HORDE_SERVER_LEADER=master:13420` and run in
 # slave mode; local agent functionality is not blocked while the leader
 # connection is being established.
 #
@@ -20,11 +20,11 @@ services:
     container_name: horde-master
     command: ["serve", "--mode", "master"]
     environment:
-      HORDE_HORDE_MODE: "master"
-      HORDE_HORDE_ENV: "integration"
-      HORDE_HORDE_LOG_FORMATTER: "json"
-      HORDE_HORDE_LOG_LEVEL: "info"
-      HORDE_HORDE_CLUSTER_NODE_ID: "master"
+      HORDE_MODE: "master"
+      HORDE_ENV: "integration"
+      HORDE_LOG_FORMATTER: "json"
+      HORDE_LOG_LEVEL: "info"
+      HORDE_CLUSTER_NODE_ID: "master"
     ports:
       - "13420:13420"
     networks:
@@ -35,12 +35,12 @@ services:
     container_name: horde-slave-1
     command: ["serve", "--mode", "slave"]
     environment:
-      HORDE_HORDE_MODE: "slave"
-      HORDE_HORDE_ENV: "integration"
-      HORDE_HORDE_LOG_FORMATTER: "json"
-      HORDE_HORDE_LOG_LEVEL: "info"
-      HORDE_HORDE_SERVER_LEADER: "master:13420"
-      HORDE_HORDE_CLUSTER_NODE_ID: "slave-1"
+      HORDE_MODE: "slave"
+      HORDE_ENV: "integration"
+      HORDE_LOG_FORMATTER: "json"
+      HORDE_LOG_LEVEL: "info"
+      HORDE_SERVER_LEADER: "master:13420"
+      HORDE_CLUSTER_NODE_ID: "slave-1"
     ports:
       - "13421:13420"
     depends_on:
@@ -53,12 +53,12 @@ services:
     container_name: horde-slave-2
     command: ["serve", "--mode", "slave"]
     environment:
-      HORDE_HORDE_MODE: "slave"
-      HORDE_HORDE_ENV: "integration"
-      HORDE_HORDE_LOG_FORMATTER: "json"
-      HORDE_HORDE_LOG_LEVEL: "info"
-      HORDE_HORDE_SERVER_LEADER: "master:13420"
-      HORDE_HORDE_CLUSTER_NODE_ID: "slave-2"
+      HORDE_MODE: "slave"
+      HORDE_ENV: "integration"
+      HORDE_LOG_FORMATTER: "json"
+      HORDE_LOG_LEVEL: "info"
+      HORDE_SERVER_LEADER: "master:13420"
+      HORDE_CLUSTER_NODE_ID: "slave-2"
     ports:
       - "13422:13420"
     depends_on:

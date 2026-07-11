@@ -38,5 +38,5 @@ func Get() *Config { ... LoadConfigWithDefaults("horde", c, defaults) ... }
 # Rationale
 
 Follows the `plantd/identity` pattern: one config singleton, defaults in a
-map, env overrides via `HORDE_HORDE_*`, multiple file formats. See
+map, env overrides via `HORDE_*`, multiple file formats. See
 [configuration](/docs/knowledgebase/concepts/configuration.md).
