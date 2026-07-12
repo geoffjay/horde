@@ -73,9 +73,13 @@ func (c *leaderClient) register(ctx context.Context) (string, error) {
 }
 
 // heartbeat calls POST /api/v1/cluster/heartbeat on the master, reporting this
-// slave's node id and the names of its currently running agents.
-func (c *leaderClient) heartbeat(ctx context.Context, agents []string) error {
-	body, err := json.Marshal(heartbeatPayload{NodeID: c.nodeID, Agents: agents})
+// slave's node id, its running agents, and their execution context digests.
+func (c *leaderClient) heartbeat(ctx context.Context, agents []string, digests []ExecutionContextDigest) error {
+	body, err := json.Marshal(heartbeatPayload{
+		NodeID:   c.nodeID,
+		Agents:   agents,
+		Contexts: digests,
+	})
 	if err != nil {
 		return err
 	}
@@ -115,6 +119,22 @@ type registerResponse struct {
 
 // heartbeatPayload mirrors the heartbeatRequest shape in internal/api.
 type heartbeatPayload struct {
-	NodeID string   `json:"node_id"`
-	Agents []string `json:"agents"`
+	NodeID   string                   `json:"node_id"`
+	Agents   []string                 `json:"agents"`
+	Contexts []ExecutionContextDigest `json:"contexts,omitempty"`
+}
+
+// ExecutionContextDigest is the redacted, wire-format context digest a slave
+// sends to the master in the heartbeat payload.
+type ExecutionContextDigest struct {
+	AgentID              string        `json:"agent_id"`
+	Project              string        `json:"project,omitempty"`
+	Issue                string        `json:"issue,omitempty"`
+	Activity             ActivityState `json:"activity"`
+	WaitingModel         bool          `json:"waiting_model"`
+	Blocked              bool          `json:"blocked"`
+	ErrorCount           int           `json:"error_count,omitempty"`
+	PendingApprovalCount int           `json:"pending_approval_count,omitempty"`
+	Lifecycle            AgentState    `json:"lifecycle"`
+	UpdatedAt            time.Time     `json:"updated_at"`
 }

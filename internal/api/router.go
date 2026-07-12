@@ -35,14 +35,18 @@ func Router(srv *server.Server) http.Handler {
 		// Agents
 		r.Get("/agents", listAgents(srv))
 		r.Post("/agents", createAgent(srv))
+		r.Get("/agents/context", listAgentContexts(srv))
 		r.Get("/agents/{id}", getAgent(srv))
 		r.Delete("/agents/{id}", deleteAgent(srv))
 		r.Post("/agents/{id}/invoke", invokeAgent(srv))
+		r.Get("/agents/{id}/context", getAgentContext(srv))
+		r.Get("/agents/{id}/context/stream", streamAgentContext(srv))
 
 		// Cluster (slave ↔ master)
 		r.Post("/cluster/register", registerSlave(srv))
 		r.Post("/cluster/heartbeat", heartbeat(srv))
 		r.Get("/cluster/nodes", listNodes(srv))
+		r.Get("/cluster/agents/context", listRemoteAgentContexts(srv))
 	})
 
 	return r

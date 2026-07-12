@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -79,6 +80,14 @@ type Config struct {
 	// HealthPollInterval is how often to poll each agent's /health. Defaults
 	// to defaultHealthPollInterval when zero. Zero disables polling.
 	HealthPollInterval time.Duration
+	// ContextRetention is how long an agent's execution context is retained
+	// after the agent exits before it is evicted. Zero disables auto-eviction
+	// (the entry is kept until the process ends).
+	ContextRetention time.Duration
+	// ContextShareFull, when true, exposes full (un-redacted) execution
+	// context to remote principals on this node's own endpoints. When false
+	// (the default), remote principals get the redacted subset + counts.
+	ContextShareFull bool
 }
 
 // Server is the horde node. It owns a set of agent subprocesses and, when
@@ -95,6 +104,11 @@ type Server struct {
 	slaves   map[string]knownSlave
 	bus      *EventBus
 	router   http.Handler
+	ctxStore *contextStore
+
+	// remoteContexts holds contexts reported by slaves, keyed by
+	// (nodeID, agentID). Only populated on a master.
+	remoteContexts map[string]ExecutionContext
 
 	// now returns the current time. A field so tests can inject a clock when
 	// exercising slave staleness; defaults to time.Now.
@@ -182,11 +196,13 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 		cfg.HealthPollInterval = defaultHealthPollInterval
 	}
 	return &Server{
-		cfg:    cfg,
-		procs:  make(map[string]*agentProc),
-		slaves: make(map[string]knownSlave),
-		bus:    NewEventBus(),
-		now:    time.Now,
+		cfg:            cfg,
+		procs:          make(map[string]*agentProc),
+		slaves:         make(map[string]knownSlave),
+		bus:            NewEventBus(),
+		ctxStore:       newContextStore(cfg.ContextRetention),
+		remoteContexts: make(map[string]ExecutionContext),
+		now:            time.Now,
 	}, nil
 }
 
@@ -265,7 +281,7 @@ func (s *Server) connectLeader(ctx context.Context) {
 				s.mu.Unlock()
 				logrus.WithField("leader", s.cfg.Leader).Info("registered with leader")
 			}
-			if err := client.heartbeat(ctx, s.agentNames()); err != nil {
+			if err := client.heartbeat(ctx, s.agentNames(), s.localContextDigests()); err != nil {
 				logrus.WithError(err).WithField("leader", s.cfg.Leader).Debug("heartbeat failed")
 				s.mu.Lock()
 				s.leaderOK = false
@@ -330,6 +346,11 @@ func (s *Server) SpawnAgent(ctx context.Context, name string) (string, error) {
 	logrus.WithFields(logrus.Fields{
 		"agent": name, "id": id, "socket": confirmedSocket,
 	}).Info("agent started")
+
+	// Seed the execution context before tracking exit, so a fast-exiting
+	// agent's AgentExited transition applies to an existing entry rather than
+	// being dropped and then resurrected as AgentRunning by init.
+	s.ctxStore.init(id, s.cfg.NodeID)
 
 	s.trackAgentExit(proc, id, confirmedSocket)
 
@@ -396,6 +417,7 @@ func (s *Server) trackAgentExit(proc *agentProc, id, socketPath string) {
 		}
 		delete(s.procs, id)
 		s.mu.Unlock()
+		s.ctxStore.setLifecycle(id, AgentExited)
 		close(proc.doneCh)
 		_ = os.Remove(socketPath)
 		logrus.WithField("id", id).Info("agent exited")
@@ -519,8 +541,10 @@ func (s *Server) RegisterSlave(nodeID, addr string) {
 
 // Heartbeat records a heartbeat from a slave — refreshing its last-seen time
 // and reported agents — and returns the leader's node id and connectivity
-// status. Only meaningful in master mode.
-func (s *Server) Heartbeat(nodeID string, agentList []string) (string, bool) {
+// status. Only meaningful in master mode. The contexts payload is the
+// slave's redacted execution context digests, stored in the aggregated
+// remote view.
+func (s *Server) Heartbeat(nodeID string, agentList []string, digests []ExecutionContextDigest) (string, bool) {
 	if s.cfg.Mode != ModeMaster {
 		return "", false
 	}
@@ -530,6 +554,28 @@ func (s *Server) Heartbeat(nodeID string, agentList []string) (string, bool) {
 	sl.agents = agentList
 	s.slaves[nodeID] = sl
 	s.mu.Unlock()
+
+	// Reconcile the aggregated remote view with this node's reported set.
+	// Called unconditionally (even for an empty set) so that agents a slave
+	// has dropped are cleared rather than lingering forever.
+	ctxs := make([]ExecutionContext, 0, len(digests))
+	for i := range digests {
+		d := &digests[i]
+		ctxs = append(ctxs, ExecutionContext{
+			AgentID:              d.AgentID,
+			NodeID:               nodeID,
+			Project:              d.Project,
+			Issue:                d.Issue,
+			Activity:             d.Activity,
+			WaitingModel:         d.WaitingModel,
+			Blocked:              d.Blocked,
+			ErrorCount:           d.ErrorCount,
+			PendingApprovalCount: d.PendingApprovalCount,
+			Lifecycle:            d.Lifecycle,
+			UpdatedAt:            d.UpdatedAt,
+		})
+	}
+	s.ReportContexts(nodeID, ctxs)
 	return s.cfg.NodeID, true
 }
 
@@ -584,6 +630,120 @@ func (s *Server) IsAgentReady(id string) bool {
 	defer s.mu.Unlock()
 	p, ok := s.procs[id]
 	return ok && p.socketPath != ""
+}
+
+// AgentContext returns the execution context for the given agent id, or
+// nil if the agent is unknown.
+func (s *Server) AgentContext(id string) *ExecutionContext {
+	return s.ctxStore.get(id)
+}
+
+// AllAgentContexts returns the execution contexts of all local agents.
+func (s *Server) AllAgentContexts() []ExecutionContext {
+	return s.ctxStore.all()
+}
+
+// ContextShareFull reports whether this node exposes full execution context to
+// remote principals on its own endpoints (agent.context_share = "full"). When
+// false, remote principals receive the redacted subset + counts.
+func (s *Server) ContextShareFull() bool {
+	return s.cfg.ContextShareFull
+}
+
+// SubscribeAgentContext returns a channel that receives execution context
+// changes for the given agent id. The cancel func unsubscribes and closes
+// the channel.
+//
+//nolint:gocritic // unnamedResult: result types are clear
+func (s *Server) SubscribeAgentContext(id string) (<-chan ExecutionContext, func()) {
+	return s.ctxStore.subscribe(id)
+}
+
+// ReportContexts is called by a slave during heartbeat to report its
+// agents' execution contexts to the master. The master stores them in the
+// aggregated remote view. Only meaningful in master mode.
+func (s *Server) ReportContexts(nodeID string, contexts []ExecutionContext) {
+	if s.cfg.Mode != ModeMaster {
+		return
+	}
+	s.mu.Lock()
+	// Replace this node's entries wholesale so agents it no longer reports
+	// are removed from the aggregated view (replace-per-node semantics).
+	s.evictRemoteNodeLocked(nodeID)
+	for i := range contexts {
+		key := nodeID + "/" + contexts[i].AgentID
+		c := contexts[i]
+		c.NodeID = nodeID
+		s.remoteContexts[key] = c
+	}
+	s.mu.Unlock()
+}
+
+// RemoteAgentContexts returns the aggregated, redacted execution contexts
+// from all slaves. Only non-empty on a master.
+func (s *Server) RemoteAgentContexts() []ExecutionContext {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	out := make([]ExecutionContext, 0, len(s.remoteContexts))
+	for key, ctx := range s.remoteContexts { //nolint:gocritic // map value copy is fine
+		nodeID := key
+		if i := strings.IndexByte(key, '/'); i >= 0 {
+			nodeID = key[:i]
+		}
+		// Reap contexts from nodes that have gone stale so a node that stops
+		// heartbeating does not linger in the aggregated view. Nodes not (yet)
+		// in the slave registry are kept: a heartbeating node is always
+		// registered, so "unknown" means pre-registration, not departed.
+		if sl, ok := s.slaves[nodeID]; ok && now.Sub(sl.lastSeen) > slaveStaleAfter {
+			delete(s.remoteContexts, key)
+			continue
+		}
+		out = append(out, ctx.Redacted())
+	}
+	return out
+}
+
+// EvictRemoteNode removes all remote contexts for the given node id (e.g.
+// when the node goes stale).
+func (s *Server) EvictRemoteNode(nodeID string) {
+	s.mu.Lock()
+	s.evictRemoteNodeLocked(nodeID)
+	s.mu.Unlock()
+}
+
+// evictRemoteNodeLocked removes all remote contexts for nodeID. The caller
+// must hold s.mu. The trailing "/" ensures node ids that are prefixes of one
+// another (e.g. "slave-1" vs "slave-10") do not collide.
+func (s *Server) evictRemoteNodeLocked(nodeID string) {
+	prefix := nodeID + "/"
+	for key := range s.remoteContexts {
+		if strings.HasPrefix(key, prefix) {
+			delete(s.remoteContexts, key)
+		}
+	}
+}
+
+// localContextDigests returns the redacted context digests for all local
+// agents, for inclusion in the heartbeat payload to the master.
+func (s *Server) localContextDigests() []ExecutionContextDigest {
+	all := s.ctxStore.all()
+	out := make([]ExecutionContextDigest, 0, len(all))
+	for _, ctx := range all { //nolint:gocritic // map value copy is fine
+		out = append(out, ExecutionContextDigest{
+			AgentID:              ctx.AgentID,
+			Project:              ctx.Project,
+			Issue:                ctx.Issue,
+			Activity:             ctx.Activity,
+			WaitingModel:         ctx.WaitingModel,
+			Blocked:              ctx.Blocked,
+			ErrorCount:           len(ctx.Errors),
+			PendingApprovalCount: len(ctx.PendingApprovals),
+			Lifecycle:            ctx.Lifecycle,
+			UpdatedAt:            ctx.UpdatedAt,
+		})
+	}
+	return out
 }
 
 // startHealthPolling launches a background goroutine that polls each agent's

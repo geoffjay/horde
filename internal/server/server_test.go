@@ -103,7 +103,7 @@ func TestHeartbeat_BeforeRegister(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotPanics(t, func() {
-		leaderID, ok := srv.Heartbeat("slave-x", nil)
+		leaderID, ok := srv.Heartbeat("slave-x", nil, nil)
 		assert.True(t, ok)
 		assert.Equal(t, "master-1", leaderID)
 	})
@@ -129,7 +129,7 @@ func TestSlaves_MarkedStale(t *testing.T) {
 	assert.True(t, slaves[0].Stale)
 
 	// A heartbeat refreshes last-seen and clears staleness.
-	srv.Heartbeat("slave-1", []string{"greeter"})
+	srv.Heartbeat("slave-1", []string{"greeter"}, nil)
 	slaves = srv.Slaves()
 	require.Len(t, slaves, 1)
 	assert.False(t, slaves[0].Stale)
