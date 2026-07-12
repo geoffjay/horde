@@ -31,6 +31,16 @@ agent-to-agent queries that bypass the node.
 mechanism and/or the AAP host to actually run agents; and a minimal
 node-authorization seam (introduced here at node granularity).
 
+**Slice-A note on signal fidelity and project/issue.** The full-fidelity
+signal source — AAP `context`/`error`/`approval` frames — arrives with the
+[AAP host (Phase 3.6)](/docs/knowledgebase/plans/roadmap.md). Shipped ahead of
+it against native ADK agents, Slice A materializes only coarse context
+(activity + errors); the model, API, and aggregation are built regardless.
+Likewise `Project`/`Issue` are populated by the project/team model
+([Phase 3.5 Slice B](/docs/knowledgebase/decisions/project-team-user-model.md)):
+until then they are empty, and they update when an agent is assigned to — or
+reassigned between — projects. Every other field works independently.
+
 # Data model
 
 ```go
@@ -39,8 +49,8 @@ type ExecutionContext struct {
     AgentID   string
     NodeID    string
 
-    Project   string        // host-assigned at launch
-    Issue     string        // host-assigned; agent may refine (AAP context.issue)
+    Project   string        // set at launch or on (re)assignment; empty until Phase 3.5 Slice B
+    Issue     string        // set with the project; agent may refine (AAP context.issue)
 
     Activity     ActivityState // busy | idle (from AAP status)
     WaitingModel bool          // from AAP context.waiting_model
@@ -155,7 +165,7 @@ detail.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `agent.context_retention` | `300` | Seconds a terminal agent's context is retained before eviction. |
+| `agent.context_retention` | `300` | Seconds an agent's context is retained after it exits or its project is finished, before eviction. |
 | `agent.context_share` | `restricted` | Remote-visible scope: `restricted` (redacted subset) or `full`. |
 
 (Env vars follow the project's config-loader prefix convention; see

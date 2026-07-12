@@ -10,3 +10,4 @@ Records of significant decisions and their rationale.
 * [HTTP over unix domain sockets for agent invocation](agent-invocation-transport.md) - agent subprocess serves a local HTTP API on a unix socket; the node reverse-proxies invoke requests.
 * [The TUI consumes the node API](tui-uses-node-api.md) - the TUI always goes over the API, no in-process shortcut.
 * [Adopt the Agent Adapter Protocol (AAP)](agent-adapter-protocol.md) - own a vendor-neutral, agentd-compatible NDJSON host↔adapter protocol for external coding agents; permissions/multi-user stay above it.
+* [Project, team, and user model](project-team-user-model.md) - what a project, team, and user are; how they relate; the 3.5a/3.5b split that defers per-user auth.

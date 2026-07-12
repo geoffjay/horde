@@ -51,19 +51,73 @@ Decisions underpinning this phase:
 
 # Phase 3.5 — Multi-agent context (planned)
 
-* Users and authentication on the node API.
-* Projects as a unit of work (workspace, goal/state, assigned agents).
-* Teams of agents within a project (roles, capabilities).
-* Permissions: filesystem access scope, tool allowlist, agent-to-agent
-  messaging boundaries.
-* Multi-turn context across invocations (conversation state per project
-  session).
-* The invocation payload grows from `{message}` to include project/team/
-  session context.
+Decision doc: [Project, team, and user model](/docs/knowledgebase/decisions/project-team-user-model.md).
 
-This phase requires a decision doc on "what is a project / what is a team"
-before a plan doc, because the answers constrain the agent invocation
-contract.
+Built in two slices:
+
+## Slice A — Agent execution context
+
+Detailed plan: [Agent execution context](agent-execution-context.md).
+
+* `ExecutionContext` data model, node-side materialization from AAP frames +
+  launch metadata.
+* Local query API (snapshot + change stream).
+* Cross-node aggregation via the master with read-only, redacted remote
+  access.
+* Minimal node-granular principal model (`local` vs `remote`).
+
+Can be built immediately — does not depend on the project/team model. Signal
+fidelity note: full AAP `context`/`error`/`approval` frames arrive with the AAP
+host (Phase 3.6); until then native ADK agents yield only coarse context
+(activity + errors). Slice A ships the model, API, and aggregation regardless.
+
+## Slice B — Projects, teams, and multi-turn context
+
+* Projects as a unit of work: workspace path, free-text goal, lifecycle
+  states (active/paused/finished).
+* Teams of users and agents; agents are peers with no roles; one agent
+  active in one project at a time.
+* Agent-to-project assignment; session key = `(agent_id, project_id)` for
+  private multi-turn context per agent.
+* Advisory filesystem scope (no OS-level sandboxing).
+* No per-user auth, no tool allowlist, no agent-to-agent messaging.
+
+## Deferred to 3.5b
+
+* Per-user authentication on the node API.
+* Per-user project ownership and permission scopes.
+* Per-user tool restrictions.
+* OS-level filesystem sandboxing.
+
+This split lets us build the project/team model and execution context
+without committing to an auth mechanism. When 3.5b lands, the project/team
+model already has the right shape — it just gains an `owner` field and
+access control.
+
+# Phase 3.6 — AAP host (external coding agents)
+
+Decision: [Adopt the Agent Adapter Protocol (AAP)](/docs/knowledgebase/decisions/agent-adapter-protocol.md).
+Spec: [Agent Adapter Protocol v1](/docs/spec/agent-adapter-protocol-v1.md).
+
+The product path: drive **external** AI coding agents (Claude Code and others)
+through AAP adapters — "coding, but for documents" over the OKF knowledge base.
+Phases 3–3.5 build the mechanism and the project/team scaffolding on native ADK
+agents; this phase is where real coding agents plug in.
+
+* Node spawns AAP adapters over the stdio binding (NDJSON): the
+  `initialize`→`ready` handshake, the prompt/turn loop, and graceful shutdown.
+* Tool approval wired to node policy (the node is the sole approval authority);
+  the project workspace mapped onto AAP `workspace.cwd` +
+  `initialize.permissions`.
+* Consume AAP `context`/`error`/`approval_request` frames to populate the
+  [agent execution context](agent-execution-context.md) at full fidelity — this
+  is the signal source Slice A degrades without.
+* First real adapter (e.g. Claude Code) alongside the shipped `horde aap-mock`
+  fixture and `internal/aap/testdata/vectors.json`.
+
+Independent of per-user auth (3.5b): can land before or after it. Foundation
+already in place — the AAP spec and the `internal/aap` package (typed messages,
+mock adapter, shared test vectors).
 
 # Phase 4 — Distributed
 

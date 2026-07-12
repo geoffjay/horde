@@ -31,8 +31,8 @@ Each field is owned by whoever actually knows it:
 
 | Field | Source |
 | --- | --- |
-| `project` | host — assigned at launch |
-| `issue` | host at launch; the agent may refine it via AAP `context` |
+| `project` | host — assigned at launch or on (re)assignment |
+| `issue` | host — set with the project; the agent may refine it via AAP `context` |
 | `activity` (busy/idle) | agent — AAP `status` |
 | `waiting_model` | agent — AAP `context` (capability `execution_context`) |
 | `blocked` / `blocked_reason` | agent — AAP `context` |
