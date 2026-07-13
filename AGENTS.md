@@ -12,6 +12,8 @@ Go 1.26 project. Build with `go build .` (binary: `./bin/horde` via Taskfile).
 - **Format:** `task fmt` (gofmt -s + goimports). CI fails on unformatted files.
 - **Tidy:** `task tidy`; CI's lint workflow rejects an untidy `go.mod`/`go.sum`.
 - **Docker cluster:** `task docker:up` (master + 2 slaves), `task docker:down`, `task docker:logs`.
+- **Release snapshot:** `task snapshot` (goreleaser `--snapshot`, no publish/tap push).
+- **Release:** `task release` (runs goreleaser; publish to GitHub + homebrew-tap). Driven by `.github/workflows/release.yml` on `v*` tag pushes. The first release will be `v0.1.0`.
 
 Required order when changing code: fmt → vet → lint → test → build. The lint job in `.github/workflows/lint.yml` enforces gofmt, `go mod tidy` diff, and golangci-lint.
 
@@ -46,6 +48,14 @@ Required order when changing code: fmt → vet → lint → test → build. The 
 - The binary builds its own agent subprocesses via `os.Executable()`; running `go run . agent` won't behave like the real binary path. Build first (`task build`) for subprocess-related testing.
 - `cmd/daemonize.go` re-execs the binary with `setsid`; it's `nolint:noctx` by design (a context would kill the daemon on return). Preserve the nolint comment if you edit it.
 - `server.go`'s `exec.CommandContext` call is `nolint:gosec` (G204) because `AgentCommand` is operator-controlled config, not untrusted input. Don't remove the nolint without replacing the rationale.
+
+## Releases
+
+Releases are driven by goreleaser via `.goreleaser.yml` and `.github/workflows/release.yml` (triggers on `v*` tag pushes and manual `workflow_dispatch`). `task snapshot` runs a local non-publishing build; `task release` runs the real thing locally.
+
+- The `HOMEBREW_TAP_TOKEN` repo secret (a PAT with write access to `geoffjay/homebrew-tap`) is required for the `brews` block to push the formula. The job logs a notice and skips the tap push if it's unset.
+- `brews:` (formulas) is deprecated in goreleaser v2.10+ in favour of `homebrew_casks`, but casks are for macOS GUI apps and don't support Linux. horde targets linux + darwin as a CLI, so `brews:` is correct here; `goreleaser check` reports a deprecation warning but `goreleaser release` still works. Re-evaluate if a future goreleaser major removes `brews:`.
+- `cmd.version` is injected at build time via `-ldflags "-X github.com/geoffjay/horde/cmd.version={{.Version}}"`; it defaults to `"dev"` for plain `go build`. The `--version` flag exists mainly so the Homebrew formula's `test do` block can verify the install.
 
 ## Knowledge base
 

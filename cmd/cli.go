@@ -13,6 +13,10 @@ import (
 	"github.com/geoffjay/horde/internal/config"
 )
 
+// version is injected at build time via -ldflags "-X cmd.version=...".
+// It defaults to "dev" for `go build` without ldflags.
+var version = "dev"
+
 // rootCmd is the horde root command.
 var rootCmd = &cobra.Command{
 	Use:   "horde",
@@ -24,7 +28,8 @@ multi-user distributed mode where one node is the master and others are
 slaves. This relationship is largely invisible to the user on each system.
 
 Run without a subcommand to launch the TUI.`,
-	RunE: runTUI,
+	Version: version,
+	RunE:    runTUI,
 }
 
 // Execute runs the root command.
@@ -36,6 +41,10 @@ func Execute() {
 }
 
 func init() {
+	// Format `--version` output as "horde <version>" (single line) instead
+	// of the verbose cobra default template.
+	rootCmd.SetVersionTemplate("horde {{.Version}}\n")
+
 	// Eagerly load configuration so subcommands have access to it via
 	// config.Get(). Failures are deferred until a subcommand actually needs
 	// the config; a missing file is not fatal because defaults cover the
