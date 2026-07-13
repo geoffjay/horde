@@ -24,6 +24,10 @@ type agentView interface {
 	SpawnAgent(ctx context.Context, name string) (string, error)
 	StopAgent(id string) error
 	AgentSocket(id string) string
+	AgentContext(id string) *server.ExecutionContext
+	AllAgentContexts() []server.ExecutionContext
+	SubscribeAgentContext(id string) (<-chan server.ExecutionContext, func())
+	ContextShareFull() bool
 }
 
 // clusterView is the subset of *server.Server that cluster handlers need.
@@ -31,8 +35,9 @@ type clusterView interface {
 	Mode() server.Mode
 	NodeID() string
 	RegisterSlave(nodeID, addr string)
-	Heartbeat(nodeID string, agents []string) (leaderID string, ok bool)
+	Heartbeat(nodeID string, agents []string, digests []server.ExecutionContextDigest) (leaderID string, ok bool)
 	Slaves() []server.SlaveInfo
+	RemoteAgentContexts() []server.ExecutionContext
 }
 
 // compile-time: *server.Server satisfies the handler interfaces.

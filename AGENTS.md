@@ -34,8 +34,10 @@ Required order when changing code: fmt → vet → lint → test → build. The 
 ## Tests
 
 - Uses `github.com/stretchr/testify` (assert/require). Table-driven where possible.
+- **Test file naming:** name test files after what they test (the concept or source file), not after phases or milestones. `context_test.go`, not `phase3_test.go`. See [test file naming](docs/knowledgebase/patterns/test-file-naming.md).
 - `internal/config` tests load fixtures from `internal/config/testdata/` (yaml/json/toml). They set `HORDE_CONFIG` and call `config.Reset()` to clear the singleton — **always call `Reset()` before relying on `Get()`** in a test.
 - `internal/server` tests set `SpawnDefaultAgent: false` in `server.Config` to avoid spawning real subprocesses. Keep doing this; do not spawn the `horde agent` subprocess from unit tests.
+- Subprocess integration tests (e.g. `spawn_test.go`) require the built binary at `bin/horde`. They skip when it's absent (e.g. in CI without a build step). Use `go build -o bin/horde .` locally before running them.
 - `TestStart_SlaveBecomesLeaderConnected` relies on a goroutine marking `leaderOK`; if you change `connectLeader`, keep the background + non-blocking contract.
 
 ## Gotchas

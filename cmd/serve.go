@@ -73,6 +73,8 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		SocketDir:          cfg.Agent.SocketDir,
 		ReadyTimeout:       time.Duration(cfg.Agent.ReadyTimeout) * time.Second,
 		HealthPollInterval: time.Duration(cfg.Agent.HealthPollInterval) * time.Second,
+		ContextRetention:   time.Duration(cfg.Agent.ContextRetention) * time.Second,
+		ContextShareFull:   cfg.Agent.ContextShare == "full",
 	})
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)

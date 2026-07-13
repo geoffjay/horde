@@ -48,6 +48,8 @@ environment variable (any extension: `yaml`, `yml`, `json`, `toml`).
 | `agent.socket_dir`               | `/tmp`              | `HORDE_AGENT_SOCKET_DIR`               | Directory for agent unix socket files.  |
 | `agent.ready_timeout`            | `5`                 | `HORDE_AGENT_READY_TIMEOUT`            | Seconds to wait for agent ready handshake. |
 | `agent.health_poll_interval`     | `30`                | `HORDE_AGENT_HEALTH_POLL_INTERVAL`     | Seconds between agent health polls.     |
+| `agent.context_retention`        | `300`               | `HORDE_AGENT_CONTEXT_RETENTION`        | Seconds to retain an agent's context after exit. |
+| `agent.context_share`            | `restricted`        | `HORDE_AGENT_CONTEXT_SHARE`             | What a remote (non-loopback) principal sees on this node's own context endpoints: `restricted` (redacted subset + error/approval counts) or `full`. The cross-node master summary is always redacted. |
 | `log.formatter`                  | `text`              | `HORDE_LOG_FORMATTER`                  | Log formatter: `text` or `json`.        |
 | `log.level`                      | `info`              | `HORDE_LOG_LEVEL`                      | Log level.                               |
 | `service.id`                     | `org.horde.Horde`   | `HORDE_SERVICE_ID`                      | Service identifier.                      |

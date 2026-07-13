@@ -45,8 +45,9 @@ func registerSlave(srv clusterView) http.HandlerFunc {
 
 // heartbeatRequest is the body of POST /api/v1/cluster/heartbeat.
 type heartbeatRequest struct {
-	NodeID string   `json:"node_id"`
-	Agents []string `json:"agents"`
+	NodeID   string                          `json:"node_id"`
+	Agents   []string                        `json:"agents"`
+	Contexts []server.ExecutionContextDigest `json:"contexts,omitempty"`
 }
 
 // heartbeatResponse is the POST /api/v1/cluster/heartbeat response.
@@ -68,7 +69,7 @@ func heartbeat(srv clusterView) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "node_id is required"})
 			return
 		}
-		leaderID, ok := srv.Heartbeat(req.NodeID, req.Agents)
+		leaderID, ok := srv.Heartbeat(req.NodeID, req.Agents, req.Contexts)
 		writeJSON(w, http.StatusOK, heartbeatResponse{OK: ok, LeaderID: leaderID})
 	}
 }

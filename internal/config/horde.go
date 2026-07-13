@@ -47,6 +47,12 @@ type AgentConfig struct {
 	// HealthPollInterval is how often to poll each agent's /health, in
 	// seconds. Zero disables polling.
 	HealthPollInterval int `mapstructure:"health_poll_interval"`
+	// ContextRetention is how long an agent's execution context is retained
+	// after the agent exits, in seconds.
+	ContextRetention int `mapstructure:"context_retention"`
+	// ContextShare controls remote-visible scope: "restricted" (redacted
+	// subset) or "full".
+	ContextShare string `mapstructure:"context_share"`
 }
 
 // Config represents the configuration for the horde application.
@@ -77,6 +83,8 @@ const (
 
 	defaultAgentReadyTimeout       = 5
 	defaultAgentHealthPollInterval = 30
+	defaultAgentContextRetention   = 300
+	defaultAgentContextShare       = "restricted"
 
 	// maxPort is the largest valid TCP port number.
 	maxPort = 65535
@@ -103,6 +111,8 @@ var defaults = map[string]any{
 	"agent.socket_dir":           "/tmp",
 	"agent.ready_timeout":        defaultAgentReadyTimeout,
 	"agent.health_poll_interval": defaultAgentHealthPollInterval,
+	"agent.context_retention":    defaultAgentContextRetention,
+	"agent.context_share":        defaultAgentContextShare,
 
 	// Logging defaults
 	"log.formatter": "text",

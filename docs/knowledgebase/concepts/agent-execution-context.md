@@ -55,18 +55,25 @@ Execution context spans the same layering as the rest of the agent stack:
    and serves it over the node API. For native ADK agents (no AAP) the node
    derives only coarse context; the rich fields need an AAP agent — graceful
    degradation by agent kind.
-3. **Cluster (cross-node + authorization).** The master aggregates slave
-   contexts; remote queries are **read-only** and **redacted** per a
-   restrictive-by-default policy tied to the
-   [collaboration model](/docs/knowledgebase/decisions/master-slave-model.md).
-   A remote principal can see enough to coordinate (project, issue, blocked)
-   without seeing sensitive detail (error text, approval contents, notes).
+3. **Cluster (cross-node + authorization).** Principals are classified by
+   origin (the 3.5a node-granular seam, no per-user auth): a loopback caller is
+   `local` and sees full context; a non-loopback caller is `remote`. A remote
+   principal sees a **redacted** subset — project, issue, activity, blocked
+   (bool), waiting-model, lifecycle, plus **counts** of errors/approvals — but
+   not the sensitive detail (blocked reason, note, error text, approval
+   payloads, turn id). Redaction is applied at the source (the heartbeat digest
+   carries only the subset + counts) and again by the master on read
+   (defense-in-depth). The master's aggregated summary is always redacted; a
+   node may additionally expose full context to remote callers on **its own**
+   endpoints via `agent.context_share = "full"`.
 
 # Status
 
-Planned. The AAP `context` message + `execution_context` capability are defined
-(spec + `internal/aap`). The node materialization, query API, and cross-node
-aggregation are specified in the
-[Agent execution context plan](/docs/knowledgebase/plans/agent-execution-context.md)
-and not yet built; they build on the Phase 3 agent mechanism and the (new)
-node-authorization layer.
+Built (Slice A). The `ExecutionContext` data model, node-side materialization,
+local query API (snapshot + change stream), and cross-node aggregation with
+redacted remote access are implemented in `internal/server/context.go` and
+`internal/api/context.go`. For native ADK agents (no AAP) the node derives
+coarse context (activity + lifecycle); the rich fields (blocked, waiting,
+note, errors, approvals) populate when the AAP host feeds frames. The
+`Project`/`Issue` fields are empty until Phase 3.5 Slice B (projects/teams)
+lands.
