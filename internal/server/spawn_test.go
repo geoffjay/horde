@@ -18,14 +18,14 @@ import (
 	"github.com/geoffjay/horde/internal/server"
 )
 
-// TestSpawnAgent_ReadyHandshakeAndInvoke verifies the full Phase 3 path:
-// SpawnAgent starts a real agent subprocess, reads the spawn_ready handshake,
-// records the socket path, and the node API reverse-proxies an invocation
-// SSE stream through to the client.
+// TestSpawnAgent_ReadyHandshakeAndInvoke verifies the full agent subprocess
+// path: SpawnAgent starts a real agent subprocess, reads the spawn_ready
+// handshake, records the socket path, and the node API reverse-proxies an
+// invocation SSE stream through to the client.
 //
-// This test requires the real binary (built via `task build`) because it
-// spawns the `horde agent` subprocess. It is skipped if the binary is not
-// found.
+// This test requires the real horde binary (built via `task build` or
+// `go build -o bin/horde .`) because it spawns the `horde agent` subprocess.
+// It is skipped if the binary is not found.
 func TestSpawnAgent_ReadyHandshakeAndInvoke(t *testing.T) {
 	exe := findHordeBinary(t)
 
@@ -33,7 +33,7 @@ func TestSpawnAgent_ReadyHandshakeAndInvoke(t *testing.T) {
 		AgentCommand:       exe,
 		SocketDir:          "/tmp",
 		ReadyTimeout:       10 * time.Second,
-		HealthPollInterval: 0, // disable polling for the test
+		HealthPollInterval: 0,
 		SpawnDefaultAgent:  false,
 	})
 	require.NoError(t, err)
@@ -44,12 +44,10 @@ func TestSpawnAgent_ReadyHandshakeAndInvoke(t *testing.T) {
 		}
 	})
 
-	// Spawn the greeter agent.
 	id, err := srv.SpawnAgent(context.Background(), "greeter")
 	require.NoError(t, err)
 	assert.NotEmpty(t, id)
 
-	// The socket path should be populated.
 	require.Eventually(t, func() bool {
 		return srv.AgentSocket(id) != ""
 	}, 5*time.Second, 10*time.Millisecond)
@@ -58,13 +56,10 @@ func TestSpawnAgent_ReadyHandshakeAndInvoke(t *testing.T) {
 	require.NotEmpty(t, socketPath)
 	assert.FileExists(t, socketPath)
 
-	// Wire the node API and test it end-to-end.
 	h := api.Router(srv)
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 
-	// POST /api/v1/agents/{id}/invoke — should reverse-proxy the SSE
-	// stream from the agent subprocess.
 	resp, err := http.Post(
 		ts.URL+"/api/v1/agents/"+id+"/invoke",
 		"application/json",
@@ -109,7 +104,6 @@ func TestSpawnAgent_SocketCleanup(t *testing.T) {
 	socketPath := srv.AgentSocket(id)
 	require.FileExists(t, socketPath)
 
-	// Stop the agent — the socket file should be removed.
 	require.NoError(t, srv.StopAgent(id))
 
 	require.Eventually(t, func() bool {
@@ -132,18 +126,13 @@ func TestSpawnAgent_UnknownAgentFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown agent")
 }
 
-// findHordeBinary returns the path to the built horde binary. The test is
-// skipped if the binary does not exist (e.g. when running without `task build`).
+// findHordeBinary returns the path to the built horde binary at bin/horde.
+// Tests that spawn the `horde agent` subprocess are skipped if the binary
+// is not found (e.g. in CI without a prior build step).
 func findHordeBinary(t *testing.T) string {
 	t.Helper()
-	// Try the Taskfile build output first.
 	candidates := []string{
 		filepath.Join("..", "..", "bin", "horde"),
-	}
-	// Also try os.Executable() — works if the test binary is the horde
-	// binary (it is not, but this is a fallback for direct invocation).
-	if exe, err := os.Executable(); err == nil {
-		candidates = append(candidates, exe)
 	}
 	for _, c := range candidates {
 		abs, err := filepath.Abs(c)
@@ -154,6 +143,6 @@ func findHordeBinary(t *testing.T) string {
 			return abs
 		}
 	}
-	t.Skip("horde binary not found — run `task build` before running subprocess tests")
+	t.Skip("horde binary not found — run `go build -o bin/horde .` before running subprocess tests")
 	return ""
 }
