@@ -212,13 +212,27 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 	if cfg.HealthPollInterval == 0 {
 		cfg.HealthPollInterval = defaultHealthPollInterval
 	}
+	// Build the project store. When a state dir is configured, persist
+	// projects to <stateDir>/projects.json and load any existing state.
+	var projects ProjectStore
+	if cfg.StateDir != "" {
+		projects = newPersistentProjectStore(filepath.Join(cfg.StateDir, "projects.json"))
+		if mem, ok := projects.(*memProjectStore); ok {
+			if err := mem.loadProjects(); err != nil {
+				logrus.WithError(err).Warn("failed to load persisted projects; starting fresh")
+			}
+		}
+	} else {
+		projects = newProjectStore()
+	}
+
 	return &Server{
 		cfg:            cfg,
 		procs:          make(map[string]*agentProc),
 		slaves:         make(map[string]knownSlave),
 		bus:            NewEventBus(),
 		ctxStore:       newContextStore(cfg.ContextRetention),
-		projects:       newProjectStore(),
+		projects:       projects,
 		remoteContexts: make(map[string]ExecutionContext),
 		now:            time.Now,
 	}, nil

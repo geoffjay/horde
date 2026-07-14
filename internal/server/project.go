@@ -1,10 +1,15 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 // ProjectState is the lifecycle state of a project.
@@ -78,18 +83,98 @@ type CreateProjectInput struct {
 	AgentNames []string
 }
 
-// memProjectStore is the in-memory ProjectStore implementation.
+// memProjectStore is the in-memory ProjectStore implementation. When a
+// persistence path is set, every mutation flushes the full state to a JSON
+// file (projects.json) and Load reads it back on startup.
 type memProjectStore struct {
 	mu       sync.Mutex
 	projects map[string]*Project
 	nextID   int
 	now      func() time.Time
+	path     string // persistence file path; empty = in-memory only
 }
 
 func newProjectStore() ProjectStore {
 	return &memProjectStore{
 		projects: make(map[string]*Project),
 		now:      time.Now,
+	}
+}
+
+// newPersistentProjectStore creates a memProjectStore that flushes to the
+// given file path on every mutation and can be loaded from disk.
+func newPersistentProjectStore(path string) ProjectStore {
+	return &memProjectStore{
+		projects: make(map[string]*Project),
+		now:      time.Now,
+		path:     path,
+	}
+}
+
+// loadProjects reads the persisted state from the store's path. If the file
+// does not exist, the store starts empty (no error). A missing file is not
+// fatal — it's a fresh start.
+func (ps *memProjectStore) loadProjects() error {
+	if ps.path == "" {
+		return nil
+	}
+
+	data, err := os.ReadFile(ps.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // fresh start
+		}
+		return fmt.Errorf("read projects file: %w", err)
+	}
+
+	var state projectStoreState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return fmt.Errorf("parse projects file: %w", err)
+	}
+
+	ps.projects = make(map[string]*Project, len(state.Projects))
+	for i := range state.Projects {
+		p := state.Projects[i]
+		ps.projects[p.ID] = &p
+	}
+	ps.nextID = state.NextID
+	return nil
+}
+
+// projectStoreState is the on-disk JSON envelope for the project store.
+type projectStoreState struct {
+	Projects []Project `json:"projects"`
+	NextID   int       `json:"next_id"`
+}
+
+// flush writes the current state to the persistence file. The caller must
+// hold ps.mu. If no path is set, it is a no-op.
+func (ps *memProjectStore) flush() {
+	if ps.path == "" {
+		return
+	}
+
+	state := projectStoreState{
+		Projects: make([]Project, 0, len(ps.projects)),
+		NextID:   ps.nextID,
+	}
+	for _, p := range ps.projects {
+		state.Projects = append(state.Projects, *p)
+	}
+
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		logrus.WithError(err).Warn("failed to marshal projects for flush")
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(ps.path), kbDirPerm); err != nil {
+		logrus.WithError(err).Warn("failed to create projects dir for flush")
+		return
+	}
+
+	if err := os.WriteFile(ps.path, data, kbFilePerm); err != nil {
+		logrus.WithError(err).Warn("failed to flush projects to disk")
 	}
 }
 
@@ -129,6 +214,7 @@ func (ps *memProjectStore) Create(in CreateProjectInput) (*Project, error) {
 		UpdatedAt: now,
 	}
 	ps.projects[id] = p
+	ps.flush()
 	return p, nil
 }
 
@@ -168,6 +254,7 @@ func (ps *memProjectStore) UpdateState(id string, state ProjectState) (*Project,
 	}
 	p.State = state
 	p.UpdatedAt = ps.now().UTC()
+	ps.flush()
 	cp := *p
 	return &cp, nil
 }
@@ -198,6 +285,7 @@ func (ps *memProjectStore) AssignAgent(id, agentID, agentName string) (*Project,
 		AssignedAt: ps.now().UTC(),
 	})
 	p.UpdatedAt = ps.now().UTC()
+	ps.flush()
 	cp := *p
 	return &cp, nil
 }
@@ -215,6 +303,7 @@ func (ps *memProjectStore) RemoveAgent(id, agentID string) (*Project, error) {
 		if a.AgentID == agentID {
 			p.Team.Agents = append(p.Team.Agents[:i], p.Team.Agents[i+1:]...)
 			p.UpdatedAt = ps.now().UTC()
+			ps.flush()
 			break
 		}
 	}
@@ -230,5 +319,6 @@ func (ps *memProjectStore) Delete(id string) error {
 		return ErrProjectNotFound
 	}
 	delete(ps.projects, id)
+	ps.flush()
 	return nil
 }
