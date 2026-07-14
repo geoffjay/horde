@@ -53,6 +53,10 @@ environment variable (any extension: `yaml`, `yml`, `json`, `toml`).
 | `log.formatter`                  | `text`              | `HORDE_LOG_FORMATTER`                  | Log formatter: `text` or `json`.        |
 | `log.level`                      | `info`              | `HORDE_LOG_LEVEL`                      | Log level.                               |
 | `service.id`                     | `org.horde.Horde`   | `HORDE_SERVICE_ID`                      | Service identifier.                      |
+| `adapters.<name>.command`        | *(unset)*           | `HORDE_ADAPTERS_<NAME>_COMMAND`         | External AAP adapter executable, driven by `horde aap-run --agent <name>`. |
+| `adapters.<name>.args`           | *(empty)*           | `HORDE_ADAPTERS_<NAME>_ARGS`            | Arguments passed to the adapter command. |
+| `adapters.<name>.env`            | *(empty)*           | `HORDE_ADAPTERS_<NAME>_ENV`             | Extra environment for the adapter process. |
+| `adapters.<name>.model`          | *(unset)*           | `HORDE_ADAPTERS_<NAME>_MODEL`           | AAP model string sent in `initialize`; empty lets the adapter choose. |
 
 ## Services
 
@@ -86,6 +90,15 @@ config loader):
 
 Canonical `AAP_*` names take precedence over the deprecated `AGENTD_AAP_*`
 aliases when both are set.
+
+### horde aap-run (`horde aap-run`, hidden)
+
+The host side of AAP: it spawns an external adapter (from `--command`/`--arg`
+or an `adapters.<name>` config entry), injects `AAP_TRANSPORT=stdio`, and drives
+one turn (`--prompt`) via `internal/aap`'s `HostSession` — initialize → ready →
+prompt → turn → shutdown, auto-allowing tool approvals. Assistant text goes to
+stdout; the ready line, logs, and the turn summary go to stderr. Used to
+exercise a real adapter (e.g. the pi adapter) against the node's host driver.
 
 ### horde TUI (`horde`)
 
