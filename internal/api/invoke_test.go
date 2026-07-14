@@ -52,3 +52,16 @@ func TestRewriteInvokeBody_InvalidJSON(t *testing.T) {
 	_, err := rewriteInvokeBody(r, "a1:proj-1")
 	assert.Error(t, err)
 }
+
+func TestRewriteInvokeBody_EmptyBody(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/invoke", nil)
+	body, err := rewriteInvokeBody(r, "a1:proj-1")
+	require.NoError(t, err)
+
+	buf := make([]byte, body.Len())
+	_, _ = body.Read(buf)
+	var result invokeRequestBody
+	require.NoError(t, json.Unmarshal(buf, &result))
+	assert.Empty(t, result.Message)
+	assert.Equal(t, "a1:proj-1", result.SessionID)
+}

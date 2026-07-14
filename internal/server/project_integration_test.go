@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -47,9 +48,10 @@ func (c *projectAPIClient) do(method, path string, body any) (int, []byte) {
 }
 
 func (c *projectAPIClient) create(name string, agents []string) (int, map[string]any) {
+	workspace := c.t.TempDir()
 	code, body := c.do(http.MethodPost, "/api/v1/projects/", map[string]any{
 		"name":      name,
-		"workspace": "/tmp",
+		"workspace": workspace,
 		"goal":      "test goal",
 		"agents":    agents,
 	})
@@ -583,7 +585,7 @@ func TestIntegration_ReassignmentMovesAgent(t *testing.T) {
 
 	// Now rebind the agent to proj-b via the internal method. This is what
 	// happens when an agent is reassigned between projects.
-	srv.AssignAgentToProjectInternal(agentID, projB)
+	srv.ReassignAgent(agentID, projB)
 
 	// The agent's active project should now be proj-b.
 	assert.Equal(t, projB, srv.AgentActiveProject(agentID))
@@ -660,4 +662,49 @@ func TestIntegration_FinishedProjectContextEviction(t *testing.T) {
 
 	// The agent's active project should be cleared.
 	assert.Equal(t, "", srv.AgentActiveProject(agentID))
+}
+
+// TestIntegration_DefaultWorkspace verifies that when a project is created
+// without a workspace, the configured default is used and written onto the
+// project record.
+func TestIntegration_DefaultWorkspace(t *testing.T) {
+	exe := findHordeBinary(t)
+	tmp := t.TempDir()
+
+	srv, err := server.New(server.Config{
+		AgentCommand:        exe,
+		SocketDir:           "/tmp",
+		ReadyTimeout:        10 * time.Second,
+		HealthPollInterval:  0,
+		SpawnDefaultAgent:   false,
+		ProjectWorkspaceDir: tmp,
+	})
+	require.NoError(t, err)
+	require.NoError(t, srv.Start(context.Background()))
+	t.Cleanup(func() {
+		for _, a := range srv.Agents() {
+			_ = srv.StopAgent(a.ID)
+		}
+	})
+
+	ts := httptest.NewServer(api.Router(srv))
+	defer ts.Close()
+	c := newProjectAPIClient(t, ts)
+
+	// Create a project without specifying a workspace.
+	code, body := c.do(http.MethodPost, "/api/v1/projects/", map[string]any{
+		"name":   "default-ws",
+		"goal":   "test goal",
+		"agents": []string{"greeter"},
+	})
+	require.Equal(t, http.StatusCreated, code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(body, &resp))
+
+	// The project record should have the resolved default workspace.
+	workspace, _ := resp["workspace"].(string)
+	assert.Equal(t, tmp, workspace, "project record should carry the resolved default workspace")
+
+	// The KB should have been scaffolded at the default workspace.
+	assert.DirExists(t, filepath.Join(tmp, ".horde", "knowledgebase"))
 }

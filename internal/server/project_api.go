@@ -8,28 +8,35 @@ import (
 )
 
 // CreateProject creates a new project, spawns its agents, and assigns them.
-// At least one agent name is required.
+// At least one agent name is required. When the create request omits the
+// workspace, the configured default (project.workspace_dir) is used and
+// written onto the project record so that GetProject, KB scaffolding, and
+// agent spawning all agree on the same path.
 func (s *Server) CreateProject(_ context.Context, in CreateProjectInput) (*Project, error) {
+	// Resolve the default workspace once, before creating the project, so
+	// the project record carries the resolved value.
+	workspace := in.Workspace
+	if workspace == "" {
+		workspace = s.cfg.ProjectWorkspaceDir
+	}
+	in.Workspace = workspace
+
 	p, err := s.projects.Create(in)
 	if err != nil {
 		return nil, err
 	}
 
 	// Scaffold the knowledgebase in the project workspace.
-	workspace := in.Workspace
-	if workspace == "" {
-		workspace = s.cfg.ProjectWorkspaceDir
-	}
 	if err := scaffoldKnowledgebase(workspace, p.Name); err != nil {
 		logrus.WithError(err).WithFields(logrus.Fields{
 			logKeyProject: p.ID, "workspace": workspace,
 		}).Warn("failed to scaffold knowledgebase")
 	}
 
-	// Spawn and assign each agent.
+	// Spawn and assign each agent, passing the same workspace path.
 	for i := range p.Team.Agents {
 		ta := &p.Team.Agents[i]
-		agentID, err := s.spawnAgentWithWorkspace(context.Background(), ta.Name, p.Workspace)
+		agentID, err := s.spawnAgentWithWorkspace(context.Background(), ta.Name, workspace)
 		if err != nil {
 			logrus.WithError(err).WithFields(logrus.Fields{
 				"project": p.ID, logKeyAgent: ta.Name,
@@ -169,11 +176,11 @@ func (s *Server) AgentProjectState(agentID string) string {
 	return string(p.State)
 }
 
-// AssignAgentToProjectInternal binds an agent to a project, removing it from
-// any prior project's team first and adding it to the new project's team.
-// It is the public entry point for reassignment and is used by tests to
-// exercise the reassignment path directly.
-func (s *Server) AssignAgentToProjectInternal(agentID, projectID string) {
+// ReassignAgent binds an already-spawned agent to a different project,
+// removing it from its prior project's team and adding it to the new
+// project's team. This is the reassignment path: the agent subprocess
+// stays running, but its active project (and session key) changes.
+func (s *Server) ReassignAgent(agentID, projectID string) {
 	// Get the agent name for the team entry.
 	s.mu.Lock()
 	agentName := ""

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -142,14 +143,10 @@ func writeIfNotExists(path string, data []byte) error {
 	return os.WriteFile(path, data, kbFilePerm)
 }
 
-// asciiUpperOffset is the difference between a lowercase ASCII letter and
-// its uppercase counterpart (used to uppercase the first letter of a word).
-const asciiUpperOffset = 32
-
 // titleCase returns s with the first letter uppercased.
 func titleCase(s string) string {
 	if s == "" {
 		return s
 	}
-	return string(s[0]-asciiUpperOffset) + s[1:]
+	return strings.ToUpper(s[:1]) + s[1:]
 }

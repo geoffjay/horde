@@ -83,6 +83,13 @@ type CreateProjectInput struct {
 	AgentNames []string
 }
 
+// stateDirPerm is the permission for the state directory containing
+// projects.json.
+const stateDirPerm = 0o755
+
+// stateFilePerm is the permission for the projects.json state file.
+const stateFilePerm = 0o644
+
 // memProjectStore is the in-memory ProjectStore implementation. When a
 // persistence path is set, every mutation flushes the full state to a JSON
 // file (projects.json) and Load reads it back on startup.
@@ -168,12 +175,12 @@ func (ps *memProjectStore) flush() {
 		return
 	}
 
-	if err := os.MkdirAll(filepath.Dir(ps.path), kbDirPerm); err != nil {
+	if err := os.MkdirAll(filepath.Dir(ps.path), stateDirPerm); err != nil {
 		logrus.WithError(err).Warn("failed to create projects dir for flush")
 		return
 	}
 
-	if err := os.WriteFile(ps.path, data, kbFilePerm); err != nil {
+	if err := os.WriteFile(ps.path, data, stateFilePerm); err != nil {
 		logrus.WithError(err).Warn("failed to flush projects to disk")
 	}
 }

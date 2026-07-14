@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	homedir "github.com/mitchellh/go-homedir"
 )
 
 // resolvePaths fills in any empty DataPaths fields with their XDG default
@@ -13,7 +11,7 @@ import (
 // (HORDE_CONFIG_DIR, HORDE_DATA_DIR, HORDE_STATE_DIR) or config file value
 // is set, viper populates the field and this is a no-op for that field.
 func (c *Config) resolvePaths() {
-	home, err := homedir.Dir()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		// Can't determine home; leave paths as-is. The server will
 		// surface errors when it tries to use them.

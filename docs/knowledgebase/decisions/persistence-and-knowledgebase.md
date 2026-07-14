@@ -59,9 +59,9 @@ Following the XDG convention, these paths are overridable:
 
 | Env var | Default | Description |
 | --- | --- | --- |
-| `HORDE_CONFIG_DIR` | `~/.config/horde` | Configuration directory. |
-| `HORDE_DATA_DIR` | `~/.local/share/horde` | General storage (logs, auth, DBs). |
-| `HORDE_STATE_DIR` | `~/.local/state/horde` | Trivial state (KV, locks, history). |
+| `HORDE_PATHS_CONFIG_DIR` | `~/.config/horde` | Configuration directory. |
+| `HORDE_PATHS_DATA_DIR` | `~/.local/share/horde` | General storage (logs, auth, DBs). |
+| `HORDE_PATHS_STATE_DIR` | `~/.local/state/horde` | Trivial state (KV, locks, history). |
 
 These complement the existing `HORDE_CONFIG` (explicit config file path) and
 the `HORDE_*` env-prefix convention. The config search path in

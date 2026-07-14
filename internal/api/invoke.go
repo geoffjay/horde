@@ -42,12 +42,16 @@ func invokeAgent(srv invokeView) http.HandlerFunc {
 			return
 		}
 
-		// Reject invokes on paused or finished projects. An agent with
-		// no active project (empty state) is always invokable.
+		// Reject invokes on paused projects. Finished projects clear the
+		// agent's active-project binding (FinishProject), so the agent
+		// falls through to the no-project path (empty state) and is
+		// invokable with per-invocation sessions — the "projects are
+		// additive" decision. Only the paused state (which retains the
+		// binding) gates invocation.
 		state := srv.AgentProjectState(id)
-		if state == "paused" || state == "finished" {
+		if state == "paused" {
 			writeJSON(w, http.StatusConflict, errorResponse{
-				Error: "project is " + state,
+				Error: "project is paused",
 			})
 			return
 		}
@@ -85,12 +89,18 @@ func invokeAgent(srv invokeView) http.HandlerFunc {
 }
 
 // rewriteInvokeBody reads the client's request body, injects session_id,
-// and returns the re-marshaled body as a reader. If the original body is
-// empty or unparseable, it returns an error.
+// and returns the re-marshaled body as a reader. An empty body is treated
+// as an empty message (no error) so that SSE reconnects with no body
+// succeed. An unparseable non-empty body returns an error.
 func rewriteInvokeBody(r *http.Request, sessionID string) (*bytes.Reader, error) {
 	var req invokeRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return nil, err
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			// Tolerate an empty body (EOF) — treat as an empty message.
+			if err.Error() != "EOF" {
+				return nil, err
+			}
+		}
 	}
 	if sessionID != "" {
 		req.SessionID = sessionID
