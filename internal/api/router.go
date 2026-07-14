@@ -47,6 +47,18 @@ func Router(srv *server.Server) http.Handler {
 		r.Post("/cluster/heartbeat", heartbeat(srv))
 		r.Get("/cluster/nodes", listNodes(srv))
 		r.Get("/cluster/agents/context", listRemoteAgentContexts(srv))
+
+		// Projects
+		r.Route("/projects", func(r chi.Router) {
+			r.Post("/", createProject(srv))
+			r.Get("/", listProjects(srv))
+			r.Get("/{id}", getProject(srv))
+			r.Post("/{id}/pause", pauseProject(srv))
+			r.Post("/{id}/resume", resumeProject(srv))
+			r.Post("/{id}/finish", finishProject(srv))
+			r.Post("/{id}/agents", assignAgentToProject(srv))
+			r.Delete("/{id}/agents/{agentID}", removeAgentFromProject(srv))
+		})
 	})
 
 	return r

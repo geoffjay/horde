@@ -105,6 +105,7 @@ type Server struct {
 	bus      *EventBus
 	router   http.Handler
 	ctxStore *contextStore
+	projects *projectStore
 
 	// remoteContexts holds contexts reported by slaves, keyed by
 	// (nodeID, agentID). Only populated on a master.
@@ -119,6 +120,9 @@ type Server struct {
 // Callers (e.g. the API's DELETE handler) match it with errors.Is rather
 // than string-comparing the error message.
 var ErrAgentNotFound = errors.New("agent not found")
+
+// logKeyAgent is the logrus field key for an agent name.
+const logKeyAgent = "agent"
 
 // AgentState is the lifecycle state of a spawned agent subprocess.
 type AgentState string
@@ -135,13 +139,14 @@ const (
 
 // agentProc tracks one spawned agent subprocess.
 type agentProc struct {
-	id         string
-	name       string
-	state      AgentState
-	cmd        *exec.Cmd
-	doneCh     chan struct{}
-	socketPath string // populated from the subprocess ready handshake
-	healthy    bool   // true unless a health poll has failed
+	id            string
+	name          string
+	state         AgentState
+	cmd           *exec.Cmd
+	doneCh        chan struct{}
+	socketPath    string // populated from the subprocess ready handshake
+	healthy       bool   // true unless a health poll has failed
+	activeProject string // active project id; empty when no project assigned
 }
 
 const (
@@ -201,6 +206,7 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 		slaves:         make(map[string]knownSlave),
 		bus:            NewEventBus(),
 		ctxStore:       newContextStore(cfg.ContextRetention),
+		projects:       newProjectStore(),
 		remoteContexts: make(map[string]ExecutionContext),
 		now:            time.Now,
 	}, nil
@@ -344,7 +350,7 @@ func (s *Server) SpawnAgent(ctx context.Context, name string) (string, error) {
 	s.mu.Unlock()
 
 	logrus.WithFields(logrus.Fields{
-		"agent": name, "id": id, "socket": confirmedSocket,
+		logKeyAgent: name, "id": id, "socket": confirmedSocket,
 	}).Info("agent started")
 
 	// Seed the execution context before tracking exit, so a fast-exiting

@@ -36,7 +36,7 @@ type ExecutionContext struct {
 	AgentID string `json:"agent_id"`
 	NodeID  string `json:"node_id"`
 
-	// Set at launch or on (re)assignment; empty until Phase 3.5 Slice B.
+	// Set at launch or on (re)assignment; empty when no project is assigned.
 	Project string `json:"project,omitempty"`
 	Issue   string `json:"issue,omitempty"`
 
@@ -136,6 +136,15 @@ func (cs *contextStore) init(agentID, nodeID string) *ExecutionContext {
 		cs.ctxs[agentID] = ctx
 	}
 	return ctx
+}
+
+// setProject updates the project and issue fields for the given agent id
+// and notifies subscribers.
+func (cs *contextStore) setProject(agentID, project, issue string) {
+	cs.update(agentID, func(ctx *ExecutionContext) {
+		ctx.Project = project
+		ctx.Issue = issue
+	})
 }
 
 // get returns a copy of the context for the given agent id, or nil.
