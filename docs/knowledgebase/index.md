@@ -55,6 +55,7 @@ every edit.
 * [Agent model](concepts/agent-model.md) - how ADK agents are defined, hosted as subprocesses, and invoked over HTTP on unix sockets.
 * [Agent Adapter Protocol (AAP)](concepts/agent-adapter-protocol.md) - vendor-neutral NDJSON protocol for driving external coding agents via adapters.
 * [Agent execution context](concepts/agent-execution-context.md) - queryable per-agent work-state (project, issue, blocked, waiting, errors, approvals).
+* [Releases](concepts/releases.md) - how releases work: tagging, goreleaser, GitHub releases, and the Homebrew tap.
 
 ## Decisions
 
