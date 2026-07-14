@@ -114,7 +114,7 @@ type Server struct {
 	bus      *EventBus
 	router   http.Handler
 	ctxStore *contextStore
-	projects *projectStore
+	projects ProjectStore
 
 	// remoteContexts holds contexts reported by slaves, keyed by
 	// (nodeID, agentID). Only populated on a master.

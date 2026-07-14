@@ -8,6 +8,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Compile-time: memProjectStore satisfies ProjectStore.
+var _ ProjectStore = (*memProjectStore)(nil)
+
+func TestNewProjectStore_ReturnsInterface(t *testing.T) {
+	ps := newProjectStore()
+	assert.NotNil(t, ps)
+	// The concrete type should be *memProjectStore.
+	_, ok := ps.(*memProjectStore)
+	assert.True(t, ok, "newProjectStore should return *memProjectStore")
+}
+
 func TestProjectStore_Create(t *testing.T) {
 	ps := newProjectStore()
 

@@ -56,21 +56,18 @@ var ErrProjectNotFound = errors.New("project not found")
 // project but the project is paused or finished.
 var ErrProjectNotActive = errors.New("project not active")
 
-// projectStore holds projects keyed by id. The v1 implementation is
-// in-memory; the interface is defined so a persistence backend (JSON flush
-// or database) can swap in without reshaping the server.
-type projectStore struct {
-	mu       sync.Mutex
-	projects map[string]*Project
-	nextID   int
-	now      func() time.Time
-}
-
-func newProjectStore() *projectStore {
-	return &projectStore{
-		projects: make(map[string]*Project),
-		now:      time.Now,
-	}
+// ProjectStore persists project metadata and team composition. The v1
+// implementation is in-memory (memProjectStore); a persistence backend
+// (JSON flush or database) swaps in behind this interface without
+// reshaping the server.
+type ProjectStore interface {
+	Create(in CreateProjectInput) (*Project, error)
+	Get(id string) (*Project, error)
+	List(stateFilter ProjectState) []Project
+	UpdateState(id string, state ProjectState) (*Project, error)
+	AssignAgent(id, agentID, agentName string) (*Project, error)
+	RemoveAgent(id, agentID string) (*Project, error)
+	Delete(id string) error
 }
 
 // CreateProjectInput is the input for creating a project.
@@ -81,9 +78,24 @@ type CreateProjectInput struct {
 	AgentNames []string
 }
 
+// memProjectStore is the in-memory ProjectStore implementation.
+type memProjectStore struct {
+	mu       sync.Mutex
+	projects map[string]*Project
+	nextID   int
+	now      func() time.Time
+}
+
+func newProjectStore() ProjectStore {
+	return &memProjectStore{
+		projects: make(map[string]*Project),
+		now:      time.Now,
+	}
+}
+
 // Create creates a new project in the active state with the supplied team of
 // agents. At least one agent name is required (a team is never empty).
-func (ps *projectStore) Create(in CreateProjectInput) (*Project, error) {
+func (ps *memProjectStore) Create(in CreateProjectInput) (*Project, error) {
 	if in.Name == "" {
 		return nil, errors.New("project name is required")
 	}
@@ -121,7 +133,7 @@ func (ps *projectStore) Create(in CreateProjectInput) (*Project, error) {
 }
 
 // Get returns a copy of the project by id, or ErrProjectNotFound.
-func (ps *projectStore) Get(id string) (*Project, error) {
+func (ps *memProjectStore) Get(id string) (*Project, error) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	p, ok := ps.projects[id]
@@ -133,7 +145,7 @@ func (ps *projectStore) Get(id string) (*Project, error) {
 }
 
 // List returns copies of all projects, optionally filtered by state.
-func (ps *projectStore) List(stateFilter ProjectState) []Project {
+func (ps *memProjectStore) List(stateFilter ProjectState) []Project {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	out := make([]Project, 0, len(ps.projects))
@@ -147,7 +159,7 @@ func (ps *projectStore) List(stateFilter ProjectState) []Project {
 }
 
 // UpdateState transitions a project's state.
-func (ps *projectStore) UpdateState(id string, state ProjectState) (*Project, error) {
+func (ps *memProjectStore) UpdateState(id string, state ProjectState) (*Project, error) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	p, ok := ps.projects[id]
@@ -162,7 +174,7 @@ func (ps *projectStore) UpdateState(id string, state ProjectState) (*Project, er
 
 // AssignAgent adds an agent to the project's team. If the agent is already
 // on the team, it is a no-op (returns the current project).
-func (ps *projectStore) AssignAgent(id, agentID, agentName string) (*Project, error) {
+func (ps *memProjectStore) AssignAgent(id, agentID, agentName string) (*Project, error) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	p, ok := ps.projects[id]
@@ -191,7 +203,7 @@ func (ps *projectStore) AssignAgent(id, agentID, agentName string) (*Project, er
 }
 
 // RemoveAgent removes an agent from the project's team.
-func (ps *projectStore) RemoveAgent(id, agentID string) (*Project, error) {
+func (ps *memProjectStore) RemoveAgent(id, agentID string) (*Project, error) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	p, ok := ps.projects[id]
@@ -211,7 +223,7 @@ func (ps *projectStore) RemoveAgent(id, agentID string) (*Project, error) {
 }
 
 // Delete removes a project from the store.
-func (ps *projectStore) Delete(id string) error {
+func (ps *memProjectStore) Delete(id string) error {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	if _, ok := ps.projects[id]; !ok {
