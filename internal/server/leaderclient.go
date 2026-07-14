@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -101,6 +102,37 @@ func (c *leaderClient) heartbeat(ctx context.Context, agents []string, digests [
 		return fmt.Errorf("heartbeat: leader returned %s", resp.Status)
 	}
 	return nil
+}
+
+// leaderAddr returns the master address (host:port) or empty when no leader
+// is configured.
+func (c *leaderClient) leaderAddr() string { return c.leader }
+
+// forwardRequest forwards an HTTP request to the master node, copying the
+// response status, headers, and body back to the caller. It is used by slave
+// nodes to proxy project reads and mutations to the master so project state
+// is cluster-wide. The method and path are taken from the original request.
+//
+//nolint:gocritic // unnamedResult: result types are clear from context
+func (c *leaderClient) forwardRequest(ctx context.Context, method, path string, body []byte) (int, http.Header, []byte, error) {
+	url := fmt.Sprintf("http://%s%s", c.leader, path)
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("forward to leader: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("read leader response: %w", err)
+	}
+	return resp.StatusCode, resp.Header, respBody, nil
 }
 
 // registerPayload mirrors the registerRequest shape in internal/api.

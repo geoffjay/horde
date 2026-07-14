@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/geoffjay/horde/internal/server"
 )
@@ -54,6 +55,15 @@ type projectView interface {
 	SessionKey(agentID string) string
 }
 
+// projectForwarder is the subset of *server.Server needed to proxy project
+// requests to the master. A slave node with a leader returns a non-empty
+// LeaderAddr; the API layer forwards project reads and mutations to the
+// master via ForwardProjectRequest.
+type projectForwarder interface {
+	LeaderAddr() string
+	ForwardProjectRequest(ctx context.Context, method, path string, body []byte) (int, http.Header, []byte, error)
+}
+
 // invokeView is the subset needed by the invoke proxy (extends agentView
 // with session-key derivation and project-state checking).
 type invokeView interface {
@@ -64,9 +74,10 @@ type invokeView interface {
 
 // compile-time: *server.Server satisfies the handler interfaces.
 var (
-	_ nodeView    = (*server.Server)(nil)
-	_ agentView   = (*server.Server)(nil)
-	_ clusterView = (*server.Server)(nil)
-	_ projectView = (*server.Server)(nil)
-	_ invokeView  = (*server.Server)(nil)
+	_ nodeView         = (*server.Server)(nil)
+	_ agentView        = (*server.Server)(nil)
+	_ clusterView      = (*server.Server)(nil)
+	_ projectView      = (*server.Server)(nil)
+	_ projectForwarder = (*server.Server)(nil)
+	_ invokeView       = (*server.Server)(nil)
 )

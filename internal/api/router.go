@@ -50,6 +50,9 @@ func Router(srv *server.Server) http.Handler {
 
 		// Projects
 		r.Route("/projects", func(r chi.Router) {
+			// On a slave with a leader, forward all project requests to the
+			// master. The master is the source of truth for project state.
+			r.Use(projectForwardMiddleware(srv))
 			r.Post("/", createProject(srv))
 			r.Get("/", listProjects(srv))
 			r.Get("/{id}", getProject(srv))

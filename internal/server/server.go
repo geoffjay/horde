@@ -120,6 +120,11 @@ type Server struct {
 	// (nodeID, agentID). Only populated on a master.
 	remoteContexts map[string]ExecutionContext
 
+	// leader is the HTTP client to the master node, set in slave mode when
+	// a leader is configured. API handlers use it to forward project reads
+	// and mutations to the master so project state is cluster-wide.
+	leader *leaderClient
+
 	// now returns the current time. A field so tests can inject a clock when
 	// exercising slave staleness; defaults to time.Now.
 	now func() time.Time
@@ -284,6 +289,7 @@ func (s *Server) connectLeader(ctx context.Context) {
 	}
 
 	client := newLeaderClient(s.cfg.Leader, s.cfg.NodeID, s.localAddr())
+	s.leader = client
 
 	// First registration: try immediately, then loop on the ticker.
 	if leaderID, err := client.register(ctx); err != nil {
@@ -531,6 +537,28 @@ func (s *Server) LeaderConnected() bool {
 
 // Mode returns the node's configured role.
 func (s *Server) Mode() Mode { return s.cfg.Mode }
+
+// LeaderAddr returns the master node's address (host:port) when this node is
+// a slave with a configured leader, or "" otherwise. Used by the API layer to
+// decide whether to forward project requests to the master.
+func (s *Server) LeaderAddr() string {
+	if s.cfg.Mode != ModeSlave || s.leader == nil {
+		return ""
+	}
+	return s.leader.leaderAddr()
+}
+
+// ForwardProjectRequest proxies a project API request to the master node.
+// It is called by the API handlers when this node is a slave with a leader.
+// Returns the HTTP status code, response headers, response body, and error.
+//
+//nolint:gocritic // unnamedResult: result types are clear from context
+func (s *Server) ForwardProjectRequest(ctx context.Context, method, path string, body []byte) (int, http.Header, []byte, error) {
+	if s.leader == nil {
+		return 0, nil, nil, fmt.Errorf("no leader configured")
+	}
+	return s.leader.forwardRequest(ctx, method, path, body)
+}
 
 // Port returns the TCP port the node API listens on.
 func (s *Server) Port() int { return s.cfg.Port }
