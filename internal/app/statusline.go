@@ -34,10 +34,12 @@ func NewStatusLine() *StatusLine {
 }
 
 // DefaultStatusLine returns the status line the TUI ships with: node
-// connection state followed by the command-palette hint.
+// connection state, the per-view keyboard hint, and the command-palette
+// hint.
 func DefaultStatusLine() *StatusLine {
 	s := NewStatusLine()
 	s.Add(nodeStatusBlock())
+	s.Add(hintStatusBlock())
 	s.Add(commandsBlock())
 	return s
 }
@@ -134,4 +136,55 @@ func commandsBlock() StatusBlock {
 			return key + m.paint(lipgloss.NewStyle().Faint(true).Render, " commands")
 		},
 	}
+}
+
+// hintStatusBlock renders the per-view keyboard hints (e.g. "↑↓ select ·
+// enter open" on the projects list). The hints describe the keys
+// available in the current view so the user always knows what they can
+// do without opening the palette. Returns "" (omitting the block) when
+// disconnected or when the view has no hint.
+func hintStatusBlock() StatusBlock {
+	return StatusBlock{
+		Name: "hint",
+		Render: func(m *Model) string {
+			if !m.connected {
+				return ""
+			}
+			hint := viewHints(m)
+			if hint == "" {
+				return ""
+			}
+			return m.paint(lipgloss.NewStyle().Faint(true).Render, hint)
+		},
+	}
+}
+
+// viewHints returns the keyboard hint string for the current view, or
+// empty when the view has no hint. The hints match the plan mockups in
+// docs/knowledgebase/plans/tui-projects.md.
+func viewHints(m *Model) string {
+	switch m.view {
+	case viewProjects:
+		return "↑↓ select · enter open"
+	case viewProjectDetail:
+		hints := "enter invoke · esc back"
+		if i := m.selectedProjectIndex(); i >= 0 && i < len(m.projects) {
+			switch m.projects[i].State {
+			case "active":
+				hints = "enter invoke · a assign · p pause · esc back"
+			case "paused":
+				hints = "enter invoke · a assign · r resume · esc back"
+			default:
+				hints = "a assign · esc back"
+			}
+		}
+		return hints
+	case viewAgent:
+		return "enter invoke · esc back"
+	case viewInvoke:
+		return "enter send · esc back"
+	case viewCluster:
+		return "enter node · esc back"
+	}
+	return ""
 }
