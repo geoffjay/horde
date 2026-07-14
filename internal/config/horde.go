@@ -55,6 +55,23 @@ type AgentConfig struct {
 	ContextShare string `mapstructure:"context_share"`
 }
 
+// AdapterConfig configures an external AAP agent adapter that the node can
+// drive over the stdio binding (see the `horde aap-run` command). It is
+// distinct from AgentConfig, which governs the node's own ADK agent
+// subprocesses.
+type AdapterConfig struct {
+	// Command is the adapter executable (argv[0]).
+	Command string `mapstructure:"command"`
+	// Args are the arguments passed to Command.
+	Args []string `mapstructure:"args"`
+	// Env are extra environment variables set for the adapter process, in
+	// addition to the node's environment and the AAP transport variables.
+	Env map[string]string `mapstructure:"env"`
+	// Model is the AAP model string sent in initialize. Empty lets the adapter
+	// (and its agent) choose its configured default.
+	Model string `mapstructure:"model"`
+}
+
 // Config represents the configuration for the horde application.
 //
 // It embeds the generic config pieces (Log, Service) and adds horde-specific
@@ -65,8 +82,11 @@ type Config struct {
 	Server  ServerConfig  `mapstructure:"server"`
 	Cluster ClusterConfig `mapstructure:"cluster"`
 	Agent   AgentConfig   `mapstructure:"agent"`
-	Log     LogConfig     `mapstructure:"log"`
-	Service ServiceConfig `mapstructure:"service"`
+	// Adapters are external AAP agent adapters, keyed by name, that the node
+	// can drive over the stdio binding (see `horde aap-run --agent <name>`).
+	Adapters map[string]AdapterConfig `mapstructure:"adapters"`
+	Log      LogConfig                `mapstructure:"log"`
+	Service  ServiceConfig            `mapstructure:"service"`
 }
 
 var (

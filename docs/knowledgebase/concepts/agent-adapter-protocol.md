@@ -75,6 +75,15 @@ authority.
 
 * `internal/aap` — typed `HostMessage`/`AgentMessage`, (de)serialization,
   transport env resolution (`TransportFromEnv`), and `RunMockAdapter`.
+* `internal/aap/session.go` — `HostSession`, the host-side driver: it spawns
+  nothing itself but, given an adapter's stdio, runs the lifecycle
+  (`Initialize` → ready, `Prompt` → turn with streamed frames + approval
+  round-trip, `Shutdown`).
 * `internal/aap/testdata/vectors.json` — the shared wire test vectors.
 * `cmd/aapmock.go` — the hidden `horde aap-mock` subcommand (conformance
-  fixture / reference adapter).
+  fixture / reference *adapter*).
+* `cmd/aaprun.go` — the hidden `horde aap-run` subcommand: the *host* side. It
+  resolves an adapter (from `--command` or the `adapters` config section),
+  spawns it with `AAP_TRANSPORT=stdio`, and drives one turn via `HostSession`.
+  External adapters are configured under `adapters.<name>`
+  (`command`/`args`/`env`/`model`) — distinct from the ADK `agent_command`.
