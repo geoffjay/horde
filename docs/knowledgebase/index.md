@@ -56,6 +56,7 @@ every edit.
 * [Agent Adapter Protocol (AAP)](concepts/agent-adapter-protocol.md) - vendor-neutral NDJSON protocol for driving external coding agents via adapters.
 * [Agent execution context](concepts/agent-execution-context.md) - queryable per-agent work-state (project, issue, blocked, waiting, errors, approvals).
 * [Releases](concepts/releases.md) - how releases work: tagging, goreleaser, GitHub releases, and the Homebrew tap.
+* [systemd service](concepts/systemd-service.md) - running horde as a user systemd service on Linux.
 
 ## Decisions
 
