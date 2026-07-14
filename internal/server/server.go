@@ -267,8 +267,11 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// In slave mode, establish the leader connection in the background so it
-	// never blocks local operation.
-	if s.cfg.Mode == ModeSlave {
+	// never blocks local operation. The leader client is created here (not
+	// in connectLeader) so LeaderAddr() returns the master address as soon
+	// as Start returns, even before the first register attempt completes.
+	if s.cfg.Mode == ModeSlave && s.cfg.Leader != "" {
+		s.leader = newLeaderClient(s.cfg.Leader, s.cfg.NodeID, s.localAddr())
 		go s.connectLeader(ctx)
 	}
 
@@ -288,8 +291,9 @@ func (s *Server) connectLeader(ctx context.Context) {
 		return
 	}
 
-	client := newLeaderClient(s.cfg.Leader, s.cfg.NodeID, s.localAddr())
-	s.leader = client
+	// s.leader was created in Start() so LeaderAddr() is available
+	// immediately; use it here for registration and heartbeats.
+	client := s.leader
 
 	// First registration: try immediately, then loop on the ticker.
 	if leaderID, err := client.register(ctx); err != nil {

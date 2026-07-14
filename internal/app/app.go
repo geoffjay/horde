@@ -15,6 +15,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/sirupsen/logrus"
 
 	"github.com/geoffjay/horde/internal/client"
 )
@@ -126,6 +127,7 @@ type nodeInfoMsg struct {
 	node     client.NodeInfo
 	agents   []client.Agent
 	projects []client.Project
+	contexts map[string]client.ExecutionContext
 	err      error
 }
 
@@ -158,8 +160,15 @@ func (m *Model) loadNode() tea.Msg {
 
 	// Projects and contexts are best-effort: a node that doesn't expose them
 	// (e.g. an older version) should not prevent the TUI from rendering.
-	projects, _ := m.c.ListProjects(ctx, "")
-	contexts, _ := m.c.ListAgentContexts(ctx)
+	// Errors are logged via logrus so forwarding issues are diagnosable.
+	projects, pErr := m.c.ListProjects(ctx, "")
+	if pErr != nil {
+		logrus.WithError(pErr).Debug("tui: fetch projects failed")
+	}
+	contexts, cErr := m.c.ListAgentContexts(ctx)
+	if cErr != nil {
+		logrus.WithError(cErr).Debug("tui: fetch agent contexts failed")
+	}
 	ctxMap := make(map[string]client.ExecutionContext, len(contexts))
 	for i := range contexts {
 		ctxMap[contexts[i].AgentID] = contexts[i]
@@ -169,6 +178,7 @@ func (m *Model) loadNode() tea.Msg {
 		node:     node,
 		agents:   agents,
 		projects: projects,
+		contexts: ctxMap,
 	}
 }
 
@@ -198,6 +208,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.agents = msg.agents
 		if msg.projects != nil {
 			m.projects = msg.projects
+		}
+		if msg.contexts != nil {
+			m.contexts = msg.contexts
 		}
 		// periodic refresh of agents
 		return m, tea.Tick(agentRefreshInterval, func(time.Time) tea.Msg { return tickMsg{} })
