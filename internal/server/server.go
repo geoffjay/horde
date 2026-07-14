@@ -133,6 +133,9 @@ var ErrAgentNotFound = errors.New("agent not found")
 // logKeyAgent is the logrus field key for an agent name.
 const logKeyAgent = "agent"
 
+// logKeyProject is the logrus field key for a project id.
+const logKeyProject = "project"
+
 // AgentState is the lifecycle state of a spawned agent subprocess.
 type AgentState string
 

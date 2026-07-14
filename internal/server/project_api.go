@@ -15,6 +15,17 @@ func (s *Server) CreateProject(_ context.Context, in CreateProjectInput) (*Proje
 		return nil, err
 	}
 
+	// Scaffold the knowledgebase in the project workspace.
+	workspace := in.Workspace
+	if workspace == "" {
+		workspace = s.cfg.ProjectWorkspaceDir
+	}
+	if err := scaffoldKnowledgebase(workspace, p.Name); err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			logKeyProject: p.ID, "workspace": workspace,
+		}).Warn("failed to scaffold knowledgebase")
+	}
+
 	// Spawn and assign each agent.
 	for i := range p.Team.Agents {
 		ta := &p.Team.Agents[i]
