@@ -333,6 +333,13 @@ func (s *Server) localAddr() string {
 // SpawnAgent starts a subprocess for the named agent and registers it. The
 // name must correspond to an agent in the registry (agents.Get).
 func (s *Server) SpawnAgent(ctx context.Context, name string) (string, error) {
+	return s.spawnAgentWithWorkspace(ctx, name, "")
+}
+
+// spawnAgentWithWorkspace is like SpawnAgent but passes the workspace path
+// to the agent subprocess (advisory filesystem scope). Used by the project
+// flows (CreateProject, AssignAgent) where the project's workspace is known.
+func (s *Server) spawnAgentWithWorkspace(ctx context.Context, name, workspace string) (string, error) {
 	// Verify the agent exists in the registry before spawning.
 	if _, err := agents.Get(name); err != nil {
 		return "", fmt.Errorf("verify agent %q: %w", name, err)
@@ -345,7 +352,7 @@ func (s *Server) SpawnAgent(ctx context.Context, name string) (string, error) {
 
 	socketPath := s.agentSocketPath(id)
 
-	cmd, cancel, err := s.startAgentProcess(name, socketPath)
+	cmd, cancel, err := s.startAgentProcess(name, socketPath, workspace)
 	if err != nil {
 		cancel()
 		return "", err
@@ -418,9 +425,12 @@ type agentCmd struct {
 
 // startAgentProcess creates and starts the agent subprocess, returning the
 // cmd and a cancel func. The caller is responsible for cancel() on error.
-func (s *Server) startAgentProcess(name, socketPath string) (*agentCmd, func(), error) {
+func (s *Server) startAgentProcess(name, socketPath, workspace string) (*agentCmd, func(), error) {
 	cmdCtx, cancel := context.WithCancel(context.Background())
 	args := []string{"agent", "--name", name, "--socket", socketPath}
+	if workspace != "" {
+		args = append(args, "--workspace", workspace)
+	}
 	// AgentCommand is operator-controlled config, not untrusted user input.
 	cmd := exec.CommandContext(cmdCtx, s.cfg.AgentCommand, args...) //#nosec G204
 	cmd.Stderr = os.Stderr

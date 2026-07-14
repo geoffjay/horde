@@ -55,10 +55,11 @@ type projectView interface {
 }
 
 // invokeView is the subset needed by the invoke proxy (extends agentView
-// with session-key derivation).
+// with session-key derivation and project-state checking).
 type invokeView interface {
 	agentView
 	SessionKey(agentID string) string
+	AgentProjectState(agentID string) string
 }
 
 // compile-time: *server.Server satisfies the handler interfaces.

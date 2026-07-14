@@ -453,3 +453,211 @@ func TestIntegration_ExecutionContextSeeding(t *testing.T) {
 	require.NotNil(t, ctx)
 	assert.Equal(t, projectID, ctx.Project, "execution context should be seeded with project id")
 }
+
+// TestIntegration_PausedProjectRejectsInvoke verifies that invoking an agent
+// on a paused project returns 409 Conflict.
+func TestIntegration_PausedProjectRejectsInvoke(t *testing.T) {
+	exe := findHordeBinary(t)
+
+	srv, err := server.New(server.Config{
+		AgentCommand:       exe,
+		SocketDir:          "/tmp",
+		ReadyTimeout:       10 * time.Second,
+		HealthPollInterval: 0,
+		SpawnDefaultAgent:  false,
+	})
+	require.NoError(t, err)
+	require.NoError(t, srv.Start(context.Background()))
+	t.Cleanup(func() {
+		for _, a := range srv.Agents() {
+			_ = srv.StopAgent(a.ID)
+		}
+	})
+
+	ts := httptest.NewServer(api.Router(srv))
+	defer ts.Close()
+	c := newProjectAPIClient(t, ts)
+
+	// Create a project with the greeter agent.
+	code, resp := c.create("paused-invoke", []string{"greeter"})
+	require.Equal(t, http.StatusCreated, code)
+	projectID := resp["id"].(string)
+
+	// Find the spawned agent.
+	var agentID string
+	require.Eventually(t, func() bool {
+		for _, a := range srv.Agents() {
+			if a.Name == "greeter" {
+				agentID = a.ID
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 50*time.Millisecond)
+	waitForAgentReady(t, srv, agentID)
+
+	// Pause the project.
+	code, _ = c.postAction(projectID, "pause")
+	require.Equal(t, http.StatusOK, code)
+
+	// Invoke should return 409.
+	respBody, err := http.Post(
+		ts.URL+"/api/v1/agents/"+agentID+"/invoke",
+		"application/json",
+		strings.NewReader(`{"message":"hello"}`),
+	)
+	require.NoError(t, err)
+	defer respBody.Body.Close()
+	assert.Equal(t, http.StatusConflict, respBody.StatusCode)
+
+	// Resume and verify invoke works again.
+	code, _ = c.postAction(projectID, "resume")
+	require.Equal(t, http.StatusOK, code)
+
+	respBody2, err := http.Post(
+		ts.URL+"/api/v1/agents/"+agentID+"/invoke",
+		"application/json",
+		strings.NewReader(`{"message":"hello"}`),
+	)
+	require.NoError(t, err)
+	defer respBody2.Body.Close()
+	assert.Equal(t, http.StatusOK, respBody2.StatusCode)
+}
+
+// TestIntegration_ReassignmentMovesAgent verifies that when an already-
+// spawned agent is assigned to a different project, it is removed from the
+// old project's team. This tests the assignAgentToProject reassignment path
+// directly.
+func TestIntegration_ReassignmentMovesAgent(t *testing.T) {
+	exe := findHordeBinary(t)
+
+	srv, err := server.New(server.Config{
+		AgentCommand:       exe,
+		SocketDir:          "/tmp",
+		ReadyTimeout:       10 * time.Second,
+		HealthPollInterval: 0,
+		SpawnDefaultAgent:  false,
+	})
+	require.NoError(t, err)
+	require.NoError(t, srv.Start(context.Background()))
+	t.Cleanup(func() {
+		for _, a := range srv.Agents() {
+			_ = srv.StopAgent(a.ID)
+		}
+	})
+
+	ts := httptest.NewServer(api.Router(srv))
+	defer ts.Close()
+	c := newProjectAPIClient(t, ts)
+
+	// Create two projects.
+	code, resp1 := c.create("proj-a", []string{"greeter"})
+	require.Equal(t, http.StatusCreated, code)
+	projA := resp1["id"].(string)
+
+	code, resp2 := c.create("proj-b", []string{"greeter"})
+	require.Equal(t, http.StatusCreated, code)
+	projB := resp2["id"].(string)
+
+	// Find the first project's agent.
+	var agentID string
+	require.Eventually(t, func() bool {
+		for _, a := range srv.Agents() {
+			if a.Name == "greeter" {
+				agentID = a.ID
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 50*time.Millisecond)
+	waitForAgentReady(t, srv, agentID)
+
+	// Initially the agent is active on proj-a.
+	require.Equal(t, projA, srv.AgentActiveProject(agentID))
+
+	// Verify proj-a has 1 agent in its team.
+	_, projADetail := c.get(projA)
+	teamA, _ := projADetail["team"].(map[string]any)
+	agentsA, _ := teamA["agents"].([]any)
+	require.Len(t, agentsA, 1)
+
+	// Now rebind the agent to proj-b via the internal method. This is what
+	// happens when an agent is reassigned between projects.
+	srv.AssignAgentToProjectInternal(agentID, projB)
+
+	// The agent's active project should now be proj-b.
+	assert.Equal(t, projB, srv.AgentActiveProject(agentID))
+
+	// proj-a's team should no longer list this agent.
+	_, projADetail = c.get(projA)
+	teamA, _ = projADetail["team"].(map[string]any)
+	agentsA, _ = teamA["agents"].([]any)
+	assert.Empty(t, agentsA, "proj-a team should be empty after reassignment")
+
+	// proj-b's team should now list this agent.
+	_, projBDetail := c.get(projB)
+	teamB, _ := projBDetail["team"].(map[string]any)
+	agentsB, _ := teamB["agents"].([]any)
+	assert.Len(t, agentsB, 2, "proj-b team should have 2 agents (original + reassigned)")
+}
+
+// TestIntegration_FinishedProjectContextEviction verifies that finishing a
+// project marks the agent's execution context as exited.
+func TestIntegration_FinishedProjectContextEviction(t *testing.T) {
+	exe := findHordeBinary(t)
+
+	srv, err := server.New(server.Config{
+		AgentCommand:       exe,
+		SocketDir:          "/tmp",
+		ReadyTimeout:       10 * time.Second,
+		HealthPollInterval: 0,
+		SpawnDefaultAgent:  false,
+		ContextRetention:   0, // no auto-eviction; we check the lifecycle
+	})
+	require.NoError(t, err)
+	require.NoError(t, srv.Start(context.Background()))
+	t.Cleanup(func() {
+		for _, a := range srv.Agents() {
+			_ = srv.StopAgent(a.ID)
+		}
+	})
+
+	ts := httptest.NewServer(api.Router(srv))
+	defer ts.Close()
+	c := newProjectAPIClient(t, ts)
+
+	// Create a project with the greeter agent.
+	code, resp := c.create("finish-evict", []string{"greeter"})
+	require.Equal(t, http.StatusCreated, code)
+	projectID := resp["id"].(string)
+
+	// Find the spawned agent.
+	var agentID string
+	require.Eventually(t, func() bool {
+		for _, a := range srv.Agents() {
+			if a.Name == "greeter" {
+				agentID = a.ID
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 50*time.Millisecond)
+
+	// Verify context is seeded with the project.
+	ctx := srv.AgentContext(agentID)
+	require.NotNil(t, ctx)
+	assert.Equal(t, projectID, ctx.Project)
+	assert.Equal(t, server.AgentRunning, ctx.Lifecycle)
+
+	// Finish the project.
+	code, _ = c.postAction(projectID, "finish")
+	require.Equal(t, http.StatusOK, code)
+
+	// The agent's context should be marked exited.
+	ctx = srv.AgentContext(agentID)
+	require.NotNil(t, ctx)
+	assert.Equal(t, server.AgentExited, ctx.Lifecycle, "context should be exited after project finish")
+
+	// The agent's active project should be cleared.
+	assert.Equal(t, "", srv.AgentActiveProject(agentID))
+}

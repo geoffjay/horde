@@ -42,6 +42,16 @@ func invokeAgent(srv invokeView) http.HandlerFunc {
 			return
 		}
 
+		// Reject invokes on paused or finished projects. An agent with
+		// no active project (empty state) is always invokable.
+		state := srv.AgentProjectState(id)
+		if state == "paused" || state == "finished" {
+			writeJSON(w, http.StatusConflict, errorResponse{
+				Error: "project is " + state,
+			})
+			return
+		}
+
 		body, err := rewriteInvokeBody(r, srv.SessionKey(id))
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: errInvalidBody})
