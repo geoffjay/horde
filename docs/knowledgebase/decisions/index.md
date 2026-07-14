@@ -12,3 +12,4 @@ Records of significant decisions and their rationale.
 * [Adopt the Agent Adapter Protocol (AAP)](agent-adapter-protocol.md) - own a vendor-neutral, agentd-compatible NDJSON host↔adapter protocol for external coding agents; permissions/multi-user stay above it.
 * [Project, team, and user model](project-team-user-model.md) - what a project, team, and user are; how they relate; the 3.5a/3.5b split that defers per-user auth.
 * [Data persistence and per-project knowledgebase](persistence-and-knowledgebase.md) - XDG on-disk layout, JSON KV / database / per-project split, and the OKF knowledgebase as a project's synchronized shared brain.
+* [AUR packaging for Arch Linux](aur-packaging.md) - distribute via AUR `horde-bin`, automated by goreleaser.

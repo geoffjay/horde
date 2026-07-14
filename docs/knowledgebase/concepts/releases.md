@@ -95,6 +95,22 @@ Linux. horde targets linux + darwin as a CLI, so `brews:` is correct;
 `goreleaser check` reports a deprecation warning but `goreleaser release`
 still works. Re-evaluate if a future goreleaser major removes `brews:`.
 
+# AUR (Arch Linux)
+
+The `aurs:` block in `.goreleaser.yml` pushes a `PKGBUILD` to
+`aur.archlinux.org/horde-bin` on every release. Arch Linux users install
+with `yay -S horde-bin` (or `paru -S horde-bin`). Requirements:
+
+- The `AUR_KEY` repo secret (an SSH private key with access to the AUR
+  package) must be set. If it's unset, the AUR push is skipped — the
+  GitHub release and Homebrew formula still succeed.
+- AUR requires the branch be `master`, not `main`.
+- `makepkg` is not available on macOS; generate `.SRCINFO` manually or on
+  a Linux machine when updating manually.
+
+See the [AUR packaging decision](/docs/knowledgebase/decisions/aur-packaging.md)
+for details.
+
 # Files involved
 
 | File | Purpose |

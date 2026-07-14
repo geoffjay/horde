@@ -1,10 +1,11 @@
 # GoReleaser configuration for horde.
 #
-# Build, archive, checksum, publish a GitHub release, and push the Homebrew
-# formula to geoffjay/homebrew-tap in one pass. Triggered by .github/workflows/
-# release.yml on tag pushes (v*).
+# Build, archive, checksum, publish a GitHub release, push the Homebrew
+# formula to geoffjay/homebrew-tap, and push the AUR PKGBUILD to
+# aur.archlinux.org/horde-bin — all in one pass. Triggered by
+# .github/workflows/release.yml on tag pushes (v*).
 #
-# Local snapshot (no release, no tap push):
+# Local snapshot (no release, no tap/AUR push):
 #   task snapshot
 #   # or: goreleaser release --snapshot --clean
 
@@ -79,3 +80,21 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     test: |
       assert_match "horde", shell_output("#{bin}/horde --version")
+
+aurs:
+  - name: horde-bin
+    ids: [tarball]
+    homepage: "https://github.com/geoffjay/horde"
+    description: "Distributed multi-agent system built on the Google V2 ADK"
+    license: MIT
+    skip_upload: auto
+    commit_msg_template: "horde {{ .Tag }}"
+    commit_author:
+      name: github-actions[bot]
+      email: 41898282+github-actions[bot]@users.noreply.github.com
+    private_key: "{{ .Env.AUR_KEY }}"
+    package: |
+      # bin
+      install -Dm755 "./horde" "${pkgdir}/usr/bin/horde"
+    # The PKGBUILD sources the release tarball from GitHub.
+    url_template: "https://github.com/geoffjay/horde/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
