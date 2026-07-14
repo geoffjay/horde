@@ -36,6 +36,10 @@ existing entry wrong or leave a new fact unrecorded. In particular:
 * A new recurring convention → add a [pattern](patterns/index.md).
 * A new command, agent, or capability → update the relevant concept doc and,
   if it shifts scope, the [roadmap](plans/roadmap.md).
+* Work landing (a phase/slice starting or completing) → update that
+  phase/slice's status in the [roadmap](plans/roadmap.md) and its detailed plan
+  doc, and add a `log.md` entry. Status drift here is what makes the roadmap
+  mislead — keep it current even when scope is unchanged.
 
 Concept docs require YAML frontmatter with a `type` field; `index.md` and
 `log.md` are reserved. When you add a doc, add a one-line pointer to the
@@ -78,6 +82,7 @@ every edit.
 * [Phase 2 — Server API](plans/phase-2-server-api.md) - node API transport, event streaming, slave↔master contract.
 * [Phase 3 — Agent mechanism](plans/phase-3-agents.md) - long-lived agent subprocesses invoked over HTTP on unix sockets, streaming, resume, agent registry.
 * [Agent execution context](plans/agent-execution-context.md) - queryable per-agent work-state, materialized at the node from AAP signals, aggregated across the cluster with redacted remote access.
+* [Projects, teams, and multi-turn context](plans/projects-teams.md) - Phase 3.5 Slice B: project/team data model, project API, agent assignment, session-key derivation.
 
 ## References
 
