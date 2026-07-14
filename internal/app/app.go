@@ -29,6 +29,31 @@ const nodeFetchTimeout = 10 * time.Second
 // agentRefreshInterval is how often the TUI re-fetches agents while connected.
 const agentRefreshInterval = 2 * time.Second
 
+// view identifies one screen in the breadcrumb drill-down stack.
+type view int
+
+const (
+	// viewProjects is the projects home — the default connected view.
+	viewProjects view = iota
+	// viewProjectDetail is one project's team and per-agent context.
+	viewProjectDetail
+	// viewAgent is a single agent's live execution context (SSE).
+	viewAgent
+	// viewInvoke is the multi-turn conversation with an agent.
+	viewInvoke
+	// viewCluster is the cluster topology (nodes + remote agents).
+	viewCluster
+)
+
+// breadcrumbEntry is one level of the drill-down stack. The view identifies
+// the screen; id is the project or agent id (empty for top-level screens);
+// label is the display name in the breadcrumb line.
+type breadcrumbEntry struct {
+	view  view
+	id    string
+	label string
+}
+
 // Model is the bubbletea model for the horde TUI.
 type Model struct {
 	ctx context.Context
@@ -44,6 +69,20 @@ type Model struct {
 	node   client.NodeInfo
 	agents []client.Agent
 
+	// navigation: the current view and the breadcrumb stack of entries
+	// pushed to reach it. The stack is empty for top-level screens
+	// (projects, cluster); drill-down screens push entries so esc pops back.
+	view   view
+	crumbs []breadcrumbEntry
+
+	// list cursor within the current view (index into the visible list)
+	cursor int
+
+	// cached domain state
+	projects []client.Project
+	contexts map[string]client.ExecutionContext
+	nodes    client.ClusterView
+
 	// status line + command palette overlay
 	status *StatusLine
 	pal    palette
@@ -57,10 +96,12 @@ type Model struct {
 // addr (host:port).
 func New(ctx context.Context, addr string) *Model {
 	return &Model{
-		ctx:    ctx,
-		c:      client.New(addr),
-		node:   client.NodeInfo{Mode: "unknown"},
-		status: DefaultStatusLine(),
+		ctx:      ctx,
+		c:        client.New(addr),
+		node:     client.NodeInfo{Mode: "unknown"},
+		view:     viewProjects,
+		contexts: make(map[string]client.ExecutionContext),
+		status:   DefaultStatusLine(),
 	}
 }
 
@@ -76,9 +117,10 @@ type connectResultMsg struct {
 }
 
 type nodeInfoMsg struct {
-	node   client.NodeInfo
-	agents []client.Agent
-	err    error
+	node     client.NodeInfo
+	agents   []client.Agent
+	projects []client.Project
+	err      error
 }
 
 type tickMsg struct{}
@@ -94,8 +136,10 @@ func (m *Model) connect() tea.Msg {
 	return connectResultMsg{err: err}
 }
 
-// loadNode fetches node metadata and the agent list after a successful
-// health check.
+// loadNode fetches node metadata, the agent list, the projects, and the
+// execution contexts after a successful health check. Errors from
+// secondary fetches (projects, contexts) are tolerated — the TUI shows
+// what it got and leaves the rest empty.
 func (m *Model) loadNode() tea.Msg {
 	ctx, cancel := context.WithTimeout(m.ctx, nodeFetchTimeout)
 	defer cancel()
@@ -105,7 +149,21 @@ func (m *Model) loadNode() tea.Msg {
 	if nErr != nil && aErr != nil {
 		return nodeInfoMsg{err: nErr}
 	}
-	return nodeInfoMsg{node: node, agents: agents}
+
+	// Projects and contexts are best-effort: a node that doesn't expose them
+	// (e.g. an older version) should not prevent the TUI from rendering.
+	projects, _ := m.c.ListProjects(ctx, "")
+	contexts, _ := m.c.ListAgentContexts(ctx)
+	ctxMap := make(map[string]client.ExecutionContext, len(contexts))
+	for i := range contexts {
+		ctxMap[contexts[i].AgentID] = contexts[i]
+	}
+
+	return nodeInfoMsg{
+		node:     node,
+		agents:   agents,
+		projects: projects,
+	}
 }
 
 // Update implements tea.Model.
@@ -132,6 +190,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.node = msg.node
 		m.agents = msg.agents
+		if msg.projects != nil {
+			m.projects = msg.projects
+		}
 		// periodic refresh of agents
 		return m, tea.Tick(agentRefreshInterval, func(time.Time) tea.Msg { return tickMsg{} })
 
@@ -160,8 +221,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey dispatches key presses. When the command palette is open all keys
 // are routed to it (see handlePaletteKey). Otherwise "q"/ctrl+c quits, ctrl+p
-// opens the palette, and "r" refreshes when connected or triggers an immediate
-// retry when in the retry state.
+// opens the palette, "r" refreshes when connected or triggers an immediate
+// retry when in the retry state, and the arrow keys / enter / esc navigate
+// the breadcrumb drill-down.
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.pal.open {
 		return m.handlePaletteKey(msg)
@@ -182,7 +244,56 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.retryIn = 0
 		return m, m.connect
 	}
+
+	if !m.connected {
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "esc":
+		if len(m.crumbs) > 0 {
+			m.popView()
+			return m, nil
+		}
+	case "enter":
+		return m.drillIn()
+	case "up", "k":
+		m.moveCursor(-1)
+		return m, nil
+	case "down", "j":
+		m.moveCursor(1)
+		return m, nil
+	}
 	return m, nil
+}
+
+// moveCursor moves the list cursor by delta, clamped to the visible list.
+func (m *Model) moveCursor(delta int) {
+	n := m.listLength()
+	if n == 0 {
+		m.cursor = 0
+		return
+	}
+	m.cursor += delta
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if m.cursor >= n {
+		m.cursor = n - 1
+	}
+}
+
+// listLength returns the number of items in the current view's list.
+func (m *Model) listLength() int {
+	switch m.view {
+	case viewProjects:
+		return len(m.projects)
+	case viewProjectDetail, viewAgent:
+		return len(m.visibleAgents())
+	case viewCluster:
+		return len(m.nodes.Nodes)
+	}
+	return 0
 }
 
 // armRetry transitions the model into the retry-countdown state and returns
@@ -279,7 +390,9 @@ func (m *Model) fill(body, footer string) string {
 }
 
 // renderBody builds the main content area (everything above the footer): the
-// title plus either the retry panel or the connected node/agents view.
+// title plus either the retry panel or the current view's content. For
+// connected views the second line is the breadcrumb (e.g. "projects ›
+// auth-service › reviewer"); node mode/leader live in the status line.
 func (m *Model) renderBody() string {
 	var b strings.Builder
 	title := m.paint(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).Render, "horde")
@@ -290,23 +403,62 @@ func (m *Model) renderBody() string {
 		return b.String()
 	}
 
-	modeStyle := lipgloss.NewStyle().Faint(true)
-	b.WriteString(m.paint(modeStyle.Render, fmt.Sprintf("mode: %s", m.node.Mode)))
-	if m.node.LeaderConnected {
-		b.WriteString(m.paint(modeStyle.Render, "  • leader connected"))
-	}
-	b.WriteString("\n\n")
-
-	b.WriteString("Running agents:\n")
-	if len(m.agents) == 0 {
-		b.WriteString("  (none)\n")
-	}
-	for _, a := range m.agents {
-		line := fmt.Sprintf("  • %s  [%s]  %s", a.Name, a.ID, a.Status)
-		b.WriteString(line + "\n")
-	}
-
+	b.WriteString(m.renderBreadcrumb() + "\n\n")
+	b.WriteString(m.renderView())
 	return b.String()
+}
+
+// renderBreadcrumb builds the breadcrumb line from the crumb stack and the
+// current view. Top-level screens show just their name ("projects" or
+// "cluster"); drill-down screens show the full path joined by " › ".
+func (m *Model) renderBreadcrumb() string {
+	labels := make([]string, 0, len(m.crumbs)+1)
+	for _, c := range m.crumbs {
+		labels = append(labels, c.label)
+	}
+	labels = append(labels, m.currentViewLabel())
+	bc := strings.Join(labels, " › ")
+	return m.paint(lipgloss.NewStyle().Faint(true).Render, bc)
+}
+
+// currentViewLabel returns the breadcrumb label for the current view.
+func (m *Model) currentViewLabel() string {
+	switch m.view {
+	case viewProjects:
+		return "projects"
+	case viewCluster:
+		return "cluster"
+	case viewProjectDetail:
+		if i := m.selectedProjectIndex(); i >= 0 && i < len(m.projects) {
+			return m.projects[i].Name
+		}
+		return "project"
+	case viewAgent:
+		if a, ok := m.selectedAgent(); ok {
+			return a.Name
+		}
+		return "agent"
+	case viewInvoke:
+		return "invoke"
+	}
+	return ""
+}
+
+// renderView dispatches to the current view's renderer.
+func (m *Model) renderView() string {
+	switch m.view {
+	case viewProjects:
+		return m.renderProjectsView()
+	case viewProjectDetail:
+		return m.renderProjectDetailView()
+	case viewAgent:
+		return m.renderAgentView()
+	case viewInvoke:
+		return m.renderInvokeView()
+	case viewCluster:
+		return m.renderClusterView()
+	}
+	return ""
 }
 
 // renderRetry builds the "no server available" panel shown while the TUI

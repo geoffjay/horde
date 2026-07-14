@@ -31,6 +31,12 @@ func newTestHandler() http.Handler {
 	mux.HandleFunc("/api/v1/agents", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode([]any{})
 	})
+	mux.HandleFunc("/api/v1/projects/", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]any{})
+	})
+	mux.HandleFunc("/api/v1/agents/context", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]any{})
+	})
 	return mux
 }
 
@@ -117,7 +123,7 @@ func TestModel_PaletteToggle(t *testing.T) {
 
 func TestPalette_SearchFiltersAndTypesIntoQuery(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
-	m.connected = true // commands: Refresh, Quit
+	m.connected = true // commands: Refresh, Go to Cluster, Quit
 	m.openPalette()
 
 	// Typing while the palette is open edits the query rather than acting as
@@ -134,12 +140,12 @@ func TestPalette_SearchFiltersAndTypesIntoQuery(t *testing.T) {
 	// Backspace clears the query and restores the full list.
 	m.Update(namedKey(tea.KeyBackspace))
 	assert.Equal(t, "", m.pal.query)
-	assert.Len(t, m.filteredCommands(), 2)
+	assert.Len(t, m.filteredCommands(), 3)
 }
 
 func TestPalette_CursorNavigationClamps(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
-	m.connected = true // 2 commands
+	m.connected = true // 3 commands: Refresh, Go to Cluster, Quit
 	m.openPalette()
 	require.Equal(t, 0, m.pal.cursor)
 
@@ -151,7 +157,9 @@ func TestPalette_CursorNavigationClamps(t *testing.T) {
 	m.Update(namedKey(tea.KeyDown))
 	assert.Equal(t, 1, m.pal.cursor)
 	m.Update(namedKey(tea.KeyDown))
-	assert.Equal(t, 1, m.pal.cursor)
+	assert.Equal(t, 2, m.pal.cursor)
+	m.Update(namedKey(tea.KeyDown))
+	assert.Equal(t, 2, m.pal.cursor)
 }
 
 func TestPalette_EnterRunsSelectedCommand(t *testing.T) {

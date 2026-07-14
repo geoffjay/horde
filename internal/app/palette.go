@@ -42,15 +42,28 @@ type command struct {
 	run   func(m *Model) tea.Cmd
 }
 
-// commands returns every command available in the current state. Refresh is
-// offered when connected; Retry when waiting to reconnect. Quit is always
-// present.
+// commands returns every command available in the current state. When
+// connected, navigation commands (Go to Projects, Go to Cluster) and the
+// context-sensitive lifecycle actions are offered alongside Refresh and
+// Quit. Retry is offered when waiting to reconnect; Quit is always present.
 func (m *Model) commands() []command {
 	var cmds []command
 	if m.connected {
 		cmds = append(cmds, command{label: "Refresh", key: "r", run: func(m *Model) tea.Cmd {
 			return m.loadNode
 		}})
+		if m.view != viewProjects {
+			cmds = append(cmds, command{label: "Go to Projects", key: "g p", run: func(m *Model) tea.Cmd {
+				m.goHome()
+				return nil
+			}})
+		}
+		if m.view != viewCluster {
+			cmds = append(cmds, command{label: "Go to Cluster", key: "g c", run: func(m *Model) tea.Cmd {
+				m.goCluster()
+				return nil
+			}})
+		}
 	} else {
 		cmds = append(cmds, command{label: "Retry now", key: "r", run: func(m *Model) tea.Cmd {
 			m.retryIn = 0
