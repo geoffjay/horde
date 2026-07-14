@@ -36,6 +36,10 @@ existing entry wrong or leave a new fact unrecorded. In particular:
 * A new recurring convention → add a [pattern](patterns/index.md).
 * A new command, agent, or capability → update the relevant concept doc and,
   if it shifts scope, the [roadmap](plans/roadmap.md).
+* Work landing (a phase/slice starting or completing) → update that
+  phase/slice's status in the [roadmap](plans/roadmap.md) and its detailed plan
+  doc, and add a `log.md` entry. Status drift here is what makes the roadmap
+  mislead — keep it current even when scope is unchanged.
 
 Concept docs require YAML frontmatter with a `type` field; `index.md` and
 `log.md` are reserved. When you add a doc, add a one-line pointer to the
@@ -63,6 +67,7 @@ every edit.
 * [The TUI consumes the node API](decisions/tui-uses-node-api.md) - the TUI always goes over the API; it does not start a node and retries with a 60s countdown.
 * [Adopt the Agent Adapter Protocol (AAP)](decisions/agent-adapter-protocol.md) - own a vendor-neutral, agentd-compatible NDJSON host↔adapter protocol for external coding agents; permissions/multi-user stay above it.
 * [Project, team, and user model](decisions/project-team-user-model.md) - what a project, team, and user are; the 3.5a/3.5b split that defers per-user auth.
+* [Data persistence and per-project knowledgebase](decisions/persistence-and-knowledgebase.md) - XDG on-disk layout, JSON KV / database / per-project split, and the OKF knowledgebase as a project's synchronized shared brain.
 
 ## Patterns
 
@@ -70,7 +75,7 @@ every edit.
 * [Config extension pattern](patterns/config-extension.md) - embedding generic config + app-specific sections.
 * [Subprocess agent hosting](patterns/subprocess-agent-hosting.md) - the binary hosts its own agents.
 * [TUI status line and command palette](patterns/tui-status-line-and-palette.md) - configurable status blocks + a ctrl+p palette over a dimmed background.
-* [Test file naming](patterns/test-file-naming.md) - name test files after what they test, not after phases or milestones.
+* [No phase/milestone references in code](patterns/no-phase-references.md) - name and describe code by what it is, not by the phase/plan/issue that introduced it (file names, comments, identifiers).
 
 ## Plans
 
@@ -78,6 +83,8 @@ every edit.
 * [Phase 2 — Server API](plans/phase-2-server-api.md) - node API transport, event streaming, slave↔master contract.
 * [Phase 3 — Agent mechanism](plans/phase-3-agents.md) - long-lived agent subprocesses invoked over HTTP on unix sockets, streaming, resume, agent registry.
 * [Agent execution context](plans/agent-execution-context.md) - queryable per-agent work-state, materialized at the node from AAP signals, aggregated across the cluster with redacted remote access.
+* [Projects, teams, and multi-turn context](plans/projects-teams.md) - Phase 3.5 Slice B: project/team data model, project API, agent assignment, session-key derivation.
+* [TUI for projects, teams, and execution context](plans/tui-projects.md) - mockup concepts and implementation sketch for a breadcrumb-navigated TUI over the Slice B domain.
 
 ## References
 

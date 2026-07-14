@@ -37,6 +37,10 @@ var agentName string
 // agentSocket is the unix domain socket path the agent subprocess listens on.
 var agentSocket string
 
+// agentWorkspace is the filesystem workspace path the agent operates within
+// (advisory scope; passed from the project when the agent is spawned).
+var agentWorkspace string
+
 // agentCmd is a hidden subcommand the server spawns as a subprocess to host
 // a single ADK agent.
 var agentCmd = &cobra.Command{
@@ -51,6 +55,8 @@ func init() {
 		"Name of the agent to host")
 	agentCmd.Flags().StringVar(&agentSocket, "socket", "",
 		"Unix domain socket path to listen on")
+	agentCmd.Flags().StringVar(&agentWorkspace, "workspace", "",
+		"Filesystem workspace path (advisory scope)")
 	rootCmd.AddCommand(agentCmd)
 }
 
@@ -62,6 +68,10 @@ func runAgent(_ *cobra.Command, _ []string) error {
 	setupLogging(cfg)
 
 	logrus.WithField("agent", agentName).Info("agent subprocess starting")
+
+	if agentWorkspace != "" {
+		logrus.WithField("workspace", agentWorkspace).Debug("agent workspace scope")
+	}
 
 	// Resolve the socket path.
 	if agentSocket == "" {

@@ -88,6 +88,15 @@ type Config struct {
 	// context to remote principals on this node's own endpoints. When false
 	// (the default), remote principals get the redacted subset + counts.
 	ContextShareFull bool
+	// DataDir is the general storage directory for logs, auth, session data,
+	// and database files. May be empty (persistence not yet wired).
+	DataDir string
+	// StateDir is the trivial state directory for JSON KV, execution state,
+	// agent info, prompt history, and lock files. May be empty.
+	StateDir string
+	// ProjectWorkspaceDir is the default workspace directory for a project
+	// whose create request omits the workspace path.
+	ProjectWorkspaceDir string
 }
 
 // Server is the horde node. It owns a set of agent subprocesses and, when
@@ -105,6 +114,7 @@ type Server struct {
 	bus      *EventBus
 	router   http.Handler
 	ctxStore *contextStore
+	projects ProjectStore
 
 	// remoteContexts holds contexts reported by slaves, keyed by
 	// (nodeID, agentID). Only populated on a master.
@@ -119,6 +129,12 @@ type Server struct {
 // Callers (e.g. the API's DELETE handler) match it with errors.Is rather
 // than string-comparing the error message.
 var ErrAgentNotFound = errors.New("agent not found")
+
+// logKeyAgent is the logrus field key for an agent name.
+const logKeyAgent = "agent"
+
+// logKeyProject is the logrus field key for a project id.
+const logKeyProject = "project"
 
 // AgentState is the lifecycle state of a spawned agent subprocess.
 type AgentState string
@@ -135,13 +151,14 @@ const (
 
 // agentProc tracks one spawned agent subprocess.
 type agentProc struct {
-	id         string
-	name       string
-	state      AgentState
-	cmd        *exec.Cmd
-	doneCh     chan struct{}
-	socketPath string // populated from the subprocess ready handshake
-	healthy    bool   // true unless a health poll has failed
+	id            string
+	name          string
+	state         AgentState
+	cmd           *exec.Cmd
+	doneCh        chan struct{}
+	socketPath    string // populated from the subprocess ready handshake
+	healthy       bool   // true unless a health poll has failed
+	activeProject string // active project id; empty when no project assigned
 }
 
 const (
@@ -195,12 +212,27 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 	if cfg.HealthPollInterval == 0 {
 		cfg.HealthPollInterval = defaultHealthPollInterval
 	}
+	// Build the project store. When a state dir is configured, persist
+	// projects to <stateDir>/projects.json and load any existing state.
+	var projects ProjectStore
+	if cfg.StateDir != "" {
+		projects = newPersistentProjectStore(filepath.Join(cfg.StateDir, "projects.json"))
+		if mem, ok := projects.(*memProjectStore); ok {
+			if err := mem.loadProjects(); err != nil {
+				logrus.WithError(err).Warn("failed to load persisted projects; starting fresh")
+			}
+		}
+	} else {
+		projects = newProjectStore()
+	}
+
 	return &Server{
 		cfg:            cfg,
 		procs:          make(map[string]*agentProc),
 		slaves:         make(map[string]knownSlave),
 		bus:            NewEventBus(),
 		ctxStore:       newContextStore(cfg.ContextRetention),
+		projects:       projects,
 		remoteContexts: make(map[string]ExecutionContext),
 		now:            time.Now,
 	}, nil
@@ -301,6 +333,13 @@ func (s *Server) localAddr() string {
 // SpawnAgent starts a subprocess for the named agent and registers it. The
 // name must correspond to an agent in the registry (agents.Get).
 func (s *Server) SpawnAgent(ctx context.Context, name string) (string, error) {
+	return s.spawnAgentWithWorkspace(ctx, name, "")
+}
+
+// spawnAgentWithWorkspace is like SpawnAgent but passes the workspace path
+// to the agent subprocess (advisory filesystem scope). Used by the project
+// flows (CreateProject, AssignAgent) where the project's workspace is known.
+func (s *Server) spawnAgentWithWorkspace(ctx context.Context, name, workspace string) (string, error) {
 	// Verify the agent exists in the registry before spawning.
 	if _, err := agents.Get(name); err != nil {
 		return "", fmt.Errorf("verify agent %q: %w", name, err)
@@ -313,7 +352,7 @@ func (s *Server) SpawnAgent(ctx context.Context, name string) (string, error) {
 
 	socketPath := s.agentSocketPath(id)
 
-	cmd, cancel, err := s.startAgentProcess(name, socketPath)
+	cmd, cancel, err := s.startAgentProcess(name, socketPath, workspace)
 	if err != nil {
 		cancel()
 		return "", err
@@ -344,7 +383,7 @@ func (s *Server) SpawnAgent(ctx context.Context, name string) (string, error) {
 	s.mu.Unlock()
 
 	logrus.WithFields(logrus.Fields{
-		"agent": name, "id": id, "socket": confirmedSocket,
+		logKeyAgent: name, "id": id, "socket": confirmedSocket,
 	}).Info("agent started")
 
 	// Seed the execution context before tracking exit, so a fast-exiting
@@ -386,9 +425,12 @@ type agentCmd struct {
 
 // startAgentProcess creates and starts the agent subprocess, returning the
 // cmd and a cancel func. The caller is responsible for cancel() on error.
-func (s *Server) startAgentProcess(name, socketPath string) (*agentCmd, func(), error) {
+func (s *Server) startAgentProcess(name, socketPath, workspace string) (*agentCmd, func(), error) {
 	cmdCtx, cancel := context.WithCancel(context.Background())
 	args := []string{"agent", "--name", name, "--socket", socketPath}
+	if workspace != "" {
+		args = append(args, "--workspace", workspace)
+	}
 	// AgentCommand is operator-controlled config, not untrusted user input.
 	cmd := exec.CommandContext(cmdCtx, s.cfg.AgentCommand, args...) //#nosec G204
 	cmd.Stderr = os.Stderr

@@ -50,9 +50,26 @@ environment variable (any extension: `yaml`, `yml`, `json`, `toml`).
 | `agent.health_poll_interval`     | `30`                | `HORDE_AGENT_HEALTH_POLL_INTERVAL`     | Seconds between agent health polls.     |
 | `agent.context_retention`        | `300`               | `HORDE_AGENT_CONTEXT_RETENTION`        | Seconds to retain an agent's context after exit. |
 | `agent.context_share`            | `restricted`        | `HORDE_AGENT_CONTEXT_SHARE`             | What a remote (non-loopback) principal sees on this node's own context endpoints: `restricted` (redacted subset + error/approval counts) or `full`. The cross-node master summary is always redacted. |
+| `project.workspace_dir`          | `.`                 | `HORDE_PROJECT_WORKSPACE_DIR`           | Default workspace dir for a project whose create request omits `workspace`. |
+| `project.context_retention`      | `0`                 | `HORDE_PROJECT_CONTEXT_RETENTION`       | Seconds to retain a finished project's agent contexts before eviction. `0` inherits `agent.context_retention`. |
 | `log.formatter`                  | `text`              | `HORDE_LOG_FORMATTER`                  | Log formatter: `text` or `json`.        |
 | `log.level`                      | `info`              | `HORDE_LOG_LEVEL`                      | Log level.                               |
 | `service.id`                     | `org.horde.Horde`   | `HORDE_SERVICE_ID`                      | Service identifier.                      |
+
+### Data and state directories (XDG)
+
+horde persists data to XDG-compliant directories (see the [persistence
+decision](knowledgebase/decisions/persistence-and-knowledgebase.md)).
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `HORDE_PATHS_CONFIG_DIR` | `~/.config/horde` | Configuration directory (`horde.yaml`, global project defaults). |
+| `HORDE_PATHS_DATA_DIR` | `~/.local/share/horde` | General storage: logs, auth, session data, database files. |
+| `HORDE_PATHS_STATE_DIR` | `~/.local/state/horde` | Trivial state: JSON KV, execution state, agent info, prompt history, lock files. |
+
+Per-project configuration lives in `.horde/` within a project's workspace
+directory and overrides global config. Every project has a knowledgebase at
+`.horde/knowledgebase/` (OKF v0.1).
 
 ## Services
 

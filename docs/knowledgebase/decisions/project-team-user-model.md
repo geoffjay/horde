@@ -148,8 +148,8 @@ support conversation history when the same `sessionID` is reused across
 `/invoke` calls.
 
 **Decision:** the session key is `(agent_id, project_id)`. Each agent has
-its own **private** conversation history scoped to the project. Agents on
-the same team do not share conversation history — they each have their own.
+its own **private** conversation history scoped to the project. Agents on the
+same team do not share conversation history — they each have their own.
 
 This gives:
 * Multi-turn context per agent within a project (an agent remembers prior
@@ -162,6 +162,23 @@ This gives:
 The node derives `sessionID` from `(agent_id, project_id)` and passes it in
 the invoke request body to the agent subprocess. The agent subprocess uses
 it as the `sessionID` for `runner.Run`.
+
+## Agent without an active project
+
+The decision above assumes an agent has an active project. An agent with no
+active project — freshly spawned and not yet assigned, or removed from its
+project — **remains invokable**. Projects are the unit of work and multi-turn
+context; they are not a precondition for an agent to respond.
+
+When an agent with no active project is invoked, the node falls back to the
+Phase 3 behaviour: `session_id` is omitted (or empty) and the agent subprocess
+uses the per-invocation `invocation_id` as the `sessionID` for `runner.Run`,
+yielding a fresh conversation with no continuity across invocations. This
+keeps the existing spawn-then-invoke workflow working and makes projects
+**additive** — a project grants multi-turn context, it does not gate
+invocation. The decision not to reject the no-project case is deliberate:
+the model frames projects as a work/multi-turn primitive, not an access
+gate.
 
 # 6. Invocation payload shape
 

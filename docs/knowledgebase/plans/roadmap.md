@@ -49,13 +49,13 @@ Decisions underpinning this phase:
 
 * [HTTP over unix domain sockets for agent invocation](/docs/knowledgebase/decisions/agent-invocation-transport.md)
 
-# Phase 3.5 — Multi-agent context (planned)
+# Phase 3.5 — Multi-agent context (in progress)
 
 Decision doc: [Project, team, and user model](/docs/knowledgebase/decisions/project-team-user-model.md).
 
 Built in two slices:
 
-## Slice A — Agent execution context
+## Slice A — Agent execution context (complete)
 
 Detailed plan: [Agent execution context](agent-execution-context.md).
 
@@ -66,12 +66,13 @@ Detailed plan: [Agent execution context](agent-execution-context.md).
   access.
 * Minimal node-granular principal model (`local` vs `remote`).
 
-Can be built immediately — does not depend on the project/team model. Signal
-fidelity note: full AAP `context`/`error`/`approval` frames arrive with the AAP
-host (Phase 3.6); until then native ADK agents yield only coarse context
-(activity + errors). Slice A ships the model, API, and aggregation regardless.
+Signal fidelity note: full AAP `context`/`error`/`approval` frames arrive with
+the AAP host (Phase 3.6); native ADK agents yield only coarse context (activity
++ errors) until then. Slice A ships the model, API, and aggregation regardless.
 
-## Slice B — Projects, teams, and multi-turn context
+## Slice B — Projects, teams, and multi-turn context (planned)
+
+Detailed plan: [Projects, teams, and multi-turn context](projects-teams.md).
 
 * Projects as a unit of work: workspace path, free-text goal, lifecycle
   states (active/paused/finished).

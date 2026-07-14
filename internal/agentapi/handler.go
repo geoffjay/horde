@@ -76,6 +76,7 @@ func (h *Handler) getHealth(w http.ResponseWriter, _ *http.Request) {
 type invokeRequest struct {
 	Message      string `json:"message"`
 	InvocationID string `json:"invocation_id"`
+	SessionID    string `json:"session_id"`
 }
 
 func (h *Handler) invoke(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +91,16 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request) {
 		invID = uuid.NewString()
 	}
 
+	// sessionID determines conversation continuity across invocations. When
+	// the node injects a session_id (derived from agent_id:project_id), the
+	// agent retains a private conversation history per project. When empty
+	// (no active project), fall back to using the invocation id, yielding a
+	// fresh session per invoke.
+	sessionID := req.SessionID
+	if sessionID == "" {
+		sessionID = invID
+	}
+
 	inv, created := h.regs.getOrCreate(invID)
 
 	// If this is a new invocation, start the agent run in a background
@@ -100,7 +111,7 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request) {
 	if created {
 		// Use a detached context so the run survives HTTP disconnect.
 		runCtx := httpBackgroundContext()
-		go h.runInvocation(runCtx, invID, inv, req.Message)
+		go h.runInvocation(runCtx, invID, sessionID, inv, req.Message)
 	}
 
 	h.streamFromBuffer(w, r, inv, parseLastEventID(r))
@@ -108,8 +119,11 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request) {
 
 // runInvocation runs the agent in a background goroutine, appending every
 // event to the invocation's ring buffer. The invocation is marked finished
-// when the run completes (normally or with error).
-func (h *Handler) runInvocation(ctx context.Context, invID string, inv *invocation, message string) {
+// when the run completes (normally or with error). sessionID is the key for
+// conversation continuity: a stable value (agent_id:project_id) retains
+// history across invocations; the invocation id yields a fresh session each
+// time (the fallback when there is no active project).
+func (h *Handler) runInvocation(ctx context.Context, invID, sessionID string, inv *invocation, message string) {
 	defer inv.markFinished()
 
 	// Write the invocation announcement event.
@@ -124,7 +138,7 @@ func (h *Handler) runInvocation(ctx context.Context, invID string, inv *invocati
 		Parts: []*genai.Part{{Text: message}},
 	}
 
-	events := h.r.Run(ctx, "local", invID, msg, agent.RunConfig{
+	events := h.r.Run(ctx, "local", sessionID, msg, agent.RunConfig{
 		StreamingMode: agent.StreamingModeSSE,
 	})
 

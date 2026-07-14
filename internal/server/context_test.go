@@ -26,6 +26,17 @@ func TestContextStore_Init(t *testing.T) {
 	assert.Equal(t, ctx.AgentID, ctx2.AgentID)
 }
 
+func TestContextStore_SetProject(t *testing.T) {
+	cs := newContextStore(0)
+	cs.init("agent-1", "node-1")
+
+	cs.setProject("agent-1", "proj-1", "issue-42")
+	ctx := cs.get("agent-1")
+	require.NotNil(t, ctx)
+	assert.Equal(t, "proj-1", ctx.Project)
+	assert.Equal(t, "issue-42", ctx.Issue)
+}
+
 func TestContextStore_ApplyStatus(t *testing.T) {
 	cs := newContextStore(0)
 	cs.init("agent-1", "node-1")

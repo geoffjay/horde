@@ -48,7 +48,7 @@ func createAgent(srv agentView) http.HandlerFunc {
 			return
 		}
 		if req.Name == "" {
-			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "name is required"})
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: errNameRequired})
 			return
 		}
 

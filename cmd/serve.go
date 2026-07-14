@@ -57,24 +57,31 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	logrus.WithField("mode", cfg.Mode).Info("starting horde node")
 
+	if err := cfg.EnsureDataDirs(); err != nil {
+		return fmt.Errorf("ensure data dirs: %w", err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	srv, err := server.New(server.Config{
-		Mode:               server.Mode(cfg.Mode),
-		AgentCommand:       cfg.Server.AgentCommand,
-		Leader:             cfg.Server.Leader,
-		SpawnDefaultAgent:  true,
-		Port:               cfg.Server.Port,
-		ReadTimeout:        time.Duration(cfg.Server.ReadTimeout) * time.Second,
-		WriteTimeout:       time.Duration(cfg.Server.WriteTimeout) * time.Second,
-		IdleTimeout:        time.Duration(cfg.Server.IdleTimeout) * time.Second,
-		NodeID:             cfg.Cluster.NodeID,
-		SocketDir:          cfg.Agent.SocketDir,
-		ReadyTimeout:       time.Duration(cfg.Agent.ReadyTimeout) * time.Second,
-		HealthPollInterval: time.Duration(cfg.Agent.HealthPollInterval) * time.Second,
-		ContextRetention:   time.Duration(cfg.Agent.ContextRetention) * time.Second,
-		ContextShareFull:   cfg.Agent.ContextShare == "full",
+		Mode:                server.Mode(cfg.Mode),
+		AgentCommand:        cfg.Server.AgentCommand,
+		Leader:              cfg.Server.Leader,
+		SpawnDefaultAgent:   true,
+		Port:                cfg.Server.Port,
+		ReadTimeout:         time.Duration(cfg.Server.ReadTimeout) * time.Second,
+		WriteTimeout:        time.Duration(cfg.Server.WriteTimeout) * time.Second,
+		IdleTimeout:         time.Duration(cfg.Server.IdleTimeout) * time.Second,
+		NodeID:              cfg.Cluster.NodeID,
+		SocketDir:           cfg.Agent.SocketDir,
+		ReadyTimeout:        time.Duration(cfg.Agent.ReadyTimeout) * time.Second,
+		HealthPollInterval:  time.Duration(cfg.Agent.HealthPollInterval) * time.Second,
+		ContextRetention:    time.Duration(cfg.Agent.ContextRetention) * time.Second,
+		ContextShareFull:    cfg.Agent.ContextShare == "full",
+		DataDir:             cfg.Paths.DataDir,
+		StateDir:            cfg.Paths.StateDir,
+		ProjectWorkspaceDir: cfg.Project.WorkspaceDir,
 	})
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
