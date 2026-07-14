@@ -17,7 +17,7 @@ import (
 // The node injects session_id (derived from the agent's active project) into
 // the client's original body before proxying. When the agent has no active
 // project, session_id is empty and the agent falls back to per-invocation
-// sessions (Phase 3 behavior).
+// sessions (each invoke is a fresh session, no conversation continuity).
 type invokeRequestBody struct {
 	Message      string `json:"message"`
 	InvocationID string `json:"invocation_id,omitempty"`
@@ -32,7 +32,7 @@ type invokeRequestBody struct {
 // The node reads the client's request body, injects session_id derived from
 // the agent's active project, and re-marshals before forwarding. When the
 // agent has no active project, session_id is omitted and the agent falls
-// back to Phase 3 per-invocation sessions.
+// back to per-invocation sessions.
 func invokeAgent(srv invokeView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")

@@ -157,7 +157,7 @@ func (s *Server) assignAgentToProject(agentID, projectID string) {
 
 // SessionKey derives the session key for an agent from its active project.
 // Returns "" when the agent has no active project (the caller falls back to
-// Phase 3 per-invocation semantics).
+// per-invocation sessions with no conversation continuity).
 func (s *Server) SessionKey(agentID string) string {
 	projectID := s.AgentActiveProject(agentID)
 	if projectID == "" {

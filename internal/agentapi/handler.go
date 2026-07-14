@@ -94,8 +94,8 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request) {
 	// sessionID determines conversation continuity across invocations. When
 	// the node injects a session_id (derived from agent_id:project_id), the
 	// agent retains a private conversation history per project. When empty
-	// (no active project), fall back to Phase 3 semantics: use the invocation
-	// id, yielding a fresh session per invoke.
+	// (no active project), fall back to using the invocation id, yielding a
+	// fresh session per invoke.
 	sessionID := req.SessionID
 	if sessionID == "" {
 		sessionID = invID
@@ -122,7 +122,7 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request) {
 // when the run completes (normally or with error). sessionID is the key for
 // conversation continuity: a stable value (agent_id:project_id) retains
 // history across invocations; the invocation id yields a fresh session each
-// time (Phase 3 fallback).
+// time (the fallback when there is no active project).
 func (h *Handler) runInvocation(ctx context.Context, invID, sessionID string, inv *invocation, message string) {
 	defer inv.markFinished()
 

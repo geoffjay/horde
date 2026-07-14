@@ -361,8 +361,8 @@ func TestIntegration_MultiTurnContext_WithProject(t *testing.T) {
 }
 
 // TestIntegration_MultiTurnContext_NoProject verifies that invoking an agent
-// with no active project falls back to per-invocation sessions (Phase 3
-// behavior): each invoke is turn 1, no conversation continuity.
+// with no active project falls back to per-invocation sessions: each invoke
+// is turn 1, no conversation continuity.
 func TestIntegration_MultiTurnContext_NoProject(t *testing.T) {
 	exe := findHordeBinary(t)
 
