@@ -16,8 +16,9 @@ import (
 
 // Client is an HTTP client for a single horde node API endpoint.
 type Client struct {
-	baseURL string
-	http    *http.Client
+	baseURL    string
+	http       *http.Client
+	streamHTTP *http.Client
 }
 
 // httpTimeout is the default per-request timeout for client calls.
@@ -32,8 +33,9 @@ func New(addr string) *Client {
 	}
 	addr = strings.TrimRight(addr, "/")
 	return &Client{
-		baseURL: addr,
-		http:    &http.Client{Timeout: httpTimeout},
+		baseURL:    addr,
+		http:       &http.Client{Timeout: httpTimeout},
+		streamHTTP: &http.Client{}, // no timeout: SSE streams live until closed
 	}
 }
 
