@@ -13,6 +13,7 @@ context](agent-execution-context.md). The what/why is settled in the
 document is the how.
 
 * Decision: [Project, team, and user model](/docs/knowledgebase/decisions/project-team-user-model.md).
+* Decision: [Data persistence and per-project knowledgebase](/docs/knowledgebase/decisions/persistence-and-knowledgebase.md).
 * Mechanism: [Phase 3 — Agent mechanism](phase-3-agents.md).
 * Observability already in place: [Agent execution context](agent-execution-context.md) (Slice A) — its `Project`/`Issue` fields are seeded by this slice.
 
@@ -27,12 +28,23 @@ project.
 
 **v1 does not deliver:** per-user authentication or ownership (3.5b), per-user
 permission scopes or tool allowlists (3.5b), OS-level filesystem sandboxing
-(advisory only), agent-to-agent messaging (deferred), or cross-node project
-sync (Phase 4). Projects live on the node that owns them; a slave's projects
-are not yet replicated to the master.
+(advisory only), agent-to-agent messaging (deferred), cross-node project
+sync (Phase 4), knowledgebase synchronization across nodes (Phase 3.6/4,
+see the [persistence decision](/docs/knowledgebase/decisions/persistence-and-knowledgebase.md)),
+or a database-backed store (Slice B ships in-memory + JSON flush; the
+database backend swaps in behind the same store interfaces).
 
 **Depends on:** Phase 3 (agent spawn/invoke mechanism) and Slice A (execution
 context store, which gains seeded `Project`/`Issue`). Both complete.
+
+**Persistence:** Slice B is the first state that represents user work
+product. The [persistence decision](/docs/knowledgebase/decisions/persistence-and-knowledgebase.md)
+settles the on-disk layout (XDG), the storage strategy (JSON KV / database /
+per-project), and the per-project OKF knowledgebase. Slice B introduces
+store interfaces (`ProjectStore`, `SessionStore`) with in-memory + JSON
+flush implementations; the database backend swaps in later without
+reshaping the server. Every project gets a knowledgebase directory created
+at project creation (`.horde/knowledgebase/`); sync is deferred.
 
 # Data model
 
@@ -90,8 +102,12 @@ type TeamUser struct {
 
 # Layer 1 — Project store
 
-The node keeps a `projectStore` (guarded by the server mutex, alongside
-`ctxStore`). It is updated from:
+The node keeps a `ProjectStore` (interface, per the [persistence
+decision](/docs/knowledgebase/decisions/persistence-and-knowledgebase.md))
+guarded by the server mutex, alongside `ctxStore`. The v1 implementation is
+in-memory with JSON flush to `~/.local/state/horde/` (a `projects.json`
+index) and per-project detail in the workspace's `.horde/` directory. It is
+updated from:
 
 1. **Create** — `CreateProject` seeds a new `Project` with `State=active` and
    the supplied team of agents (spawning any not already running).

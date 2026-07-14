@@ -54,6 +54,21 @@ environment variable (any extension: `yaml`, `yml`, `json`, `toml`).
 | `log.level`                      | `info`              | `HORDE_LOG_LEVEL`                      | Log level.                               |
 | `service.id`                     | `org.horde.Horde`   | `HORDE_SERVICE_ID`                      | Service identifier.                      |
 
+### Data and state directories (XDG)
+
+horde persists data to XDG-compliant directories (see the [persistence
+decision](knowledgebase/decisions/persistence-and-knowledgebase.md)).
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `HORDE_CONFIG_DIR` | `~/.config/horde` | Configuration directory (`horde.yaml`, global project defaults). |
+| `HORDE_DATA_DIR` | `~/.local/share/horde` | General storage: logs, auth, session data, database files. |
+| `HORDE_STATE_DIR` | `~/.local/state/horde` | Trivial state: JSON KV, execution state, agent info, prompt history, lock files. |
+
+Per-project configuration lives in `.horde/` within a project's workspace
+directory and overrides global config. Every project has a knowledgebase at
+`.horde/knowledgebase/` (OKF v0.1).
+
 ## Services
 
 ### horde node (`horde serve`)
