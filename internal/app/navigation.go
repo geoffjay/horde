@@ -15,7 +15,8 @@ func (m *Model) pushView(v view, id, _ string) {
 	m.view = v
 	switch v {
 	case viewProjectDetail:
-		m.setProjectCursor(id)
+		m.selectedProjectID = id
+		m.cursor = 0
 	case viewAgent, viewInvoke:
 		m.cursor = 0
 	}
@@ -33,6 +34,10 @@ func (m *Model) popView() {
 	last := m.crumbs[len(m.crumbs)-1]
 	m.crumbs = m.crumbs[:len(m.crumbs)-1]
 	m.view = last.view
+	// Clear the drill-down project id when returning to the projects list.
+	if last.view == viewProjects {
+		m.selectedProjectID = ""
+	}
 	if last.id != "" {
 		switch last.view {
 		case viewProjects:
@@ -97,6 +102,7 @@ func (m *Model) goHome() {
 	m.view = viewProjects
 	m.crumbs = nil
 	m.cursor = 0
+	m.selectedProjectID = ""
 }
 
 // goCluster navigates to the cluster view, clearing the breadcrumb stack.
@@ -104,11 +110,23 @@ func (m *Model) goCluster() {
 	m.view = viewCluster
 	m.crumbs = nil
 	m.cursor = 0
+	m.selectedProjectID = ""
 }
 
-// selectedProjectIndex returns the index into m.projects that the cursor
-// points at, or -1 if out of range.
+// selectedProjectIndex returns the index into m.projects of the project
+// open in the current view, or -1 if not found. In the projects list it
+// is the cursor position; in drill-down views (projectDetail, agent,
+// invoke) it is the project that was drilled into, tracked by
+// selectedProjectID.
 func (m *Model) selectedProjectIndex() int {
+	if m.view != viewProjects && m.selectedProjectID != "" {
+		for i, p := range m.projects {
+			if p.ID == m.selectedProjectID {
+				return i
+			}
+		}
+		return -1
+	}
 	if m.cursor >= 0 && m.cursor < len(m.projects) {
 		return m.cursor
 	}
@@ -129,8 +147,9 @@ func (m *Model) setProjectCursor(id string) {
 }
 
 // selectedAgent returns the agent selected in the current context, if any.
-// In the project detail view, agents come from the project's team; in the
-// agent view, from the agent list.
+// In the project detail view, the cursor indexes into the project's team
+// agents; the returned Agent is synthesized from the TeamAgent's id and
+// name. In the agent view, it comes from the agent list.
 func (m *Model) selectedAgent() (client.Agent, bool) {
 	agents := m.visibleAgents()
 	if m.cursor >= 0 && m.cursor < len(agents) {
@@ -139,9 +158,23 @@ func (m *Model) selectedAgent() (client.Agent, bool) {
 	return client.Agent{}, false
 }
 
-// visibleAgents returns the agents relevant to the current view: the
-// project's team agents in project detail, or all agents in other views.
+// visibleAgents returns the agents relevant to the current view. In the
+// project detail view these are the project's team agents (synthesized into
+// client.Agent values so drillIn and crumbID can use a uniform type); in
+// other views they are the node's running agents.
 func (m *Model) visibleAgents() []client.Agent {
+	if m.view == viewProjectDetail {
+		i := m.selectedProjectIndex()
+		if i < 0 {
+			return nil
+		}
+		team := m.projects[i].Team.Agents
+		agents := make([]client.Agent, len(team))
+		for j, ta := range team {
+			agents[j] = client.Agent{ID: ta.AgentID, Name: ta.Name, Status: "running"}
+		}
+		return agents
+	}
 	return m.agents
 }
 

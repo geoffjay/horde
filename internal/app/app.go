@@ -78,6 +78,12 @@ type Model struct {
 	// list cursor within the current view (index into the visible list)
 	cursor int
 
+	// selectedProjectID is the project open in the projectDetail/agent/invoke
+	// views. Set by pushView when drilling in from the projects list; used to
+	// look up the project independently of the cursor (which indexes team
+	// agents in projectDetail).
+	selectedProjectID string
+
 	// cached domain state
 	projects []client.Project
 	contexts map[string]client.ExecutionContext
