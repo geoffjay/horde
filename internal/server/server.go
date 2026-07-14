@@ -88,6 +88,15 @@ type Config struct {
 	// context to remote principals on this node's own endpoints. When false
 	// (the default), remote principals get the redacted subset + counts.
 	ContextShareFull bool
+	// DataDir is the general storage directory for logs, auth, session data,
+	// and database files. May be empty (persistence not yet wired).
+	DataDir string
+	// StateDir is the trivial state directory for JSON KV, execution state,
+	// agent info, prompt history, and lock files. May be empty.
+	StateDir string
+	// ProjectWorkspaceDir is the default workspace directory for a project
+	// whose create request omits the workspace path.
+	ProjectWorkspaceDir string
 }
 
 // Server is the horde node. It owns a set of agent subprocesses and, when

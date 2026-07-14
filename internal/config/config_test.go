@@ -42,6 +42,11 @@ func TestLoadConfigWithDefaults_FixtureFormats(t *testing.T) {
 			assert.Equal(t, "json", c.Log.Formatter)
 			assert.Equal(t, "debug", c.Log.Level)
 			assert.Equal(t, "org.horde.Test", c.Service.ID)
+			assert.Equal(t, "/tmp/test-workspace", c.Project.WorkspaceDir)
+			assert.Equal(t, 120, c.Project.ContextRetention)
+			assert.Equal(t, "/tmp/horde-config", c.Paths.ConfigDir)
+			assert.Equal(t, "/tmp/horde-data", c.Paths.DataDir)
+			assert.Equal(t, "/tmp/horde-state", c.Paths.StateDir)
 		})
 	}
 }

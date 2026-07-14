@@ -15,5 +15,14 @@
   },
   "service": {
     "id": "org.horde.Test"
+  },
+  "project": {
+    "workspace_dir": "/tmp/test-workspace",
+    "context_retention": 120
+  },
+  "paths": {
+    "config_dir": "/tmp/horde-config",
+    "data_dir": "/tmp/horde-data",
+    "state_dir": "/tmp/horde-state"
   }
 }

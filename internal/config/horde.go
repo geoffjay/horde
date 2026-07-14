@@ -55,6 +55,32 @@ type AgentConfig struct {
 	ContextShare string `mapstructure:"context_share"`
 }
 
+// ProjectConfig represents project-related configuration.
+type ProjectConfig struct {
+	// WorkspaceDir is the default workspace directory for a project whose
+	// create request omits the workspace path. Defaults to the current
+	// directory.
+	WorkspaceDir string `mapstructure:"workspace_dir"`
+	// ContextRetention is how long a finished project's agent contexts are
+	// retained before eviction, in seconds. Zero inherits the agent
+	// context_retention value.
+	ContextRetention int `mapstructure:"context_retention"`
+}
+
+// DataPaths holds the XDG-compliant on-disk directories horde uses for
+// configuration, general storage, and trivial state. Each is overridable via
+// its respective env var; see the persistence decision doc.
+type DataPaths struct {
+	// ConfigDir is the configuration directory (~/.config/horde).
+	ConfigDir string `mapstructure:"config_dir"`
+	// DataDir is the general storage directory (~/.local/share/horde):
+	// logs, auth, session data, database files.
+	DataDir string `mapstructure:"data_dir"`
+	// StateDir is the trivial state directory (~/.local/state/horde):
+	// JSON KV, execution state, agent info, prompt history, lock files.
+	StateDir string `mapstructure:"state_dir"`
+}
+
 // Config represents the configuration for the horde application.
 //
 // It embeds the generic config pieces (Log, Service) and adds horde-specific
@@ -65,8 +91,10 @@ type Config struct {
 	Server  ServerConfig  `mapstructure:"server"`
 	Cluster ClusterConfig `mapstructure:"cluster"`
 	Agent   AgentConfig   `mapstructure:"agent"`
+	Project ProjectConfig `mapstructure:"project"`
 	Log     LogConfig     `mapstructure:"log"`
 	Service ServiceConfig `mapstructure:"service"`
+	Paths   DataPaths     `mapstructure:"paths"`
 }
 
 var (
@@ -85,6 +113,8 @@ const (
 	defaultAgentHealthPollInterval = 30
 	defaultAgentContextRetention   = 300
 	defaultAgentContextShare       = "restricted"
+
+	defaultProjectWorkspaceDir = "."
 
 	// maxPort is the largest valid TCP port number.
 	maxPort = 65535
@@ -114,6 +144,15 @@ var defaults = map[string]any{
 	"agent.context_retention":    defaultAgentContextRetention,
 	"agent.context_share":        defaultAgentContextShare,
 
+	// Project defaults
+	"project.workspace_dir":     defaultProjectWorkspaceDir,
+	"project.context_retention": 0, // 0 inherits agent.context_retention
+
+	// Data paths (XDG); empty means resolve from home dir at load time.
+	"paths.config_dir": "",
+	"paths.data_dir":   "",
+	"paths.state_dir":  "",
+
 	// Logging defaults
 	"log.formatter": "text",
 	"log.level":     "info",
@@ -140,6 +179,7 @@ func loadLocked() error {
 	if err := LoadConfigWithDefaults("horde", c, defaults); err != nil {
 		return err
 	}
+	c.resolvePaths()
 	if err := c.Validate(); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
