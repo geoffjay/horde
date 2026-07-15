@@ -44,8 +44,9 @@ type command struct {
 
 // commands returns every command available in the current state. When
 // connected, navigation commands (Go to Projects, Go to Cluster) and the
-// context-sensitive lifecycle actions are offered alongside Refresh and
-// Quit. Retry is offered when waiting to reconnect; Quit is always present.
+// context-sensitive lifecycle actions (new project, pause/resume/finish,
+// assign agent) are offered alongside Refresh and Quit. Retry is offered
+// when waiting to reconnect; Quit is always present.
 func (m *Model) commands() []command {
 	var cmds []command
 	if m.connected {
@@ -64,6 +65,44 @@ func (m *Model) commands() []command {
 				return nil
 			}})
 		}
+		// New project form is available on any view so the user can create
+		// a project without navigating to the projects list first.
+		cmds = append(cmds, command{label: "New project…", key: "n", run: func(m *Model) tea.Cmd {
+			m.openForm()
+			return nil
+		}})
+		// Project lifecycle commands are view-aware: they appear on the
+		// projects list (acting on the cursor-selected project) and on the
+		// project detail view (acting on the open project).
+		if m.view == viewProjects || m.view == viewProjectDetail {
+			projectID := m.selectedProjectIDForAction()
+			if projectID != "" {
+				state := m.actionProjectState(projectID)
+				switch state {
+				case stateActive:
+					cmds = append(cmds,
+						command{label: "Pause project", key: "p", run: func(m *Model) tea.Cmd {
+							return m.pauseProjectCmd()
+						}},
+						command{label: "Finish project", key: "f", run: func(m *Model) tea.Cmd {
+							return m.finishProjectCmd()
+						}},
+					)
+				case statePaused:
+					cmds = append(cmds,
+						command{label: "Resume project", key: "r", run: func(m *Model) tea.Cmd {
+							return m.resumeProjectCmd()
+						}},
+						command{label: "Finish project", key: "f", run: func(m *Model) tea.Cmd {
+							return m.finishProjectCmd()
+						}},
+					)
+				}
+				cmds = append(cmds, command{label: "Assign agent to project…", key: "a", run: func(m *Model) tea.Cmd {
+					return m.assignAgentCmd()
+				}})
+			}
+		}
 	} else {
 		cmds = append(cmds, command{label: "Retry now", key: "r", run: func(m *Model) tea.Cmd {
 			m.retryIn = 0
@@ -75,6 +114,18 @@ func (m *Model) commands() []command {
 		return tea.Quit
 	}})
 	return cmds
+}
+
+// actionProjectState returns the state of the project that a lifecycle
+// command would act on, or "" if no project is found. This mirrors
+// selectedProjectIDForAction's lookup logic.
+func (m *Model) actionProjectState(id string) string {
+	for _, p := range m.projects {
+		if p.ID == id {
+			return p.State
+		}
+	}
+	return ""
 }
 
 // filteredCommands returns the commands whose label contains the current query
@@ -149,12 +200,12 @@ func (m *Model) handlePaletteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "up", "ctrl+k":
 		m.movePaletteCursor(-1)
 		return m, nil
-	case "down", "ctrl+j":
+	case keyDown, "ctrl+j":
 		m.movePaletteCursor(1)
 		return m, nil
 	case keyEnter:
 		return m.runSelectedCommand()
-	case "backspace":
+	case keyBackspace:
 		if m.pal.query != "" {
 			m.pal.query = m.pal.query[:len(m.pal.query)-1]
 			m.clampPaletteCursor()
@@ -271,9 +322,10 @@ func spread(width int, left, right string) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-// paletteOffset centers the dialog within the current terminal, clamped so it
-// never renders off the top-left edge.
-func (m *Model) paletteOffset(dialog string) (x, y int) {
+// dialogOffset centers the dialog within the current terminal, clamped so it
+// never renders off the top-left edge. Used by both the palette and the form
+// modal overlays.
+func (m *Model) dialogOffset(dialog string) (x, y int) {
 	x = (m.width - lipgloss.Width(dialog)) / centerDivisor
 	y = (m.height - lipgloss.Height(dialog)) / centerDivisor
 	return max(x, 0), max(y, 0)

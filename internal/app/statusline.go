@@ -182,15 +182,15 @@ func liveStatusBlock() StatusBlock {
 func viewHints(m *Model) string {
 	switch m.view {
 	case viewProjects:
-		return "↑↓ select · enter open"
+		return "↑↓ select · enter open · n new"
 	case viewProjectDetail:
 		hints := "enter invoke · esc back"
 		if i := m.selectedProjectIndex(); i >= 0 && i < len(m.projects) {
 			switch m.projects[i].State {
-			case "active":
-				hints = "enter invoke · a assign · p pause · esc back"
-			case "paused":
-				hints = "enter invoke · a assign · r resume · esc back"
+			case stateActive:
+				hints = "enter invoke · a assign · p pause · f finish · esc back"
+			case statePaused:
+				hints = "enter invoke · a assign · r resume · f finish · esc back"
 			default:
 				hints = "a assign · esc back"
 			}

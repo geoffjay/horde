@@ -435,13 +435,13 @@ func formatSeenAgo(n *client.ClusterNode) string {
 // activity.
 func stateDot(state string) string {
 	switch strings.ToLower(state) {
-	case "active", "idle", "running":
+	case stateActive, "idle", "running":
 		return greenDot()
-	case "busy", "paused", "waiting":
+	case "busy", statePaused, "waiting":
 		return yellowDot()
 	case "blocked", "error", "exited":
 		return redDot()
-	case "finished":
+	case stateFinished:
 		return greyDot()
 	}
 	return greyDot()

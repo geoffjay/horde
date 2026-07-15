@@ -123,7 +123,7 @@ func TestModel_PaletteToggle(t *testing.T) {
 
 func TestPalette_SearchFiltersAndTypesIntoQuery(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
-	m.connected = true // commands: Refresh, Go to Cluster, Quit
+	m.connected = true // commands: Refresh, Go to Cluster, New project…, Quit
 	m.openPalette()
 
 	// Typing while the palette is open edits the query rather than acting as
@@ -140,12 +140,12 @@ func TestPalette_SearchFiltersAndTypesIntoQuery(t *testing.T) {
 	// Backspace clears the query and restores the full list.
 	m.Update(namedKey(tea.KeyBackspace))
 	assert.Equal(t, "", m.pal.query)
-	assert.Len(t, m.filteredCommands(), 3)
+	assert.Len(t, m.filteredCommands(), 4)
 }
 
 func TestPalette_CursorNavigationClamps(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
-	m.connected = true // 3 commands: Refresh, Go to Cluster, Quit
+	m.connected = true // 4 commands: Refresh, Go to Cluster, New project…, Quit
 	m.openPalette()
 	require.Equal(t, 0, m.pal.cursor)
 
@@ -153,13 +153,15 @@ func TestPalette_CursorNavigationClamps(t *testing.T) {
 	m.Update(namedKey(tea.KeyUp))
 	assert.Equal(t, 0, m.pal.cursor)
 
-	// Down moves to the last command and clamps there.
+	// Down moves through the list and clamps at the last command.
 	m.Update(namedKey(tea.KeyDown))
 	assert.Equal(t, 1, m.pal.cursor)
 	m.Update(namedKey(tea.KeyDown))
 	assert.Equal(t, 2, m.pal.cursor)
 	m.Update(namedKey(tea.KeyDown))
-	assert.Equal(t, 2, m.pal.cursor)
+	assert.Equal(t, 3, m.pal.cursor)
+	m.Update(namedKey(tea.KeyDown))
+	assert.Equal(t, 3, m.pal.cursor)
 }
 
 func TestPalette_EnterRunsSelectedCommand(t *testing.T) {

@@ -115,6 +115,7 @@ type Model struct {
 	// status line + command palette overlay
 	status *StatusLine
 	pal    palette
+	form   projectForm
 
 	width    int
 	height   int
@@ -280,14 +281,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.loadNode
 
 	case retryTickMsg:
-		if !m.retrying {
-			return m, nil
-		}
-		m.retryIn -= time.Second
-		if m.retryIn <= 0 {
-			return m, m.connect
-		}
-		return m, tea.Tick(time.Second, func(time.Time) tea.Msg { return retryTickMsg{} })
+		return m.handleRetryTick()
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -303,6 +297,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case invokeDoneMsg, invokeErrorMsg:
 		return m.handleInvokeEnd(msg)
+
+	case projectActionMsg:
+		return m.handleProjectAction(&msg)
 	}
 
 	return m, nil
@@ -311,20 +308,34 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // Key constants used in multiple switch statements — extracted to satisfy
 // goconst and make the key bindings grep-able.
 const (
-	keyQuit   = "ctrl+c"
-	keyEsc    = "esc"
-	keyEnter  = "enter"
-	roleAgent = "agent"
+	keyQuit      = "ctrl+c"
+	keyEsc       = "esc"
+	keyEnter     = "enter"
+	keyDown      = "down"
+	keyBackspace = "backspace"
+	roleAgent    = "agent"
 )
 
-// handleKey dispatches key presses. When the command palette is open all keys
-// are routed to it (see handlePaletteKey). Otherwise "q"/ctrl+c quits, ctrl+p
-// opens the palette, "r" refreshes when connected or triggers an immediate
-// retry when in the retry state, and the arrow keys / enter / esc navigate
-// the breadcrumb drill-down.
+// Project state constants used across views, palette, and lifecycle commands.
+const (
+	stateActive   = "active"
+	statePaused   = "paused"
+	stateFinished = "finished"
+)
+
+// handleKey dispatches key presses. When the command palette or form is open
+// all keys are routed to the respective overlay handler. Otherwise "q"/ctrl+c
+// quits, ctrl+p opens the palette, "r" refreshes (or resumes a paused project
+// in the project detail view), and the arrow keys / enter / esc navigate the
+// breadcrumb drill-down. Direct-key shortcuts (n, p, f, a) fire lifecycle
+// actions in the appropriate views.
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.pal.open {
 		return m.handlePaletteKey(msg)
+	}
+
+	if m.form.open {
+		return m.handleFormKey(msg)
 	}
 
 	switch msg.String() {
@@ -335,12 +346,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.openPalette()
 		return m, nil
 	case "r":
-		if m.connected {
-			return m, m.loadNode
-		}
-		// immediate retry
-		m.retryIn = 0
-		return m, m.connect
+		return m.handleRefreshOrResume()
 	}
 
 	if !m.connected {
@@ -353,6 +359,12 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleInvokeKey(msg)
 	}
 
+	return m.handleNavigationKey(msg)
+}
+
+// handleNavigationKey handles arrow/list/navigation keys and view-aware
+// direct-key shortcuts (n, p, f, a) for the connected non-invoke views.
+func (m *Model) handleNavigationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case keyEsc:
 		if len(m.crumbs) > 0 {
@@ -364,11 +376,64 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		m.moveCursor(-1)
 		return m, nil
-	case "down", "j":
+	case keyDown, "j":
 		m.moveCursor(1)
 		return m, nil
+	case "n":
+		return m.handleNewProjectKey()
+	case "p":
+		if m.view == viewProjectDetail {
+			return m, m.pauseProjectCmd() //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
+		}
+	case "f":
+		if m.view == viewProjectDetail {
+			return m, m.finishProjectCmd() //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
+		}
+	case "a":
+		if m.view == viewProjectDetail {
+			return m, m.assignAgentCmd() //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
+		}
 	}
 	return m, nil
+}
+
+// handleNewProjectKey opens the new-project form when in the projects view.
+// In other views it does nothing.
+func (m *Model) handleNewProjectKey() (tea.Model, tea.Cmd) {
+	if m.view == viewProjects {
+		m.openForm()
+	}
+	return m, nil
+}
+
+// handleRefreshOrResume handles the "r" key: when disconnected it triggers an
+// immediate retry; when connected in the project detail view with a paused
+// project it resumes the project; otherwise it refreshes the node data.
+func (m *Model) handleRefreshOrResume() (tea.Model, tea.Cmd) {
+	if !m.connected {
+		m.retryIn = 0
+		return m, m.connect
+	}
+	if m.view == viewProjectDetail {
+		if cmd := m.resumeProjectCmd(); cmd != nil {
+			return m, cmd
+		}
+	}
+	return m, m.loadNode
+}
+
+// handleRetryTick processes the per-second retry countdown tick. When the
+// countdown reaches zero it triggers a reconnect attempt; otherwise it
+// decrements the remaining time and re-arms the tick.
+func (m *Model) handleRetryTick() (tea.Model, tea.Cmd) {
+	if !m.retrying {
+		return m, nil
+	}
+	m.retryIn -= time.Second
+	if m.retryIn <= 0 {
+		return m, m.connect
+	}
+	return m, tea.Tick(time.Second, func(time.Time) tea.Msg { return retryTickMsg{} })
 }
 
 // handleInvokeKey handles key presses in the invoke view: enter sends the
@@ -389,7 +454,7 @@ func (m *Model) handleInvokeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.sendInvoke(a.ID) //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
 		}
 		return m, nil
-	case "backspace":
+	case keyBackspace:
 		if m.invokeInput != "" {
 			m.invokeInput = m.invokeInput[:len(m.invokeInput)-1]
 		}
@@ -650,20 +715,32 @@ func (m *Model) View() tea.View {
 	}
 
 	background := m.fill(m.renderBody(), m.status.Render(m, m.innerWidth()))
-	if !m.pal.open {
+	if !m.pal.open && !m.form.open {
 		return altView(background)
 	}
 
-	// Palette overlay: dim the whole background (it was rendered plain — see
-	// paint) and composite the command dialog centered on top of it.
+	// Palette or form overlay: dim the whole background (it was rendered
+	// plain — see paint) and composite the dialog centered on top of it.
 	dimmed := lipgloss.NewStyle().Faint(true).Foreground(dimColor).Render(background)
-	dialog := m.renderPalette()
-	x, y := m.paletteOffset(dialog)
+	dialog := m.renderOverlay()
+	x, y := m.dialogOffset(dialog)
 	comp := lipgloss.NewCompositor(
 		lipgloss.NewLayer(dimmed),
 		lipgloss.NewLayer(dialog).X(x).Y(y).Z(1),
 	)
 	return altView(comp.Render())
+}
+
+// renderOverlay returns the dialog to composite over the dimmed background.
+// It dispatches to the palette or form renderer based on which overlay is open.
+func (m *Model) renderOverlay() string {
+	if m.pal.open {
+		return m.renderPalette()
+	}
+	if m.form.open {
+		return m.renderForm()
+	}
+	return ""
 }
 
 // altView wraps content in a full-window (alternate-screen) view. The TUI
@@ -688,7 +765,7 @@ var dimColor = lipgloss.Color("240")
 // style's bound Render method (e.g. someStyle.Render) so the heavy Style struct
 // is not copied by value.
 func (m *Model) paint(render func(...string) string, s string) string {
-	if m.pal.open {
+	if m.pal.open || m.form.open {
 		return s
 	}
 	return render(s)
