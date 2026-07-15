@@ -49,7 +49,7 @@ Decisions underpinning this phase:
 
 * [HTTP over unix domain sockets for agent invocation](/docs/knowledgebase/decisions/agent-invocation-transport.md)
 
-# Phase 3.5 — Multi-agent context (in progress)
+# Phase 3.5 — Multi-agent context (complete)
 
 Decision doc: [Project, team, and user model](/docs/knowledgebase/decisions/project-team-user-model.md).
 
@@ -70,7 +70,7 @@ Signal fidelity note: full AAP `context`/`error`/`approval` frames arrive with
 the AAP host (Phase 3.6); native ADK agents yield only coarse context (activity
 + errors) until then. Slice A ships the model, API, and aggregation regardless.
 
-## Slice B — Projects, teams, and multi-turn context (planned)
+## Slice B — Projects, teams, and multi-turn context (complete)
 
 Detailed plan: [Projects, teams, and multi-turn context](projects-teams.md).
 
