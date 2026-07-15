@@ -105,12 +105,13 @@ func TestHintStatusBlock_ClusterView(t *testing.T) {
 	assert.Contains(t, hint, "esc back")
 }
 
-func TestDefaultStatusLine_HasThreeBlocks(t *testing.T) {
+func TestDefaultStatusLine_HasFourBlocks(t *testing.T) {
 	s := DefaultStatusLine()
-	require.Len(t, s.blocks, 3)
+	require.Len(t, s.blocks, 4)
 	assert.Equal(t, "node", s.blocks[0].Name)
-	assert.Equal(t, "hint", s.blocks[1].Name)
-	assert.Equal(t, "commands", s.blocks[2].Name)
+	assert.Equal(t, "live", s.blocks[1].Name)
+	assert.Equal(t, "hint", s.blocks[2].Name)
+	assert.Equal(t, "commands", s.blocks[3].Name)
 }
 
 func TestDefaultStatusLine_RenderContainsHint(t *testing.T) {

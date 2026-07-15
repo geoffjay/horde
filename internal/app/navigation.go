@@ -26,10 +26,14 @@ func (m *Model) pushView(v view, id, _ string) {
 // stack is empty it stays on the current view (top-level screens have
 // nowhere to go back to). The cursor is restored to the item that was
 // selected when we drilled in, so returning to a list keeps the
-// previously-opened row highlighted.
+// previously-opened row highlighted. Unsubscribes from the SSE context
+// stream when leaving the agent view.
 func (m *Model) popView() {
 	if len(m.crumbs) == 0 {
 		return
+	}
+	if m.view == viewAgent || m.view == viewInvoke {
+		m.unsubscribeAgentContext()
 	}
 	last := m.crumbs[len(m.crumbs)-1]
 	m.crumbs = m.crumbs[:len(m.crumbs)-1]
@@ -99,6 +103,7 @@ func (m *Model) crumbLabel() string {
 
 // goHome resets to the projects home view, clearing the breadcrumb stack.
 func (m *Model) goHome() {
+	m.unsubscribeAgentContext()
 	m.view = viewProjects
 	m.crumbs = nil
 	m.cursor = 0
@@ -107,6 +112,7 @@ func (m *Model) goHome() {
 
 // goCluster navigates to the cluster view, clearing the breadcrumb stack.
 func (m *Model) goCluster() {
+	m.unsubscribeAgentContext()
 	m.view = viewCluster
 	m.crumbs = nil
 	m.cursor = 0
@@ -159,11 +165,11 @@ func (m *Model) selectedAgent() (client.Agent, bool) {
 }
 
 // visibleAgents returns the agents relevant to the current view. In the
-// project detail view these are the project's team agents (synthesized into
-// client.Agent values so drillIn and crumbID can use a uniform type); in
-// other views they are the node's running agents.
+// project detail and agent views these are the project's team agents
+// (synthesized into client.Agent values so drillIn and crumbID can use a
+// uniform type); in other views they are the node's running agents.
 func (m *Model) visibleAgents() []client.Agent {
-	if m.view == viewProjectDetail {
+	if m.view == viewProjectDetail || m.view == viewAgent || m.view == viewInvoke {
 		i := m.selectedProjectIndex()
 		if i < 0 {
 			return nil
@@ -193,7 +199,7 @@ func (m *Model) drillIn() (tea.Model, tea.Cmd) {
 	case viewProjectDetail:
 		if a, ok := m.selectedAgent(); ok {
 			m.pushView(viewAgent, a.ID, a.Name)
-			return m, nil
+			return m, m.subscribeAgentContext(a.ID) //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
 		}
 	case viewAgent:
 		if a, ok := m.selectedAgent(); ok {

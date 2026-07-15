@@ -141,35 +141,124 @@ func pluralS(n int) string {
 	return "s"
 }
 
-// renderAgentView renders a single agent's execution context. In slice 2
-// this is a static snapshot from the cached contexts map; the live SSE
-// subscription arrives in a later slice.
+// renderAgentView renders a single agent's live execution context. The
+// SSE subscription (subscribeAgentContext) updates m.contexts in real
+// time; this renderer reads the cached snapshot. The layout matches the
+// plan mockup: header line with name/id/status, project+issue, activity,
+// blocked reason, pending approvals, errors, and note.
 func (m *Model) renderAgentView() string {
 	a, ok := m.selectedAgent()
 	if !ok {
 		return m.paint(lipgloss.NewStyle().Faint(true).Render, "  (no agent selected)\n")
 	}
 	ctx := m.contexts[a.ID]
-	var b strings.Builder
-	fmt.Fprintf(&b, "  %-10s %s [%s]\n", "agent", a.Name, a.ID)
-	fmt.Fprintf(&b, "  %-10s %s · %s\n", "project", ctx.Project, ctx.Issue)
-	fmt.Fprintf(&b, "  %-10s %s\n", "activity", ctx.Activity)
+
+	// Header: name + [id] + status dot + lifecycle + turn
+	dot := stateDot(string(ctx.Activity))
+	statusLabel := string(ctx.Activity)
 	if ctx.Blocked {
-		fmt.Fprintf(&b, "  %-10s %s\n", "blocked", ctx.BlockedReason)
+		dot = redDot()
+		statusLabel = blockedLabel
 	}
-	if len(ctx.Errors) > 0 {
-		b.WriteString("\n  Errors\n")
-		for _, e := range ctx.Errors {
-			fmt.Fprintf(&b, "    ✗ %s  %s\n", e.Code, e.Message)
+	header := fmt.Sprintf("  %-12s %s [%s]   %s %s", "agent", a.Name, a.ID, dot, statusLabel)
+	if ctx.Lifecycle != "" {
+		header += fmt.Sprintf("          lifecycle %s", ctx.Lifecycle)
+	}
+	if ctx.TurnID != "" {
+		header += fmt.Sprintf(" · turn %s", ctx.TurnID)
+	}
+
+	var b strings.Builder
+	b.WriteString(header + "\n")
+
+	// Project + issue
+	projLine := fmt.Sprintf("  %-12s %s", "project", ctx.Project)
+	if ctx.Issue != "" {
+		projLine += " · issue " + ctx.Issue
+	}
+	b.WriteString(projLine + "\n")
+
+	// Activity + waiting on model
+	activityLine := fmt.Sprintf("  %-12s %s", "activity", ctx.Activity)
+	if ctx.WaitingModel {
+		activityLine += " · waiting on model: yes"
+	} else {
+		activityLine += " · waiting on model: no"
+	}
+	b.WriteString(activityLine + "\n")
+
+	// Blocked reason
+	if ctx.Blocked {
+		reason := ctx.BlockedReason
+		if reason == "" {
+			reason = blockedLabel
 		}
+		fmt.Fprintf(&b, "  %-12s %s\n", "blocked", reason)
 	}
+
+	// Pending approvals and errors
+	b.WriteString(renderAgentApprovals(&ctx))
+	b.WriteString(renderAgentErrors(&ctx))
+
+	// Note
+	if ctx.Note != "" {
+		fmt.Fprintf(&b, "\n  note  %s\n", ctx.Note)
+	}
+
+	return b.String()
+}
+
+// renderAgentApprovals renders the pending approvals section for the agent
+// view, handling both full (local) and redacted (remote) contexts.
+func renderAgentApprovals(ctx *client.ExecutionContext) string {
+	var b strings.Builder
 	if len(ctx.PendingApprovals) > 0 {
-		b.WriteString("\n  Pending approvals\n")
+		fmt.Fprintf(&b, "\n  Pending approvals (%d)\n", len(ctx.PendingApprovals))
 		for _, ap := range ctx.PendingApprovals {
-			fmt.Fprintf(&b, "    ▸ %s  %s\n", ap.ToolName, ap.RequestID)
+			fmt.Fprintf(&b, "    ▸ %-20s req %s\n", ap.ToolName, truncateID(ap.RequestID))
 		}
+	} else if ctx.PendingApprovalCount > 0 {
+		fmt.Fprintf(&b, "\n  Pending approvals (%d)\n", ctx.PendingApprovalCount)
 	}
 	return b.String()
+}
+
+// renderAgentErrors renders the errors section for the agent view, handling
+// both full (local) and redacted (remote) contexts.
+func renderAgentErrors(ctx *client.ExecutionContext) string {
+	errCount := len(ctx.Errors)
+	if errCount == 0 && ctx.ErrorCount > 0 {
+		errCount = ctx.ErrorCount
+	}
+	if errCount == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n  Errors (%d)\n", errCount)
+	for _, e := range ctx.Errors {
+		fatal := ""
+		if e.Fatal {
+			fatal = "   fatal"
+		}
+		fmt.Fprintf(&b, "    ✗ %-12s %s%s\n", e.Code, e.Message, fatal)
+	}
+	return b.String()
+}
+
+// truncateIDLen is the number of leading characters to keep when truncating
+// an id for display.
+const truncateIDLen = 7
+
+// blockedLabel is the status label shown when an agent is blocked.
+const blockedLabel = "blocked"
+
+// truncateID shortens an id for display (first truncateIDLen chars + "…"),
+// matching the plan mockup's "req 7c2e…" style.
+func truncateID(id string) string {
+	if len(id) <= truncateIDLen {
+		return id
+	}
+	return id[:truncateIDLen] + "…"
 }
 
 // renderInvokeView renders the multi-turn conversation. In slice 2 this is

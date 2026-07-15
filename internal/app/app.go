@@ -90,6 +90,15 @@ type Model struct {
 	contexts map[string]client.ExecutionContext
 	nodes    client.ClusterView
 
+	// SSE subscription for the agent context stream. When the user drills
+	// into the agent view, subscribeAgentContext opens a stream and stores
+	// the cancel func here; popView cancels it when leaving. streamConnected
+	// drives the "live ●" status-line block.
+	streamCancel    context.CancelFunc
+	streamConnected bool
+	streamCh        <-chan client.ExecutionContext
+	streamCtx       context.Context
+
 	// status line + command palette overlay
 	status *StatusLine
 	pal    palette
@@ -134,6 +143,19 @@ type nodeInfoMsg struct {
 type tickMsg struct{}
 
 type retryTickMsg struct{}
+
+// contextDeltaMsg carries one execution-context snapshot from the SSE
+// stream. The TUI updates m.contexts[agentID] on each delta so the agent
+// view renders live state.
+type contextDeltaMsg struct {
+	ctx client.ExecutionContext
+}
+
+// streamErrMsg signals that the agent context SSE stream failed to open
+// or ended unexpectedly. The TUI falls back to the cached snapshot.
+type streamErrMsg struct {
+	err error
+}
 
 // --- commands ---
 
@@ -200,20 +222,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case nodeInfoMsg:
-		if msg.err != nil {
-			cmd := m.armRetry()
-			return m, cmd
-		}
-		m.node = msg.node
-		m.agents = msg.agents
-		if msg.projects != nil {
-			m.projects = msg.projects
-		}
-		if msg.contexts != nil {
-			m.contexts = msg.contexts
-		}
-		// periodic refresh of agents
-		return m, tea.Tick(agentRefreshInterval, func(time.Time) tea.Msg { return tickMsg{} })
+		return m.handleNodeInfo(&msg)
 
 	case tickMsg:
 		if !m.connected {
@@ -233,6 +242,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case contextDeltaMsg:
+		return m.handleContextDelta(&msg)
+
+	case streamErrMsg:
+		return m.handleStreamEnd(msg)
 	}
 
 	return m, nil
@@ -323,6 +338,95 @@ func (m *Model) armRetry() tea.Cmd {
 	m.retryIn = retryInterval
 	m.lastAttempt = time.Now()
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return retryTickMsg{} })
+}
+
+// handleNodeInfo stores the fetched node info, agents, projects, and
+// contexts, then re-arms the periodic refresh tick. On error it arms the
+// retry countdown.
+func (m *Model) handleNodeInfo(msg *nodeInfoMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		cmd := m.armRetry()
+		return m, cmd
+	}
+	m.node = msg.node
+	m.agents = msg.agents
+	if msg.projects != nil {
+		m.projects = msg.projects
+	}
+	if msg.contexts != nil {
+		m.contexts = msg.contexts
+	}
+	return m, tea.Tick(agentRefreshInterval, func(time.Time) tea.Msg { return tickMsg{} })
+}
+
+// handleContextDelta stores an SSE context snapshot and re-arms the pump for
+// the next event.
+func (m *Model) handleContextDelta(msg *contextDeltaMsg) (tea.Model, tea.Cmd) {
+	m.contexts[msg.ctx.AgentID] = msg.ctx
+	m.streamConnected = true
+	return m, m.pumpAgentContext() //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
+}
+
+// handleStreamEnd cleans up SSE stream state when the stream closes or
+// errors.
+func (m *Model) handleStreamEnd(msg streamErrMsg) (tea.Model, tea.Cmd) {
+	m.streamConnected = false
+	m.streamCh = nil
+	if msg.err != nil {
+		logrus.WithError(msg.err).Debug("tui: agent context stream ended")
+	}
+	return m, nil
+}
+
+// subscribeAgentContext opens an SSE context stream for the given agent.
+// It returns a tea.Cmd that reads the first event; Update re-issues
+// pumpAgentContext to read subsequent events. The stream runs until
+// unsubscribeAgentContext cancels it.
+func (m *Model) subscribeAgentContext(agentID string) tea.Cmd {
+	m.unsubscribeAgentContext()
+
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.streamCancel = cancel
+	m.streamConnected = false
+
+	// Open the stream in the cmd goroutine; stash the channel on the
+	// model via a closure variable that pumpAgentContext reads.
+	ch, err := m.c.StreamAgentContext(ctx, agentID)
+	if err != nil {
+		cancel()
+		m.streamCancel = nil
+		return func() tea.Msg { return streamErrMsg{err: err} }
+	}
+	m.streamCh = ch
+	m.streamCtx = ctx
+	return m.pumpAgentContext()
+}
+
+// pumpAgentContext returns a tea.Cmd that reads one event from the SSE
+// channel and returns it as a contextDeltaMsg. When the channel is closed
+// (stream ended), it returns a streamErrMsg so Update can clean up.
+func (m *Model) pumpAgentContext() tea.Cmd {
+	return func() tea.Msg {
+		if m.streamCh == nil {
+			return nil
+		}
+		ec, ok := <-m.streamCh
+		if !ok {
+			return streamErrMsg{err: nil}
+		}
+		return contextDeltaMsg{ctx: ec}
+	}
+}
+
+// unsubscribeAgentContext cancels the active SSE context stream, if any.
+func (m *Model) unsubscribeAgentContext() {
+	if m.streamCancel != nil {
+		m.streamCancel()
+		m.streamCancel = nil
+	}
+	m.streamCh = nil
+	m.streamCtx = nil
+	m.streamConnected = false
 }
 
 // View implements tea.Model.

@@ -39,6 +39,7 @@ func NewStatusLine() *StatusLine {
 func DefaultStatusLine() *StatusLine {
 	s := NewStatusLine()
 	s.Add(nodeStatusBlock())
+	s.Add(liveStatusBlock())
 	s.Add(hintStatusBlock())
 	s.Add(commandsBlock())
 	return s
@@ -155,6 +156,22 @@ func hintStatusBlock() StatusBlock {
 				return ""
 			}
 			return m.paint(lipgloss.NewStyle().Faint(true).Render, hint)
+		},
+	}
+}
+
+// liveStatusBlock renders "live ●" when the agent context SSE stream is
+// connected, indicating the agent view is receiving real-time updates.
+// Returns "" (omitting the block) when not streaming.
+func liveStatusBlock() StatusBlock {
+	return StatusBlock{
+		Name: "live",
+		Render: func(m *Model) string {
+			if !m.streamConnected {
+				return ""
+			}
+			dot := m.paint(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render, "●")
+			return dot + m.paint(lipgloss.NewStyle().Faint(true).Render, " live")
 		},
 	}
 }
