@@ -89,6 +89,7 @@ every edit.
 * [Projects, teams, and multi-turn context](plans/projects-teams.md) - Phase 3.5 Slice B: project/team data model, project API, agent assignment, session-key derivation.
 * [TUI for projects, teams, and execution context](plans/tui-projects.md) - complete; the breadcrumb-navigated TUI over the Slice B domain (projects, teams, execution context, invoke, cluster).
 * [Distributed project management](plans/distributed-project-management.md) - forward project mutations from slave to master, and add a `horde project` CLI subcommand.
+* [AAP host — driving external coding agents](plans/aap-host.md) - Phase 3.6: the node spawns AAP adapters over stdio, bridges turns to the invoke SSE stream, wires node-as-approval-authority, and consumes context/error/approval frames at full fidelity.
 
 ## References
 

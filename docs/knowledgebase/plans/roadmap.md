@@ -97,6 +97,8 @@ access control.
 
 # Phase 3.6 — AAP host (external coding agents)
 
+Detailed plan: [AAP host — driving external coding agents](aap-host.md).
+
 Decision: [Adopt the Agent Adapter Protocol (AAP)](/docs/knowledgebase/decisions/agent-adapter-protocol.md).
 Spec: [Agent Adapter Protocol v1](/docs/spec/agent-adapter-protocol-v1.md).
 
@@ -107,18 +109,22 @@ agents; this phase is where real coding agents plug in.
 
 * Node spawns AAP adapters over the stdio binding (NDJSON): the
   `initialize`→`ready` handshake, the prompt/turn loop, and graceful shutdown.
-* Tool approval wired to node policy (the node is the sole approval authority);
-  the project workspace mapped onto AAP `workspace.cwd` +
+* A second agent *kind* alongside native ADK: AAP agents are declared in
+  config (`agents.<name>.kind: aap`) rather than registry-built; both kinds
+  share the `agentProc` map, the invoke API, and project assignment.
+* Tool approval wired to node policy (the node is the sole approval
+  authority); the project workspace mapped onto AAP `workspace.cwd` +
   `initialize.permissions`.
 * Consume AAP `context`/`error`/`approval_request` frames to populate the
-  [agent execution context](agent-execution-context.md) at full fidelity — this
-  is the signal source Slice A degrades without.
-* First real adapter (e.g. Claude Code) alongside the shipped `horde aap-mock`
-  fixture and `internal/aap/testdata/vectors.json`.
+  [agent execution context](agent-execution-context.md) at full fidelity —
+  this lights up the `applyStatus`/`applyContextUpdate`/`applyError`/
+  `applyApprovalRequest` receivers Slice A left waiting.
+* The `horde aap-mock` fixture driven end to end as the first adapter; a real
+  adapter (e.g. Claude Code) is a follow-up.
 
 Independent of per-user auth (3.5b): can land before or after it. Foundation
 already in place — the AAP spec and the `internal/aap` package (typed messages,
-mock adapter, shared test vectors).
+  mock adapter, shared test vectors).
 
 # Phase 4 — Distributed
 
