@@ -87,7 +87,7 @@ every edit.
 * [Phase 3 — Agent mechanism](plans/phase-3-agents.md) - long-lived agent subprocesses invoked over HTTP on unix sockets, streaming, resume, agent registry.
 * [Agent execution context](plans/agent-execution-context.md) - queryable per-agent work-state, materialized at the node from AAP signals, aggregated across the cluster with redacted remote access.
 * [Projects, teams, and multi-turn context](plans/projects-teams.md) - Phase 3.5 Slice B: project/team data model, project API, agent assignment, session-key derivation.
-* [TUI for projects, teams, and execution context](plans/tui-projects.md) - mockup concepts and implementation sketch for a breadcrumb-navigated TUI over the Slice B domain.
+* [TUI for projects, teams, and execution context](plans/tui-projects.md) - complete; the breadcrumb-navigated TUI over the Slice B domain (projects, teams, execution context, invoke, cluster).
 * [Distributed project management](plans/distributed-project-management.md) - forward project mutations from slave to master, and add a `horde project` CLI subcommand.
 
 ## References

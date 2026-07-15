@@ -6,12 +6,24 @@ tags: [plan, tui, bubbletea, lipgloss, projects, teams, execution-context, phase
 timestamp: 2026-07-13T00:00:00Z
 ---
 
-This plan proposes how the TUI (`internal/app`) surfaces the domain that
+This plan proposed how the TUI (`internal/app`) surfaces the domain that
 [Phase 3.5 Slice B](projects-teams.md) opened up — projects, teams, and
 multi-turn context — plus the [Slice A execution
 context](agent-execution-context.md) and the cluster topology from
-[Phase 2](phase-2-server-api.md). It is a **design/mockup** doc: the screens
-and navigation are proposals to react to, not a settled contract.
+[Phase 2](phase-2-server-api.md). It was a **design/mockup** doc; the screens
+and navigation were proposals to react to, not a settled contract.
+
+**Status: complete.** All eight slices landed on 2026-07-15: (1) the
+`internal/client` HTTP layer, (2) the breadcrumb navigation model, (3) the
+view-aware status-line hint blocks, (4) the projects home and project detail
+screens, (5) the live agent execution-context pane (SSE), (6) the multi-turn
+invoke/conversation view (SSE), (7) the cluster topology view, and (8) the
+palette lifecycle commands plus the new-project form modal. The TUI remains a
+pure client of the node API (bubbletea/lipgloss v2, no `internal/server`
+imports) and passes `go test -race`, `golangci-lint` (0 issues), and
+`go build`. The follow-ups below (approval decisions, per-user identity,
+cross-node project listing) remain out of scope and deferred to their
+respective phases.
 
 * Slice B (the data): [Projects, teams, and multi-turn context](projects-teams.md).
 * Slice A (the observability): [Agent execution context](agent-execution-context.md).
@@ -244,12 +256,14 @@ The disconnected / 60s-retry panel and the `paint`-based dimming are unchanged.
 * **Projects as home** — agents are reached through a project or the cluster
   view, matching the Slice B framing of the project as the unit of work.
 
-# Out of scope / follow-ups
+# Out of scope / follow-ups (not landed)
+
+These remain deferred:
 
 * Approval **decisions** (approve/deny wiring) depend on the AAP host
-  ([Phase 3.6](roadmap.md)); until then the context pane is read-only.
+  ([Phase 3.6](roadmap.md)); the context pane is read-only.
 * Per-user identity in the UI (whose project, who is invoking) is 3.5b.
-* Cross-node project listing (the cluster view shows remote *agents* today; a
+* Cross-node project listing (the cluster view shows remote *agents*; a
   cluster-wide *project* surface arrives with Phase 4 sync).
 </content>
 </invoke>
