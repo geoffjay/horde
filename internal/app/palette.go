@@ -140,10 +140,10 @@ func (m *Model) runSelectedCommand() (tea.Model, tea.Cmd) {
 // any other printable input edits the search query.
 func (m *Model) handlePaletteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c":
+	case keyQuit:
 		m.quitting = true
 		return m, tea.Quit
-	case "esc", "ctrl+p":
+	case keyEsc, "ctrl+p":
 		m.closePalette()
 		return m, nil
 	case "up", "ctrl+k":
@@ -152,7 +152,7 @@ func (m *Model) handlePaletteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "down", "ctrl+j":
 		m.movePaletteCursor(1)
 		return m, nil
-	case "enter":
+	case keyEnter:
 		return m.runSelectedCommand()
 	case "backspace":
 		if m.pal.query != "" {

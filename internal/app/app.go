@@ -8,6 +8,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -99,6 +100,17 @@ type Model struct {
 	streamCh        <-chan client.ExecutionContext
 	streamCtx       context.Context
 
+	// invoke state: the conversation transcript, the text input buffer,
+	// and the SSE invoke stream subscription. The transcript accumulates
+	// user messages and agent responses (token by token). invokeStreaming
+	// drives the "streaming ●" indicator in the invoke view.
+	invokeTranscript []transcriptEntry
+	invokeInput      string
+	invokeStreaming  bool
+	invokeCancel     context.CancelFunc
+	invokeCh         <-chan client.InvokeEvent
+	invokeErr        string // non-empty when the invoke failed (e.g. 409)
+
 	// status line + command palette overlay
 	status *StatusLine
 	pal    palette
@@ -144,6 +156,13 @@ type tickMsg struct{}
 
 type retryTickMsg struct{}
 
+// transcriptEntry is one line in the invoke conversation transcript.
+// Role is "user" (the › prompt) or "agent" (the ● response).
+type transcriptEntry struct {
+	role string
+	text string
+}
+
 // contextDeltaMsg carries one execution-context snapshot from the SSE
 // stream. The TUI updates m.contexts[agentID] on each delta so the agent
 // view renders live state.
@@ -154,6 +173,20 @@ type contextDeltaMsg struct {
 // streamErrMsg signals that the agent context SSE stream failed to open
 // or ended unexpectedly. The TUI falls back to the cached snapshot.
 type streamErrMsg struct {
+	err error
+}
+
+// invokeEventMsg carries one parsed SSE event from the invoke stream.
+type invokeEventMsg struct {
+	ev client.InvokeEvent
+}
+
+// invokeDoneMsg signals that the invoke stream emitted the done event.
+type invokeDoneMsg struct{}
+
+// invokeErrorMsg signals that the invoke stream failed to open or
+// returned an error event.
+type invokeErrorMsg struct {
 	err error
 }
 
@@ -248,10 +281,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case streamErrMsg:
 		return m.handleStreamEnd(msg)
+
+	case invokeEventMsg:
+		return m.handleInvokeEvent(msg)
+
+	case invokeDoneMsg, invokeErrorMsg:
+		return m.handleInvokeEnd(msg)
 	}
 
 	return m, nil
 }
+
+// Key constants used in multiple switch statements — extracted to satisfy
+// goconst and make the key bindings grep-able.
+const (
+	keyQuit   = "ctrl+c"
+	keyEsc    = "esc"
+	keyEnter  = "enter"
+	roleAgent = "agent"
+)
 
 // handleKey dispatches key presses. When the command palette is open all keys
 // are routed to it (see handlePaletteKey). Otherwise "q"/ctrl+c quits, ctrl+p
@@ -264,7 +312,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "q", "ctrl+c":
+	case "q", keyQuit:
 		m.quitting = true
 		return m, tea.Quit
 	case "ctrl+p":
@@ -283,13 +331,19 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// In the invoke view, keys edit the message input or send — not
+	// navigation.
+	if m.view == viewInvoke {
+		return m.handleInvokeKey(msg)
+	}
+
 	switch msg.String() {
-	case "esc":
+	case keyEsc:
 		if len(m.crumbs) > 0 {
 			m.popView()
 			return m, nil
 		}
-	case "enter":
+	case keyEnter:
 		return m.drillIn()
 	case "up", "k":
 		m.moveCursor(-1)
@@ -297,6 +351,41 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.moveCursor(1)
 		return m, nil
+	}
+	return m, nil
+}
+
+// handleInvokeKey handles key presses in the invoke view: enter sends the
+// message, backspace deletes, esc pops back, and printable keys append
+// to the input buffer.
+func (m *Model) handleInvokeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case keyEsc:
+		if len(m.crumbs) > 0 {
+			m.popView()
+		}
+		return m, nil
+	case keyEnter:
+		if m.invokeStreaming || m.invokeInput == "" {
+			return m, nil
+		}
+		if a, ok := m.selectedAgent(); ok {
+			return m, m.sendInvoke(a.ID) //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
+		}
+		return m, nil
+	case "backspace":
+		if m.invokeInput != "" {
+			m.invokeInput = m.invokeInput[:len(m.invokeInput)-1]
+		}
+		return m, nil
+	case keyQuit:
+		m.quitting = true
+		return m, tea.Quit
+	}
+
+	// Append printable characters to the input buffer.
+	if msg.Text != "" {
+		m.invokeInput += msg.Text
 	}
 	return m, nil
 }
@@ -378,6 +467,40 @@ func (m *Model) handleStreamEnd(msg streamErrMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleInvokeEnd cleans up invoke stream state when the stream closes
+// (done) or errors. It accepts either invokeDoneMsg or invokeErrorMsg.
+func (m *Model) handleInvokeEnd(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.invokeStreaming = false
+	m.invokeCh = nil
+	if em, ok := msg.(invokeErrorMsg); ok && em.err != nil {
+		m.invokeErr = em.err.Error()
+	}
+	return m, nil
+}
+
+// Token events append to the agent's current transcript entry (or start
+// a new one). Other event types (invocation) are ignored for rendering.
+// The pump is re-armed for the next event.
+func (m *Model) handleInvokeEvent(msg invokeEventMsg) (tea.Model, tea.Cmd) {
+	switch msg.ev.Type {
+	case "token":
+		var tok client.InvokeToken
+		if json.Unmarshal(msg.ev.Data, &tok) != nil {
+			return m, m.pumpInvoke() //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
+		}
+		// Append to the last agent entry, or start a new one.
+		if n := len(m.invokeTranscript); n > 0 && m.invokeTranscript[n-1].role == roleAgent {
+			m.invokeTranscript[n-1].text += tok.Text
+		} else {
+			m.invokeTranscript = append(m.invokeTranscript, transcriptEntry{role: "agent", text: tok.Text})
+		}
+	case "invocation":
+		// The invocation event carries the invocation id; no rendering
+		// needed — the transcript captures the conversation.
+	}
+	return m, m.pumpInvoke() //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
+}
+
 // subscribeAgentContext opens an SSE context stream for the given agent.
 // It returns a tea.Cmd that reads the first event; Update re-issues
 // pumpAgentContext to read subsequent events. The stream runs until
@@ -427,6 +550,79 @@ func (m *Model) unsubscribeAgentContext() {
 	m.streamCh = nil
 	m.streamCtx = nil
 	m.streamConnected = false
+}
+
+// sendInvoke posts the user's input message to the agent and opens the
+// SSE invoke stream. It appends the user's message to the transcript,
+// clears the input buffer, and returns a tea.Cmd that reads the first
+// event. The agent's response accumulates in the transcript as token
+// events arrive.
+func (m *Model) sendInvoke(agentID string) tea.Cmd {
+	msg := m.invokeInput
+	m.invokeInput = ""
+	m.invokeTranscript = append(m.invokeTranscript, transcriptEntry{role: "user", text: msg})
+	m.invokeErr = ""
+	m.unsubscribeInvoke()
+	m.invokeStreaming = true
+
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.invokeCancel = cancel
+
+	ch, err := m.c.Invoke(ctx, agentID, client.InvokeRequest{Message: msg})
+	if err != nil {
+		cancel()
+		m.invokeCancel = nil
+		m.invokeStreaming = false
+		m.invokeErr = err.Error()
+		return nil
+	}
+	m.invokeCh = ch
+	return m.pumpInvoke()
+}
+
+// pumpInvoke returns a tea.Cmd that reads one event from the invoke SSE
+// channel and returns it as an invokeEventMsg (or invokeDoneMsg /
+// invokeErrorMsg when the stream ends).
+func (m *Model) pumpInvoke() tea.Cmd {
+	return func() tea.Msg {
+		if m.invokeCh == nil {
+			return invokeDoneMsg{}
+		}
+		ev, ok := <-m.invokeCh
+		if !ok {
+			return invokeErrorMsg{err: nil}
+		}
+		switch ev.Type {
+		case "done":
+			return invokeDoneMsg{}
+		case "error":
+			var ie client.InvokeError
+			_ = json.Unmarshal(ev.Data, &ie)
+			return invokeErrorMsg{err: fmt.Errorf("%s: %s", ie.Code, ie.Message)}
+		default:
+			return invokeEventMsg{ev: ev}
+		}
+	}
+}
+
+// unsubscribeInvoke cancels the active invoke SSE stream, if any.
+func (m *Model) unsubscribeInvoke() {
+	if m.invokeCancel != nil {
+		m.invokeCancel()
+		m.invokeCancel = nil
+	}
+	m.invokeCh = nil
+	m.invokeStreaming = false
+}
+
+// resetInvokeState clears the transcript and input, called when entering
+// or leaving the invoke view.
+func (m *Model) resetInvokeState() {
+	m.unsubscribeInvoke()
+	m.invokeTranscript = nil
+	m.invokeInput = ""
+	m.invokeStreaming = false
+	m.invokeErr = ""
 }
 
 // View implements tea.Model.

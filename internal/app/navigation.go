@@ -32,8 +32,12 @@ func (m *Model) popView() {
 	if len(m.crumbs) == 0 {
 		return
 	}
-	if m.view == viewAgent || m.view == viewInvoke {
+	if m.view == viewAgent {
 		m.unsubscribeAgentContext()
+	}
+	if m.view == viewInvoke {
+		m.unsubscribeAgentContext()
+		m.unsubscribeInvoke()
 	}
 	last := m.crumbs[len(m.crumbs)-1]
 	m.crumbs = m.crumbs[:len(m.crumbs)-1]
@@ -104,6 +108,7 @@ func (m *Model) crumbLabel() string {
 // goHome resets to the projects home view, clearing the breadcrumb stack.
 func (m *Model) goHome() {
 	m.unsubscribeAgentContext()
+	m.unsubscribeInvoke()
 	m.view = viewProjects
 	m.crumbs = nil
 	m.cursor = 0
@@ -113,6 +118,7 @@ func (m *Model) goHome() {
 // goCluster navigates to the cluster view, clearing the breadcrumb stack.
 func (m *Model) goCluster() {
 	m.unsubscribeAgentContext()
+	m.unsubscribeInvoke()
 	m.view = viewCluster
 	m.crumbs = nil
 	m.cursor = 0
@@ -204,6 +210,7 @@ func (m *Model) drillIn() (tea.Model, tea.Cmd) {
 	case viewAgent:
 		if a, ok := m.selectedAgent(); ok {
 			m.pushView(viewInvoke, a.ID, a.Name)
+			m.resetInvokeState()
 			return m, nil
 		}
 	}

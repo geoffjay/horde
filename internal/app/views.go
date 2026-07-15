@@ -261,12 +261,53 @@ func truncateID(id string) string {
 	return id[:truncateIDLen] + "…"
 }
 
-// renderInvokeView renders the multi-turn conversation. In slice 2 this is
-// a placeholder; the SSE invoke stream and message input arrive in a
-// later slice.
+// renderInvokeView renders the multi-turn conversation: a session banner,
+// the transcript of user/agent messages, and a text input field at the
+// bottom. When streaming, a "streaming ●" indicator appears next to the
+// input. A 409 (project paused) renders as a red error notice in place
+// of the input.
 func (m *Model) renderInvokeView() string {
-	return m.paint(lipgloss.NewStyle().Faint(true).Render,
-		"  (invoke screen — streaming conversation arrives in a later slice)\n")
+	a, ok := m.selectedAgent()
+	if !ok {
+		return m.paint(lipgloss.NewStyle().Faint(true).Render, "  (no agent selected)\n")
+	}
+
+	var b strings.Builder
+
+	// Session banner
+	projectID := m.selectedProjectID
+	b.WriteString(m.paint(lipgloss.NewStyle().Faint(true).Render,
+		fmt.Sprintf("  session %s:%s · multi-turn\n\n", a.Name, projectID)))
+
+	// Transcript
+	for _, e := range m.invokeTranscript {
+		switch e.role {
+		case "user":
+			fmt.Fprintf(&b, "  › you\n    %s\n\n", e.text)
+		case roleAgent:
+			dot := greenDot()
+			fmt.Fprintf(&b, "  %s %s\n    %s\n\n", dot, a.Name, e.text)
+		}
+	}
+
+	// Error notice (e.g. 409 project paused)
+	if m.invokeErr != "" {
+		errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+		b.WriteString(m.paint(errStyle.Render, "  ✗ "+m.invokeErr+"\n\n"))
+	}
+
+	// Input field with streaming indicator
+	if m.invokeStreaming {
+		dot := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("●")
+		fmt.Fprintf(&b, "  ›_%s %s\n", m.invokeInput, dot)
+		b.WriteString(m.paint(lipgloss.NewStyle().Faint(true).Render, "    streaming ●\n"))
+	} else if m.invokeErr == "" {
+		cursor := lipgloss.NewStyle().Reverse(true).Render(" ")
+		fmt.Fprintf(&b, "  ›_%s\n", m.invokeInput+cursor)
+		b.WriteString(m.paint(lipgloss.NewStyle().Faint(true).Render, "    enter send · esc back\n"))
+	}
+
+	return b.String()
 }
 
 // renderClusterView renders the cluster topology: the leader, all nodes,
