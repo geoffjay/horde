@@ -87,9 +87,10 @@ type Model struct {
 	selectedProjectID string
 
 	// cached domain state
-	projects []client.Project
-	contexts map[string]client.ExecutionContext
-	nodes    client.ClusterView
+	projects       []client.Project
+	contexts       map[string]client.ExecutionContext
+	nodes          client.ClusterView
+	remoteContexts []client.ExecutionContext
 
 	// SSE subscription for the agent context stream. When the user drills
 	// into the agent view, subscribeAgentContext opens a stream and stores
@@ -126,7 +127,7 @@ func New(ctx context.Context, addr string) *Model {
 	return &Model{
 		ctx:      ctx,
 		c:        client.New(addr),
-		node:     client.NodeInfo{Mode: "unknown"},
+		node:     client.NodeInfo{Mode: unknownLabel},
 		view:     viewProjects,
 		contexts: make(map[string]client.ExecutionContext),
 		status:   DefaultStatusLine(),
@@ -145,11 +146,13 @@ type connectResultMsg struct {
 }
 
 type nodeInfoMsg struct {
-	node     client.NodeInfo
-	agents   []client.Agent
-	projects []client.Project
-	contexts map[string]client.ExecutionContext
-	err      error
+	node           client.NodeInfo
+	agents         []client.Agent
+	projects       []client.Project
+	contexts       map[string]client.ExecutionContext
+	clusterNodes   client.ClusterView
+	remoteContexts []client.ExecutionContext
+	err            error
 }
 
 type tickMsg struct{}
@@ -229,11 +232,24 @@ func (m *Model) loadNode() tea.Msg {
 		ctxMap[contexts[i].AgentID] = contexts[i]
 	}
 
+	// Cluster nodes and remote agent contexts are best-effort; on a slave
+	// or standalone node the cluster view may be empty.
+	clusterNodes, clErr := m.c.ListNodes(ctx)
+	if clErr != nil {
+		logrus.WithError(clErr).Debug("tui: fetch cluster nodes failed")
+	}
+	remoteContexts, rErr := m.c.ListRemoteAgentContexts(ctx, "")
+	if rErr != nil {
+		logrus.WithError(rErr).Debug("tui: fetch remote agent contexts failed")
+	}
+
 	return nodeInfoMsg{
-		node:     node,
-		agents:   agents,
-		projects: projects,
-		contexts: ctxMap,
+		node:           node,
+		agents:         agents,
+		projects:       projects,
+		contexts:       ctxMap,
+		clusterNodes:   clusterNodes,
+		remoteContexts: remoteContexts,
 	}
 }
 
@@ -445,6 +461,8 @@ func (m *Model) handleNodeInfo(msg *nodeInfoMsg) (tea.Model, tea.Cmd) {
 	if msg.contexts != nil {
 		m.contexts = msg.contexts
 	}
+	m.nodes = msg.clusterNodes
+	m.remoteContexts = msg.remoteContexts
 	return m, tea.Tick(agentRefreshInterval, func(time.Time) tea.Msg { return tickMsg{} })
 }
 

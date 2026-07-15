@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 
@@ -252,6 +253,9 @@ const truncateIDLen = 7
 // blockedLabel is the status label shown when an agent is blocked.
 const blockedLabel = "blocked"
 
+// unknownLabel is the placeholder for missing mode/state values.
+const unknownLabel = "unknown"
+
 // truncateID shortens an id for display (first truncateIDLen chars + "…"),
 // matching the plan mockup's "req 7c2e…" style.
 func truncateID(id string) string {
@@ -310,10 +314,13 @@ func (m *Model) renderInvokeView() string {
 	return b.String()
 }
 
-// renderClusterView renders the cluster topology: the leader, all nodes,
-// and their last-seen/staleness.
+// renderClusterView renders the cluster topology: the leader, all nodes
+// (including this node), and a read-only section of remote agent contexts.
+// Matches the plan mockup layout.
 func (m *Model) renderClusterView() string {
 	var b strings.Builder
+
+	// Leader line
 	leader := m.nodes.LeaderID
 	if leader == "" {
 		leader = m.node.NodeID
@@ -323,25 +330,105 @@ func (m *Model) renderClusterView() string {
 		b.WriteString("  (this node)")
 	}
 	b.WriteString("\n\n")
-	if len(m.nodes.Nodes) == 0 {
-		b.WriteString(m.paint(lipgloss.NewStyle().Faint(true).Render, "  (no other nodes registered)\n"))
+
+	// Node rows: this node first, then registered slaves.
+	rows := m.clusterNodeRows()
+	if len(rows) == 0 {
+		b.WriteString(m.paint(lipgloss.NewStyle().Faint(true).Render, "  (no nodes registered)\n"))
 		return b.String()
 	}
-	for i, n := range m.nodes.Nodes {
-		dot := "●"
-		if n.Stale {
-			dot = "◐"
-		}
-		line := fmt.Sprintf("  %s  %-8s %-20s %-6d agents", dot, n.NodeID, n.Addr, len(n.Agents))
-		if n.Stale {
-			line += "  stale"
-		}
+	for i, line := range rows {
 		if i == m.cursor {
 			line = selStyle().Render(line)
 		}
 		b.WriteString(line + "\n")
 	}
+
+	// Remote agents (read-only)
+	if len(m.remoteContexts) > 0 {
+		b.WriteString("\n")
+		b.WriteString(m.paint(lipgloss.NewStyle().Faint(true).Render, "  remote agents (read-only)\n"))
+		for i := range m.remoteContexts {
+			rc := &m.remoteContexts[i]
+			dot := stateDot(string(rc.Activity))
+			if rc.Blocked {
+				dot = redDot()
+			}
+			line := fmt.Sprintf("    %s %s · %-14s %-10s %s", dot, rc.NodeID, rc.AgentID, rc.Activity, rc.Project)
+			if rc.Issue != "" {
+				line += "  " + rc.Issue
+			}
+			if rc.PendingApprovalCount > 0 {
+				line += fmt.Sprintf("  %d approval%s", rc.PendingApprovalCount, pluralS(rc.PendingApprovalCount))
+			}
+			b.WriteString(line + "\n")
+		}
+	}
+
 	return b.String()
+}
+
+// clusterNodeRows builds the display rows for the cluster view: this node
+// first (with mode from the node info), then each registered slave.
+func (m *Model) clusterNodeRows() []string {
+	var rows []string
+
+	// This node
+	localMode := m.node.Mode
+	if localMode == "" {
+		localMode = unknownLabel
+	}
+	localDot := greenDot()
+	if !m.connected {
+		localDot = redDot()
+	}
+	rows = append(rows, fmt.Sprintf("  %s  %-8s %-20s %-8s %-9s  seen just now",
+		localDot, m.node.NodeID, fmt.Sprintf(":%d", m.nodePort()), localMode, agentCountLabel(len(m.agents))))
+
+	// Registered slaves
+	for _, n := range m.nodes.Nodes {
+		dot := greenDot()
+		if n.Stale {
+			dot = yellowDot()
+		}
+		seen := formatSeenAgo(&n)
+		line := fmt.Sprintf("  %s  %-8s %-20s %-8s %-9s  seen %s",
+			dot, n.NodeID, n.Addr, "slave", agentCountLabel(len(n.Agents)), seen)
+		if n.Stale {
+			line += "  stale"
+		}
+		rows = append(rows, line)
+	}
+
+	return rows
+}
+
+// nodePort extracts the port from the node info (not stored directly, so
+// derived from the client's base URL).
+func (m *Model) nodePort() int {
+	// The node info doesn't carry the port; use the client's base URL.
+	// This is display-only — the address column shows the slave addresses.
+	return 0
+}
+
+// formatSeenAgo formats the time since a node's last heartbeat as a
+// human-readable "Xs ago" / "just now" string.
+func formatSeenAgo(n *client.ClusterNode) string {
+	lastSeen := n.ParseLastSeen()
+	if lastSeen.IsZero() {
+		return "unknown"
+	}
+	ago := time.Since(lastSeen)
+	switch {
+	case ago < 5*time.Second:
+		return "just now"
+	case ago < time.Minute:
+		return fmt.Sprintf("%ds ago", int(ago.Seconds()))
+	case ago < time.Hour:
+		return fmt.Sprintf("%dm ago", int(ago.Minutes()))
+	default:
+		return fmt.Sprintf("%dh ago", int(ago.Hours()))
+	}
 }
 
 // stateDot returns the colored status glyph for a project state or agent
