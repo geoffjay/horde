@@ -22,7 +22,7 @@ const (
 )
 
 // formWidth is the content-box width of the new-project modal (border adds 2).
-const formWidth = 48
+const formWidth = 64
 
 // formPadX / formPadY are the modal's inner horizontal / vertical padding.
 const (
@@ -30,8 +30,9 @@ const (
 	formPadY = 1
 )
 
-// formInner is the usable content width inside the horizontal padding.
-const formInner = formWidth - formPadX*2
+// formInner is the usable content width inside the border and horizontal
+// padding (2 border chars + 2*formPadX padding chars).
+const formInner = formWidth - formPadX*2 - 2
 
 // formFieldLabels are the display labels for each form field, in index order.
 var formFieldLabels = [formFieldCount]string{"Name", "Workspace", "Goal", "Agents"}
@@ -229,6 +230,17 @@ func (m *Model) selectedProjectIDForAction() string {
 	return ""
 }
 
+// actionProjectState returns the state of the project that a lifecycle
+// command would act on, or "" if no project is found.
+func (m *Model) actionProjectState(id string) string {
+	for _, p := range m.projects {
+		if p.ID == id {
+			return p.State
+		}
+	}
+	return ""
+}
+
 // firstUnassignedAgentName returns the name of the first running agent that
 // is not already on the given project's team, or "" if none is available.
 func (m *Model) firstUnassignedAgentName(projectID string) string {
@@ -291,9 +303,7 @@ func (m *Model) renderForm() string {
 		Width(formWidth).
 		Padding(formPadY, formPadX).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252"))
+		BorderForeground(lipgloss.Color("240"))
 	return box.Render(b.String())
 }
 

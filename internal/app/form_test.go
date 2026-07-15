@@ -180,22 +180,22 @@ func TestSubmitForm_WhitespaceTrimmedFromName(t *testing.T) {
 	require.NoError(t, pa.err)
 }
 
-func TestHandleKey_NOpensFormInProjectsView(t *testing.T) {
+func TestHandleKey_CtrlNOpensForm(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjects
 
-	m.handleKey(keyPress("n"))
+	m.handleKey(ctrlKey('n'))
 	assert.True(t, m.form.open)
 }
 
-func TestHandleKey_NDoesNotOpenFormInOtherViews(t *testing.T) {
+func TestHandleKey_CtrlNOpensFormInAnyView(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjectDetail
 
-	m.handleKey(keyPress("n"))
-	assert.False(t, m.form.open)
+	m.handleKey(ctrlKey('n'))
+	assert.True(t, m.form.open, "ctrl+n opens the form from any connected view")
 }
 
 func TestHandleKey_FormKeysRoutedToForm(t *testing.T) {
@@ -209,15 +209,15 @@ func TestHandleKey_FormKeysRoutedToForm(t *testing.T) {
 	assert.False(t, m.pal.open)
 }
 
-func TestHandleKey_PDoesNotPauseInProjectsView(t *testing.T) {
+func TestHandleKey_CtrlSDoesNotPauseInProjectsView(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjects
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active"}}
 	m.cursor = 0
 
-	// 'p' in projects view should not trigger pause (it's a detail-view key).
-	_, cmd := m.handleKey(keyPress("p"))
+	// ctrl+s in projects view should not trigger pause (it's a detail-view key).
+	_, cmd := m.handleKey(ctrlKey('s'))
 	assert.Nil(t, cmd)
 }
 
@@ -229,15 +229,15 @@ func TestPalette_NewProjectCommand(t *testing.T) {
 	cmds := m.filteredCommands()
 	found := false
 	for _, c := range cmds {
-		if c.label == "New project…" {
+		if c.label == "New Project" {
 			found = true
 			break
 		}
 	}
-	assert.True(t, found, "palette should have 'New project…' command")
+	assert.True(t, found, "palette should have 'New Project' command")
 }
 
-func TestPalette_PauseCommandOnProjectsView(t *testing.T) {
+func TestPalette_NoLifecycleCommands(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjects
@@ -246,42 +246,20 @@ func TestPalette_PauseCommandOnProjectsView(t *testing.T) {
 
 	cmds := m.commands()
 	labels := commandLabels(cmds)
-	assert.Contains(t, labels, "Pause project")
-	assert.Contains(t, labels, "Finish project")
-	assert.NotContains(t, labels, "Resume project")
-}
-
-func TestPalette_ResumeCommandOnPausedProject(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
-	m.connected = true
-	m.view = viewProjects
-	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "paused"}}
-	m.cursor = 0
-
-	cmds := m.commands()
-	labels := commandLabels(cmds)
-	assert.Contains(t, labels, "Resume project")
-	assert.Contains(t, labels, "Finish project")
-	assert.NotContains(t, labels, "Pause project")
-}
-
-func TestPalette_NoLifecycleCommandsOnFinishedProject(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
-	m.connected = true
-	m.view = viewProjects
-	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "finished"}}
-	m.cursor = 0
-
-	cmds := m.commands()
-	labels := commandLabels(cmds)
+	// Lifecycle commands are not in the palette; they are direct keys only.
 	assert.NotContains(t, labels, "Pause project")
 	assert.NotContains(t, labels, "Resume project")
 	assert.NotContains(t, labels, "Finish project")
-	// Assign is still available for finished projects.
-	assert.Contains(t, labels, "Assign agent to project…")
+	assert.NotContains(t, labels, "Assign agent to project…")
+	// The five base commands are present.
+	assert.Contains(t, labels, "Refresh")
+	assert.Contains(t, labels, "Select Cluster")
+	assert.Contains(t, labels, "New Project")
+	assert.Contains(t, labels, "Switch Project")
+	assert.Contains(t, labels, "Quit")
 }
 
-func TestPalette_LifecycleCommandsOnProjectDetail(t *testing.T) {
+func TestPalette_NoLifecycleCommandsOnProjectDetail(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjectDetail
@@ -290,9 +268,10 @@ func TestPalette_LifecycleCommandsOnProjectDetail(t *testing.T) {
 
 	cmds := m.commands()
 	labels := commandLabels(cmds)
-	assert.Contains(t, labels, "Pause project")
-	assert.Contains(t, labels, "Finish project")
-	assert.Contains(t, labels, "Assign agent to project…")
+	// Lifecycle commands are not in the palette even in the detail view.
+	assert.NotContains(t, labels, "Pause project")
+	assert.NotContains(t, labels, "Finish project")
+	assert.NotContains(t, labels, "Assign agent to project…")
 }
 
 func TestPalette_NoLifecycleCommandsOnAgentView(t *testing.T) {
@@ -318,7 +297,7 @@ func TestHandleKey_PauseInProjectDetail(t *testing.T) {
 	m.selectedProjectID = "p1"
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active"}}
 
-	_, cmd := m.handleKey(keyPress("p"))
+	_, cmd := m.handleKey(ctrlKey('s'))
 	require.NotNil(t, cmd)
 
 	msg := cmd()
@@ -338,7 +317,8 @@ func TestHandleKey_ResumeInProjectDetail(t *testing.T) {
 	m.selectedProjectID = "p1"
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "paused"}}
 
-	_, cmd := m.handleKey(keyPress("r"))
+	// ctrl+s toggles: paused → resume.
+	_, cmd := m.handleKey(ctrlKey('s'))
 	require.NotNil(t, cmd)
 
 	msg := cmd()
@@ -358,7 +338,7 @@ func TestHandleKey_FinishInProjectDetail(t *testing.T) {
 	m.selectedProjectID = "p1"
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active"}}
 
-	_, cmd := m.handleKey(keyPress("f"))
+	_, cmd := m.handleKey(ctrlKey('f'))
 	require.NotNil(t, cmd)
 
 	msg := cmd()
@@ -382,7 +362,7 @@ func TestHandleKey_AssignInProjectDetail(t *testing.T) {
 		{ID: "a2", Name: "coder", Status: "running"},
 	}
 
-	_, cmd := m.handleKey(keyPress("a"))
+	_, cmd := m.handleKey(ctrlKey('a'))
 	require.NotNil(t, cmd)
 
 	msg := cmd()
@@ -399,7 +379,7 @@ func TestHandleKey_AssignNoUnassignedAgentReturnsNil(t *testing.T) {
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active", Team: client.ProjectTeam{Agents: []client.TeamAgent{{AgentID: "a1", Name: "greeter"}}}}}
 	m.agents = []client.Agent{{ID: "a1", Name: "greeter", Status: "running"}}
 
-	_, cmd := m.handleKey(keyPress("a"))
+	_, cmd := m.handleKey(ctrlKey('a'))
 	assert.Nil(t, cmd, "assign should return nil when no unassigned agent")
 }
 

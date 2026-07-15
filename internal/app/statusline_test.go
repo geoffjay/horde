@@ -40,8 +40,8 @@ func TestHintStatusBlock_ProjectDetailActive(t *testing.T) {
 	block := hintStatusBlock()
 	hint := block.Render(m)
 	assert.Contains(t, hint, "enter invoke")
-	assert.Contains(t, hint, "a assign")
-	assert.Contains(t, hint, "p pause")
+	assert.Contains(t, hint, "ctrl+a assign")
+	assert.Contains(t, hint, "ctrl+s pause")
 	assert.Contains(t, hint, "esc back")
 }
 
@@ -54,8 +54,8 @@ func TestHintStatusBlock_ProjectDetailPaused(t *testing.T) {
 
 	block := hintStatusBlock()
 	hint := block.Render(m)
-	assert.Contains(t, hint, "r resume")
-	assert.NotContains(t, hint, "p pause", "paused project should not show pause hint")
+	assert.Contains(t, hint, "ctrl+r resume")
+	assert.NotContains(t, hint, "ctrl+s pause", "paused project should not show pause hint")
 }
 
 func TestHintStatusBlock_ProjectDetailFinished(t *testing.T) {

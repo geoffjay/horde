@@ -115,6 +115,7 @@ type Model struct {
 	// status line + command palette overlay
 	status *StatusLine
 	pal    palette
+	picker projectPicker
 	form   projectForm
 
 	width    int
@@ -313,6 +314,9 @@ const (
 	keyEnter     = "enter"
 	keyDown      = "down"
 	keyBackspace = "backspace"
+	keyCtrlP     = "ctrl+p"
+	keyCtrlR     = "ctrl+r"
+	keyCtrlQ     = "ctrl+q"
 	roleAgent    = "agent"
 )
 
@@ -323,15 +327,21 @@ const (
 	stateFinished = "finished"
 )
 
-// handleKey dispatches key presses. When the command palette or form is open
-// all keys are routed to the respective overlay handler. Otherwise "q"/ctrl+c
-// quits, ctrl+p opens the palette, "r" refreshes (or resumes a paused project
-// in the project detail view), and the arrow keys / enter / esc navigate the
-// breadcrumb drill-down. Direct-key shortcuts (n, p, f, a) fire lifecycle
-// actions in the appropriate views.
+// handleKey dispatches key presses. When the command palette, project
+// picker, or form is open all keys are routed to the respective overlay
+// handler. Otherwise ctrl+q/ctrl+c quits, ctrl+p opens the palette, ctrl+r
+// refreshes (or resumes a paused project in the project detail view),
+// ctrl+n opens the new-project form, ctrl+l goes to the cluster view, and
+// the arrow keys / enter / esc navigate the breadcrumb drill-down.
+// Lifecycle actions (pause, finish, assign) fire via ctrl+X shortcuts in
+// the project detail view.
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.pal.open {
 		return m.handlePaletteKey(msg)
+	}
+
+	if m.picker.open {
+		return m.handlePickerKey(msg)
 	}
 
 	if m.form.open {
@@ -339,14 +349,22 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "q", keyQuit:
+	case keyQuit, keyCtrlQ:
 		m.quitting = true
 		return m, tea.Quit
-	case "ctrl+p":
+	case keyCtrlP:
 		m.openPalette()
 		return m, nil
-	case "r":
+	case keyCtrlR:
 		return m.handleRefreshOrResume()
+	case "ctrl+n":
+		m.openForm()
+		return m, nil
+	case "ctrl+l":
+		if m.connected {
+			m.goCluster()
+		}
+		return m, nil
 	}
 
 	if !m.connected {
@@ -363,7 +381,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleNavigationKey handles arrow/list/navigation keys and view-aware
-// direct-key shortcuts (n, p, f, a) for the connected non-invoke views.
+// ctrl+X shortcuts (ctrl+a assign, ctrl+s pause/resume, ctrl+f finish) for
+// the connected non-invoke views.
 func (m *Model) handleNavigationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case keyEsc:
@@ -379,17 +398,15 @@ func (m *Model) handleNavigationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case keyDown, "j":
 		m.moveCursor(1)
 		return m, nil
-	case "n":
-		return m.handleNewProjectKey()
-	case "p":
+	case "ctrl+s":
 		if m.view == viewProjectDetail {
-			return m, m.pauseProjectCmd() //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
+			return m.handlePauseOrResume()
 		}
-	case "f":
+	case "ctrl+f":
 		if m.view == viewProjectDetail {
 			return m, m.finishProjectCmd() //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
 		}
-	case "a":
+	case "ctrl+a":
 		if m.view == viewProjectDetail {
 			return m, m.assignAgentCmd() //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
 		}
@@ -397,16 +414,24 @@ func (m *Model) handleNavigationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleNewProjectKey opens the new-project form when in the projects view.
-// In other views it does nothing.
-func (m *Model) handleNewProjectKey() (tea.Model, tea.Cmd) {
-	if m.view == viewProjects {
-		m.openForm()
+// handlePauseOrResume toggles between pausing an active project and resuming
+// a paused project in the detail view.
+func (m *Model) handlePauseOrResume() (tea.Model, tea.Cmd) {
+	id := m.selectedProjectIDForAction()
+	if id == "" {
+		return m, nil
+	}
+	state := m.actionProjectState(id)
+	switch state {
+	case stateActive:
+		return m, m.pauseProjectCmd() //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
+	case statePaused:
+		return m, m.resumeProjectCmd() //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
 	}
 	return m, nil
 }
 
-// handleRefreshOrResume handles the "r" key: when disconnected it triggers an
+// handleRefreshOrResume handles ctrl+r: when disconnected it triggers an
 // immediate retry; when connected in the project detail view with a paused
 // project it resumes the project; otherwise it refreshes the node data.
 func (m *Model) handleRefreshOrResume() (tea.Model, tea.Cmd) {
@@ -715,7 +740,7 @@ func (m *Model) View() tea.View {
 	}
 
 	background := m.fill(m.renderBody(), m.status.Render(m, m.innerWidth()))
-	if !m.pal.open && !m.form.open {
+	if !m.pal.open && !m.picker.open && !m.form.open {
 		return altView(background)
 	}
 
@@ -732,10 +757,14 @@ func (m *Model) View() tea.View {
 }
 
 // renderOverlay returns the dialog to composite over the dimmed background.
-// It dispatches to the palette or form renderer based on which overlay is open.
+// It dispatches to the palette, picker, or form renderer based on which
+// overlay is open.
 func (m *Model) renderOverlay() string {
 	if m.pal.open {
 		return m.renderPalette()
+	}
+	if m.picker.open {
+		return m.renderPicker()
 	}
 	if m.form.open {
 		return m.renderForm()
@@ -765,7 +794,7 @@ var dimColor = lipgloss.Color("240")
 // style's bound Render method (e.g. someStyle.Render) so the heavy Style struct
 // is not copied by value.
 func (m *Model) paint(render func(...string) string, s string) string {
-	if m.pal.open || m.form.open {
+	if m.pal.open || m.picker.open || m.form.open {
 		return s
 	}
 	return render(s)

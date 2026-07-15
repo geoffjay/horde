@@ -96,9 +96,9 @@ func TestModel_ImmediateRetryResetsTimer(t *testing.T) {
 	// Simulate partway through the countdown.
 	m.retryIn = 30 * time.Second
 
-	// Pressing "r" should trigger an immediate retry regardless of the
+	// Pressing ctrl+r should trigger an immediate retry regardless of the
 	// remaining countdown.
-	model, cmd := m.Update(keyPress("r"))
+	model, cmd := m.Update(ctrlKey('r'))
 	assert.Same(t, m, model)
 	require.NotNil(t, cmd)
 	assert.Equal(t, time.Duration(0), m.retryIn)
@@ -123,7 +123,7 @@ func TestModel_PaletteToggle(t *testing.T) {
 
 func TestPalette_SearchFiltersAndTypesIntoQuery(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
-	m.connected = true // commands: Refresh, Go to Cluster, New project…, Quit
+	m.connected = true // commands: Refresh, Select Cluster, New Project, Switch Project, Quit
 	m.openPalette()
 
 	// Typing while the palette is open edits the query rather than acting as
@@ -140,12 +140,12 @@ func TestPalette_SearchFiltersAndTypesIntoQuery(t *testing.T) {
 	// Backspace clears the query and restores the full list.
 	m.Update(namedKey(tea.KeyBackspace))
 	assert.Equal(t, "", m.pal.query)
-	assert.Len(t, m.filteredCommands(), 4)
+	assert.Len(t, m.filteredCommands(), 5)
 }
 
 func TestPalette_CursorNavigationClamps(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
-	m.connected = true // 4 commands: Refresh, Go to Cluster, New project…, Quit
+	m.connected = true // 5 commands: Refresh, Select Cluster, New Project, Switch Project, Quit
 	m.openPalette()
 	require.Equal(t, 0, m.pal.cursor)
 
@@ -161,7 +161,9 @@ func TestPalette_CursorNavigationClamps(t *testing.T) {
 	m.Update(namedKey(tea.KeyDown))
 	assert.Equal(t, 3, m.pal.cursor)
 	m.Update(namedKey(tea.KeyDown))
-	assert.Equal(t, 3, m.pal.cursor)
+	assert.Equal(t, 4, m.pal.cursor)
+	m.Update(namedKey(tea.KeyDown))
+	assert.Equal(t, 4, m.pal.cursor)
 }
 
 func TestPalette_EnterRunsSelectedCommand(t *testing.T) {
@@ -185,7 +187,7 @@ func TestStatusLine_RightAlignedBlocks(t *testing.T) {
 	m.node.Mode = "master"
 	m.node.NodeID = "n1"
 
-	const width = 80
+	const width = 100
 	out := m.status.Render(m, width)
 
 	// The node block summarizes mode / id / agent count, the commands block

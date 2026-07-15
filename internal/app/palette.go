@@ -10,18 +10,31 @@ import (
 const (
 	// paletteWidth is the width of the command dialog's content box (the
 	// border adds two more columns).
-	paletteWidth = 44
+	paletteWidth = 64
 	// palettePadX / palettePadY are the dialog's horizontal / vertical inner
 	// padding.
 	palettePadX = 2
 	palettePadY = 1
-	// paletteInner is the usable content width inside the horizontal padding.
-	paletteInner = paletteWidth - palettePadX*2
+	// paletteInner is the usable content width inside the border and
+	// horizontal padding (2 border chars + 2*palettePadX padding chars).
+	paletteInner = paletteWidth - palettePadX*2 - 2
 	// centerDivisor halves free space to center the dialog on each axis.
 	centerDivisor = 2
 	// paletteMaxRows caps how many command rows are shown at once; longer
 	// lists scroll to keep the cursor visible.
 	paletteMaxRows = 8
+)
+
+// Color values for the palette dialog.
+var (
+	// dimGray is used for the most dimmed text (footer labels like
+	// "choose", "confirm", "cancel", "Type to filter").
+	dimGray = lipgloss.Color("240")
+	// lessDimGray is used for key glyphs (↑↓, enter, esc) that should be
+	// gray but more visible than the labels.
+	lessDimGray = lipgloss.Color("248")
+	// brightGreen is the color of the ">" prompt in the search field.
+	brightGreen = lipgloss.Color("46")
 )
 
 // palette is the state of the ctrl+p command overlay: whether it is open, the
@@ -42,90 +55,84 @@ type command struct {
 	run   func(m *Model) tea.Cmd
 }
 
-// commands returns every command available in the current state. When
-// connected, navigation commands (Go to Projects, Go to Cluster) and the
-// context-sensitive lifecycle actions (new project, pause/resume/finish,
-// assign agent) are offered alongside Refresh and Quit. Retry is offered
-// when waiting to reconnect; Quit is always present.
-func (m *Model) commands() []command {
-	var cmds []command
-	if m.connected {
-		cmds = append(cmds, command{label: "Refresh", key: "r", run: func(m *Model) tea.Cmd {
-			return m.loadNode
-		}})
-		if m.view != viewProjects {
-			cmds = append(cmds, command{label: "Go to Projects", key: "g p", run: func(m *Model) tea.Cmd {
-				m.goHome()
-				return nil
-			}})
-		}
-		if m.view != viewCluster {
-			cmds = append(cmds, command{label: "Go to Cluster", key: "g c", run: func(m *Model) tea.Cmd {
+// baseCommands returns the fixed set of commands shown in the palette. The
+// list does not change with the current view or selection, so the dialog
+// remains stable while it is open. Lifecycle actions (pause/resume/finish/
+// assign) are not included; they are available as direct keys in the
+// project detail view.
+func (m *Model) baseCommands() []command {
+	return []command{
+		{
+			label: "Refresh",
+			key:   keyCtrlR,
+			run:   func(m *Model) tea.Cmd { return m.loadNode },
+		},
+		{
+			label: "Select Cluster",
+			key:   "ctrl+l",
+			run: func(m *Model) tea.Cmd {
 				m.goCluster()
 				return nil
-			}})
-		}
-		// New project form is available on any view so the user can create
-		// a project without navigating to the projects list first.
-		cmds = append(cmds, command{label: "New project…", key: "n", run: func(m *Model) tea.Cmd {
-			m.openForm()
-			return nil
-		}})
-		// Project lifecycle commands are view-aware: they appear on the
-		// projects list (acting on the cursor-selected project) and on the
-		// project detail view (acting on the open project).
-		if m.view == viewProjects || m.view == viewProjectDetail {
-			projectID := m.selectedProjectIDForAction()
-			if projectID != "" {
-				state := m.actionProjectState(projectID)
-				switch state {
-				case stateActive:
-					cmds = append(cmds,
-						command{label: "Pause project", key: "p", run: func(m *Model) tea.Cmd {
-							return m.pauseProjectCmd()
-						}},
-						command{label: "Finish project", key: "f", run: func(m *Model) tea.Cmd {
-							return m.finishProjectCmd()
-						}},
-					)
-				case statePaused:
-					cmds = append(cmds,
-						command{label: "Resume project", key: "r", run: func(m *Model) tea.Cmd {
-							return m.resumeProjectCmd()
-						}},
-						command{label: "Finish project", key: "f", run: func(m *Model) tea.Cmd {
-							return m.finishProjectCmd()
-						}},
-					)
-				}
-				cmds = append(cmds, command{label: "Assign agent to project…", key: "a", run: func(m *Model) tea.Cmd {
-					return m.assignAgentCmd()
-				}})
-			}
-		}
-	} else {
-		cmds = append(cmds, command{label: "Retry now", key: "r", run: func(m *Model) tea.Cmd {
-			m.retryIn = 0
-			return m.connect
-		}})
+			},
+		},
+		{
+			label: "New Project",
+			key:   "ctrl+n",
+			run: func(m *Model) tea.Cmd {
+				m.openForm()
+				return nil
+			},
+		},
+		{
+			label: "Switch Project",
+			key:   keyCtrlP,
+			run: func(m *Model) tea.Cmd {
+				m.openPicker()
+				return nil
+			},
+		},
+		{
+			label: "Quit",
+			key:   keyCtrlQ,
+			run: func(m *Model) tea.Cmd {
+				m.quitting = true
+				return tea.Quit
+			},
+		},
 	}
-	cmds = append(cmds, command{label: "Quit", key: "q", run: func(m *Model) tea.Cmd {
-		m.quitting = true
-		return tea.Quit
-	}})
-	return cmds
 }
 
-// actionProjectState returns the state of the project that a lifecycle
-// command would act on, or "" if no project is found. This mirrors
-// selectedProjectIDForAction's lookup logic.
-func (m *Model) actionProjectState(id string) string {
-	for _, p := range m.projects {
-		if p.ID == id {
-			return p.State
-		}
+// retryCommands returns the commands shown when disconnected: just Retry and
+// Quit.
+func (m *Model) retryCommands() []command {
+	return []command{
+		{
+			label: "Retry now",
+			key:   keyCtrlR,
+			run: func(m *Model) tea.Cmd {
+				m.retryIn = 0
+				return m.connect
+			},
+		},
+		{
+			label: "Quit",
+			key:   keyCtrlQ,
+			run: func(m *Model) tea.Cmd {
+				m.quitting = true
+				return tea.Quit
+			},
+		},
 	}
-	return ""
+}
+
+// commands returns every command available in the current state. When
+// connected the five base commands are shown; when disconnected Retry and
+// Quit are shown.
+func (m *Model) commands() []command {
+	if m.connected {
+		return m.baseCommands()
+	}
+	return m.retryCommands()
 }
 
 // filteredCommands returns the commands whose label contains the current query
@@ -194,7 +201,7 @@ func (m *Model) handlePaletteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case keyQuit:
 		m.quitting = true
 		return m, tea.Quit
-	case keyEsc, "ctrl+p":
+	case keyEsc, keyCtrlP:
 		m.closePalette()
 		return m, nil
 	case "up", "ctrl+k":
@@ -221,35 +228,54 @@ func (m *Model) handlePaletteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// dimLabelStyle styles text as dimmed gray (for "Type to filter", "choose",
+// "confirm", "cancel").
+var dimLabelStyle = lipgloss.NewStyle().Foreground(dimGray).Faint(true)
+
+// keyHintStyle styles text as gray but less dimmed (for ↑↓, enter, esc key
+// glyphs).
+var keyHintStyle = lipgloss.NewStyle().Foreground(lessDimGray)
+
 // renderPalette builds the command dialog shown while the palette is open. It
 // is composited as its own layer over the dimmed background, so it uses styles
 // directly rather than Model.paint.
 func (m *Model) renderPalette() string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
-	faint := lipgloss.NewStyle().Faint(true)
 
 	var b strings.Builder
-	b.WriteString(spread(paletteInner, titleStyle.Render("Commands"), faint.Render("esc")))
+	b.WriteString(titleStyle.Render("Commands"))
 	b.WriteString("\n\n")
 
-	// Search field: the query followed by a block cursor, or a faint
-	// placeholder after the cursor when empty.
+	// Search field: a bright green ">" prompt followed by the query and a
+	// block cursor, or a dimmed "Type to filter" placeholder when empty.
+	prompt := lipgloss.NewStyle().Foreground(brightGreen).Render(">")
+	b.WriteString(prompt + " ")
 	cursor := lipgloss.NewStyle().Reverse(true).Render(" ")
 	b.WriteString(m.pal.query + cursor)
 	if m.pal.query == "" {
-		b.WriteString(faint.Render(" Search"))
+		b.WriteString(" " + dimLabelStyle.Render("Type to filter"))
 	}
 	b.WriteString("\n\n")
 
 	b.WriteString(m.renderCommandRows())
+	b.WriteString("\n\n")
+
+	// Footer hints: "↑↓ choose · enter confirm · esc cancel" with the key
+	// glyphs in lessDimGray and the labels in dimGray.
+	b.WriteString(keyHintStyle.Render("↑↓"))
+	b.WriteString(" " + dimLabelStyle.Render("choose"))
+	b.WriteString(" " + keyHintStyle.Render("·") + " ")
+	b.WriteString(keyHintStyle.Render("enter"))
+	b.WriteString(" " + dimLabelStyle.Render("confirm"))
+	b.WriteString(" " + keyHintStyle.Render("·") + " ")
+	b.WriteString(keyHintStyle.Render("esc"))
+	b.WriteString(" " + dimLabelStyle.Render("cancel"))
 
 	box := lipgloss.NewStyle().
 		Width(paletteWidth).
 		Padding(palettePadY, palettePadX).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252"))
+		BorderForeground(lipgloss.Color("240"))
 	return box.Render(b.String())
 }
 
@@ -260,10 +286,9 @@ func (m *Model) renderPalette() string {
 func (m *Model) renderCommandRows() string {
 	cmds := m.filteredCommands()
 	if len(cmds) == 0 {
-		return lipgloss.NewStyle().Faint(true).Render("(no matching commands)")
+		return dimLabelStyle.Render("(no matching commands)")
 	}
 
-	faint := lipgloss.NewStyle().Faint(true)
 	selStyle := lipgloss.NewStyle().
 		Width(paletteInner).
 		Background(lipgloss.Color("62")).
@@ -273,14 +298,14 @@ func (m *Model) renderCommandRows() string {
 
 	var rows []string
 	if start > 0 {
-		rows = append(rows, faint.Render("↑ more"))
+		rows = append(rows, dimLabelStyle.Render("↑ more"))
 	}
 	for i := start; i < end; i++ {
 		c := cmds[i]
 		selected := i == m.pal.cursor
 		key := c.key
 		if !selected {
-			key = faint.Render(c.key)
+			key = dimLabelStyle.Render(c.key)
 		}
 		row := spread(paletteInner, c.label, key)
 		if selected {
@@ -289,7 +314,7 @@ func (m *Model) renderCommandRows() string {
 		rows = append(rows, row)
 	}
 	if end < len(cmds) {
-		rows = append(rows, faint.Render("↓ more"))
+		rows = append(rows, dimLabelStyle.Render("↓ more"))
 	}
 	return strings.Join(rows, "\n")
 }
@@ -323,7 +348,7 @@ func spread(width int, left, right string) string {
 }
 
 // dialogOffset centers the dialog within the current terminal, clamped so it
-// never renders off the top-left edge. Used by both the palette and the form
+// never renders off the top-left edge. Used by the palette, picker, and form
 // modal overlays.
 func (m *Model) dialogOffset(dialog string) (x, y int) {
 	x = (m.width - lipgloss.Width(dialog)) / centerDivisor

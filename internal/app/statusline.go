@@ -133,7 +133,7 @@ func commandsBlock() StatusBlock {
 	return StatusBlock{
 		Name: "commands",
 		Render: func(m *Model) string {
-			key := m.paint(lipgloss.NewStyle().Bold(true).Render, "ctrl+p")
+			key := m.paint(lipgloss.NewStyle().Bold(true).Render, keyCtrlP)
 			return key + m.paint(lipgloss.NewStyle().Faint(true).Render, " commands")
 		},
 	}
@@ -182,17 +182,17 @@ func liveStatusBlock() StatusBlock {
 func viewHints(m *Model) string {
 	switch m.view {
 	case viewProjects:
-		return "↑↓ select · enter open · n new"
+		return "↑↓ select · enter open · ctrl+n new"
 	case viewProjectDetail:
 		hints := "enter invoke · esc back"
 		if i := m.selectedProjectIndex(); i >= 0 && i < len(m.projects) {
 			switch m.projects[i].State {
 			case stateActive:
-				hints = "enter invoke · a assign · p pause · f finish · esc back"
+				hints = "enter invoke · ctrl+a assign · ctrl+s pause · ctrl+f finish · esc back"
 			case statePaused:
-				hints = "enter invoke · a assign · r resume · f finish · esc back"
+				hints = "enter invoke · ctrl+a assign · ctrl+r resume · ctrl+f finish · esc back"
 			default:
-				hints = "a assign · esc back"
+				hints = "ctrl+a assign · esc back"
 			}
 		}
 		return hints
