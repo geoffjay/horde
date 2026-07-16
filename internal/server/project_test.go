@@ -177,6 +177,23 @@ func TestServer_SessionKey_NoProject(t *testing.T) {
 	assert.Equal(t, "", srv.SessionKey("nonexistent"))
 }
 
+func TestServer_CreateProject_SpawnFailureRollsBack(t *testing.T) {
+	srv, err := New(Config{Mode: ModeMaster, SpawnDefaultAgent: false})
+	require.NoError(t, err)
+
+	// "ghost" is not a registered agent, so it fails to spawn. Creation must
+	// roll back atomically rather than leave a project with an unspawnable
+	// team entry (whose empty agent id would later fail invoke with a 404).
+	_, err = srv.CreateProject(context.Background(), CreateProjectInput{
+		Name:       "doomed",
+		AgentNames: []string{"ghost"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ghost")
+	assert.Contains(t, err.Error(), "failed to spawn")
+	assert.Empty(t, srv.ListProjects(""), "a failed create must not leave a project behind")
+}
+
 func TestServer_AgentActiveProject(t *testing.T) {
 	srv, err := New(Config{SpawnDefaultAgent: false})
 	require.NoError(t, err)

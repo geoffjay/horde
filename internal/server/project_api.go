@@ -33,21 +33,40 @@ func (s *Server) CreateProject(_ context.Context, in CreateProjectInput) (*Proje
 		}).Warn("failed to scaffold knowledgebase")
 	}
 
-	// Spawn and assign each agent, passing the same workspace path.
+	// Spawn and assign each agent, passing the same workspace path. Creation
+	// is atomic: if any agent fails to spawn, roll back (stop the agents
+	// already spawned and delete the project) and return the error. This
+	// avoids leaving a project with an unspawnable team entry whose empty
+	// agent id would later fail invoke with a bare 404.
+	spawned := make([]string, 0, len(p.Team.Agents))
 	for i := range p.Team.Agents {
 		ta := &p.Team.Agents[i]
 		agentID, err := s.spawnAgentWithWorkspace(context.Background(), ta.Name, workspace)
 		if err != nil {
-			logrus.WithError(err).WithFields(logrus.Fields{
-				"project": p.ID, logKeyAgent: ta.Name,
-			}).Warn("failed to spawn agent for project")
-			continue
+			s.rollbackProjectCreate(p.ID, spawned)
+			return nil, fmt.Errorf("create project %q: agent %q failed to spawn: %w", p.Name, ta.Name, err)
 		}
 		ta.AgentID = agentID
 		s.assignAgentToProject(agentID, p.ID)
+		spawned = append(spawned, agentID)
 	}
 
 	return p, nil
+}
+
+// rollbackProjectCreate undoes a partially-created project after a spawn
+// failure: it stops every agent already spawned for the project and deletes
+// the project record, so a failed create leaves no orphaned agent subprocess
+// or half-populated project behind.
+func (s *Server) rollbackProjectCreate(projectID string, spawned []string) {
+	for _, id := range spawned {
+		if err := s.StopAgent(id); err != nil {
+			logrus.WithError(err).WithField(logKeyAgent, id).Warn("rollback: stop agent failed")
+		}
+	}
+	if err := s.projects.Delete(projectID); err != nil {
+		logrus.WithError(err).WithField(logKeyProject, projectID).Warn("rollback: delete project failed")
+	}
 }
 
 // GetProject returns a project by id.

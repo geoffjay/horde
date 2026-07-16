@@ -42,6 +42,26 @@ func TestCreateProject_RequiresAgents(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestCreateProject_SpawnFailureIsAtomic(t *testing.T) {
+	srv := newTestServer(t)
+	h := Router(srv)
+
+	// "ghost" is not a registered agent, so it fails to spawn; creation fails
+	// atomically rather than returning a project with a dead team entry.
+	w := do(t, h, http.MethodPost, "/api/v1/projects/", createProjectRequest{
+		Name:       "doomed",
+		AgentNames: []string{"ghost"},
+	})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// No project should have been left behind.
+	w = do(t, h, http.MethodGet, "/api/v1/projects/", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	var ps []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&ps))
+	assert.Empty(t, ps, "a failed create must not leave a project")
+}
+
 func TestCreateProject_InvalidBody(t *testing.T) {
 	srv := newTestServer(t)
 	h := Router(srv)
