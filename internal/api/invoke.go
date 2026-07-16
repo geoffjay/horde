@@ -129,6 +129,12 @@ func invokeAAPAgent(srv invokeView, w http.ResponseWriter, r *http.Request, id s
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+	// Flush the SSE preamble immediately so the client's request returns as
+	// soon as the stream is open, rather than blocking until the first event
+	// (a turn may reach a tool-approval wait before producing any output).
+	if flusher != nil {
+		flusher.Flush()
+	}
 
 	events, errCh := srv.AAPInvoke(r.Context(), id, req.SessionID, req.InvocationID, req.Message)
 

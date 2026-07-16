@@ -201,6 +201,15 @@ type invokeErrorMsg struct {
 	err error
 }
 
+// invokeStartedMsg carries the result of opening the invoke stream. The
+// stream is opened in a command goroutine (not the Update loop) because
+// Client.Invoke blocks until the server sends SSE response headers; doing it
+// inline would freeze the whole UI while the turn starts.
+type invokeStartedMsg struct {
+	ch  <-chan client.InvokeEvent
+	err error
+}
+
 // --- commands ---
 
 // connect probes the node's /health endpoint. On success it fetches node
@@ -299,11 +308,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamErrMsg:
 		return m.handleStreamEnd(msg)
 
-	case invokeEventMsg:
-		return m.handleInvokeEvent(msg)
-
-	case invokeDoneMsg, invokeErrorMsg:
-		return m.handleInvokeEnd(msg)
+	case invokeStartedMsg, invokeEventMsg, invokeDoneMsg, invokeErrorMsg:
+		return m.handleInvokeMsg(msg)
 
 	case projectActionMsg:
 		return m.handleProjectAction(&msg)
@@ -703,16 +709,43 @@ func (m *Model) sendInvoke(agentID string) tea.Cmd {
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.invokeCancel = cancel
 
-	ch, err := m.c.Invoke(ctx, agentID, client.InvokeRequest{Message: msg})
-	if err != nil {
-		cancel()
-		m.invokeCancel = nil
-		m.invokeStreaming = false
-		m.invokeErr = err.Error()
-		return nil
+	// Open the stream in the command goroutine: Client.Invoke blocks until the
+	// server flushes SSE headers, so calling it inline would freeze the UI
+	// (no key — including ctrl+c — is processed while Update is blocked).
+	req := client.InvokeRequest{Message: msg}
+	return func() tea.Msg {
+		ch, err := m.c.Invoke(ctx, agentID, req)
+		return invokeStartedMsg{ch: ch, err: err}
 	}
-	m.invokeCh = ch
-	return m.pumpInvoke()
+}
+
+// handleInvokeMsg routes the invoke-stream lifecycle messages (open result,
+// each event, and stream end).
+func (m *Model) handleInvokeMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case invokeStartedMsg:
+		return m.handleInvokeStarted(msg)
+	case invokeEventMsg:
+		return m.handleInvokeEvent(msg)
+	default: // invokeDoneMsg, invokeErrorMsg
+		return m.handleInvokeEnd(msg)
+	}
+}
+
+// handleInvokeStarted stores the opened invoke stream (or surfaces the open
+// error) and begins pumping events.
+func (m *Model) handleInvokeStarted(msg invokeStartedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		if m.invokeCancel != nil {
+			m.invokeCancel()
+			m.invokeCancel = nil
+		}
+		m.invokeStreaming = false
+		m.invokeErr = msg.err.Error()
+		return m, nil
+	}
+	m.invokeCh = msg.ch
+	return m, m.pumpInvoke() //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
 }
 
 // pumpInvoke returns a tea.Cmd that reads one event from the invoke SSE

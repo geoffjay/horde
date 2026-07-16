@@ -90,9 +90,16 @@ func TestSendInvoke_AppendsUserMessageAndStreams(t *testing.T) {
 	assert.True(t, m.invokeStreaming)
 	assert.Empty(t, m.invokeInput, "input should be cleared after send")
 
+	// The command opens the stream (in a goroutine); it returns an
+	// invokeStartedMsg. Feeding that to Update begins pumping events.
+	started, ok := cmd().(invokeStartedMsg)
+	require.True(t, ok)
+	require.NoError(t, started.err)
+	_, pumpCmd := m.Update(started)
+	require.NotNil(t, pumpCmd, "handleInvokeStarted should return a pump command")
+
 	// Pump the first event (invocation) — no transcript change.
-	msg := cmd()
-	ev, ok := msg.(invokeEventMsg)
+	ev, ok := pumpCmd().(invokeEventMsg)
 	require.True(t, ok)
 	assert.Equal(t, "invocation", ev.ev.Type)
 
@@ -156,7 +163,11 @@ func TestSendInvoke_409SetsError(t *testing.T) {
 	require.Equal(t, viewInvoke, m.view)
 
 	m.invokeInput = "hi"
-	m.sendInvoke("a1")
+	cmd := m.sendInvoke("a1")
+	require.NotNil(t, cmd, "sendInvoke should return a command that opens the stream")
+	// The stream is opened in the command goroutine; run it and feed the
+	// resulting invokeStartedMsg back through Update to surface the error.
+	m.Update(cmd())
 
 	assert.False(t, m.invokeStreaming, "should not be streaming on error")
 	assert.Contains(t, m.invokeErr, "409")
