@@ -507,7 +507,8 @@ func (s *Server) spawnAAP(ctx context.Context, id, name, workspace string, def *
 	}
 	session, cancel, err := newAAPHostSession(ctx, id, name, def, workspace, s.ctxStore)
 	if err != nil {
-		cancel()
+		// newAAPHostSession cleans up its own context on failure and returns a
+		// nil cancel, so do not call cancel() here (it would nil-panic).
 		return "", err
 	}
 	if err := session.handshake(workspace, s.cfg.ReadyTimeout); err != nil {

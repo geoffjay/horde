@@ -456,6 +456,23 @@ func TestSpawnAAPAgent_PiAdapter(t *testing.T) {
 	assert.Equal(t, "", srv.AgentSocket(id), "an AAP agent has no unix socket")
 }
 
+// TestSpawnAAPAgent_BadCommandReturnsError asserts that an AAP adapter whose
+// command cannot start returns a clean error rather than panicking (a nil
+// cancel func was dereferenced in the spawn error path).
+func TestSpawnAAPAgent_BadCommandReturnsError(t *testing.T) {
+	srv, err := New(Config{
+		Mode:              ModeMaster,
+		SpawnDefaultAgent: false,
+		AgentDefs: map[string]AgentDef{
+			"bad": {Kind: AgentKindAAP, Command: "/nonexistent-horde-binary-xyz"},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = srv.SpawnAgent(context.Background(), "bad")
+	require.Error(t, err, "a bad adapter command must return an error, not panic")
+}
+
 // TestSpawnAAPAgent_UnknownName asserts an unknown AAP agent name (no def, no
 // registry entry) is rejected.
 func TestSpawnAAPAgent_UnknownName(t *testing.T) {
