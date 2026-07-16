@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -304,6 +305,52 @@ func TestSpawnAAPAgent_MockBinary(t *testing.T) {
 		}
 	}
 	assert.True(t, sawReply, "expected the mock reply in the stream; got %v", events)
+}
+
+// TestSpawnAAPAgent_PiAdapter drives the real pi-aap adapter (an external AAP
+// adapter for the pi coding agent) through the host: spawn, the
+// initialize→ready handshake, and shutdown. It is the real-adapter counterpart
+// to TestSpawnAAPAgent_MockBinary, which uses the in-repo mock.
+//
+// The adapter lives in a separate repository and needs Node.js, so the test is
+// opt-in: set HORDE_TEST_PI_ADAPTER to the built entry point
+// (…/pi-aap/packages/pi-adapter/dist/index.js). It skips otherwise, so CI stays
+// green without the adapter present. The test asserts only the handshake, which
+// the adapter completes without contacting a model; a live turn additionally
+// needs a pi provider key and network and is verified manually (see the AAP
+// concept doc).
+func TestSpawnAAPAgent_PiAdapter(t *testing.T) {
+	entry := os.Getenv("HORDE_TEST_PI_ADAPTER")
+	if entry == "" {
+		t.Skip("set HORDE_TEST_PI_ADAPTER to the pi-aap dist/index.js to run this test")
+	}
+	if _, err := os.Stat(entry); err != nil {
+		t.Skipf("HORDE_TEST_PI_ADAPTER points at %q which is not present: %v", entry, err)
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not found on PATH; required to run the pi-aap adapter")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	srv, err := New(Config{
+		Mode:              ModeMaster,
+		SpawnDefaultAgent: false,
+		AgentDefs: map[string]AgentDef{
+			"pi": {Kind: AgentKindAAP, Command: node, Args: []string{entry}},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+	require.NoError(t, err)
+
+	id, err := srv.SpawnAgent(ctx, "pi")
+	require.NoError(t, err, "the pi adapter should complete the initialize→ready handshake")
+	defer func() { _ = srv.StopAgent(id) }()
+
+	assert.True(t, srv.IsAAPAgent(id), "the pi adapter is an AAP agent")
+	assert.Equal(t, "", srv.AgentSocket(id), "an AAP agent has no unix socket")
 }
 
 // TestSpawnAAPAgent_UnknownName asserts an unknown AAP agent name (no def, no

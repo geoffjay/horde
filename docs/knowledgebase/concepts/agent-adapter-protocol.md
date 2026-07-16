@@ -87,3 +87,29 @@ authority.
 * AAP agents are a second agent *kind* alongside native ADK, declared in
   config (`agents.<name>.kind: aap`) and sharing the `agentProc` map, the
   invoke API, and project assignment.
+
+# Real adapters
+
+The mock (`horde aap-mock`) is the conformance fixture. The first real external
+adapter is **pi-aap** — a TypeScript adapter for the `pi` coding agent, in a
+separate repository. It implements the full AAP v1 stdio path (handshake, turn
+loop, tool-approval round-trip, MCP provisioning, execution-context frames) and
+passes horde's shared wire vectors.
+
+Wiring a real adapter is operator config, not code — declare it under
+`agents.<name>` with `kind: aap` and point `command`/`args` at the adapter
+binary. A worked example is [`docs/examples/pi-agent.yaml`](/docs/examples/pi-agent.yaml).
+The host passes its own environment plus any configured `env` entries to the
+adapter subprocess, so a provider key (e.g. `ANTHROPIC_API_KEY`) reaches the
+adapter without being hard-coded in config.
+
+Verification has two tiers:
+
+* **Handshake** (no credentials, no network): the host spawns the adapter and
+  completes `initialize`→`ready`. Covered by `TestSpawnAAPAgent_PiAdapter` in
+  `internal/server`, opt-in via `HORDE_TEST_PI_ADAPTER=<path to the adapter's
+  built entry point>` (skipped otherwise so CI stays green without the external
+  repo). This asserts the host drives a real adapter, not just the mock.
+* **Live turn** (needs a provider key + network): configure the agent as above
+  and invoke it through `POST /api/v1/agents/{id}/invoke`. This exercises the
+  full turn loop against the real model and is verified manually.

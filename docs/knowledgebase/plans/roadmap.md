@@ -119,8 +119,11 @@ agents; this phase is where real coding agents plug in.
   [agent execution context](agent-execution-context.md) at full fidelity —
   this lights up the `applyStatus`/`applyContextUpdate`/`applyError`/
   `applyApprovalRequest` receivers Slice A left waiting.
-* The `horde aap-mock` fixture driven end to end as the first adapter; a real
-  adapter (e.g. Claude Code) is a follow-up.
+* The `horde aap-mock` fixture driven end to end as the first adapter. The
+  first real adapter — **pi-aap** (for the `pi` coding agent) — is now wired
+  and handshake-verified through the host (`TestSpawnAAPAgent_PiAdapter`,
+  opt-in via `HORDE_TEST_PI_ADAPTER`); a live turn against a model is verified
+  manually. See [`docs/examples/pi-agent.yaml`](/docs/examples/pi-agent.yaml).
 
 Independent of per-user auth (3.5b): can land before or after it. Foundation
 already in place — the AAP spec and the `internal/aap` package (typed messages,

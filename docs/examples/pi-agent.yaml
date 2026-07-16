@@ -1,0 +1,44 @@
+# Example horde config: driving the pi coding agent through an AAP adapter.
+#
+# This declares a single external agent, `pi`, backed by the pi-aap adapter
+# (https://github.com/geoffjay/pi-aap or your local checkout). The node spawns
+# the adapter as a subprocess over the AAP stdio binding and drives it through
+# the same invoke API and execution-context surfaces as a native ADK agent.
+#
+# Prerequisites:
+#   1. Build the adapter:  cd pi-aap && npm run build
+#   2. Ensure `node` is on PATH.
+#   3. Provide the pi provider credentials the adapter needs (e.g. an Anthropic
+#      key). They flow through: the host passes its own environment plus any
+#      `agents.pi.env` entries to the adapter subprocess.
+#
+# Run:  HORDE_CONFIG=docs/examples/pi-agent.yaml ANTHROPIC_API_KEY=... horde serve
+#
+# The adapter path below is illustrative — point `args` at your built
+# packages/pi-adapter/dist/index.js.
+
+agents:
+  pi:
+    kind: "aap"
+    command: "node"
+    args: ["/absolute/path/to/pi-aap/packages/pi-adapter/dist/index.js"]
+    # Requested model, sent as initialize.model. Empty uses the adapter default.
+    model: "claude-sonnet-5"
+    # Optional extra environment merged over the node's environment. The host
+    # always forces AAP_TRANSPORT=stdio regardless of what is set here. Keys are
+    # case-sensitive (env var names). Prefer inheriting the provider key from
+    # the node's own environment rather than hard-coding a secret here.
+    env:
+      - key: "PI_AAP_DEBUG"
+        value: "0"
+    # Advisory filesystem scope sent in initialize.permissions. A compliant
+    # adapter self-enforces it; the node is additionally the sole approval
+    # authority. Omit the block to let the adapter use its own default scope.
+    permissions:
+      mode: "read_write"
+      writable_paths: ["src/", "docs/"]
+      deny_paths: [".git/", ".env"]
+    # v1 approval policy: auto-allow every approval_request when the adapter
+    # advertises tool_approval. Set false to leave requests pending (a human
+    # approve/deny decision endpoint is a follow-up).
+    auto_approve: true

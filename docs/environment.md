@@ -56,6 +56,32 @@ environment variable (any extension: `yaml`, `yml`, `json`, `toml`).
 | `log.level`                      | `info`              | `HORDE_LOG_LEVEL`                      | Log level.                               |
 | `service.id`                     | `org.horde.Horde`   | `HORDE_SERVICE_ID`                      | Service identifier.                      |
 
+### AAP agent declarations (`agents.<name>.*`)
+
+An external coding agent driven through an [AAP](knowledgebase/concepts/agent-adapter-protocol.md)
+adapter is declared under the `agents` map, keyed by agent name. Native ADK
+agents (greeter, repeater) are registry-built and need no entry. These keys are
+config-file/`HORDE_*` settable but are typically set in a config file (see
+[`docs/examples/pi-agent.yaml`](examples/pi-agent.yaml)).
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `agents.<name>.kind` | `adk` | Agent kind: `adk` (registry-built native) or `aap` (external adapter). |
+| `agents.<name>.command` | *(empty)* | AAP only: the adapter command (argv[0]). |
+| `agents.<name>.args` | `[]` | AAP only: adapter argv after the command. |
+| `agents.<name>.env` | `[]` | AAP only: extra environment (list of `{key, value}`) merged over the node's environment. The host always forces `AAP_TRANSPORT=stdio`. |
+| `agents.<name>.model` | *(empty)* | AAP only: requested model, sent as `initialize.model`. Empty uses the adapter default. |
+| `agents.<name>.system_prompt` | *(empty)* | AAP only: system prompt text/path for `initialize.system_prompt`. |
+| `agents.<name>.system_prompt_mode` | `replace` | AAP only: `replace` or `append` (append requires the `system_prompt_append` capability). |
+| `agents.<name>.permissions.mode` | *(empty)* | AAP only: advisory scope mode `read_only` / `read_write`. Omitting the `permissions` block omits the scope. |
+| `agents.<name>.permissions.writable_paths` | `[]` | AAP only: writable paths when mode is `read_write`. |
+| `agents.<name>.permissions.deny_paths` | `[]` | AAP only: paths the adapter must not read or write. |
+| `agents.<name>.auto_approve` | `false` | AAP only: auto-allow every `approval_request` when the adapter advertises `tool_approval`. |
+
+The pi provider key the adapter needs (e.g. `ANTHROPIC_API_KEY`) is inherited
+from the node's own environment — the host passes its environment plus the
+configured `env` entries to the adapter subprocess.
+
 ### Data and state directories (XDG)
 
 horde persists data to XDG-compliant directories (see the [persistence
@@ -103,6 +129,22 @@ config loader):
 
 Canonical `AAP_*` names take precedence over the deprecated `AGENTD_AAP_*`
 aliases when both are set.
+
+### External AAP adapter (real coding agent)
+
+A real external agent (e.g. the `pi` coding agent via the pi-aap adapter) is a
+subprocess declared under `agents.<name>` with `kind: aap` — see [AAP agent
+declarations](#aap-agent-declarations-agentsname) and
+[`docs/examples/pi-agent.yaml`](examples/pi-agent.yaml). It is not a horde
+binary; the adapter lives in its own repository and speaks the AAP stdio
+binding.
+
+**Test-only variable** (read by `internal/server` tests, not by the config
+loader):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HORDE_TEST_PI_ADAPTER` | (unset) | Path to the pi-aap adapter's built entry point (`packages/pi-adapter/dist/index.js`). When set, `TestSpawnAAPAgent_PiAdapter` drives the real adapter through the host handshake; the test skips when unset. |
 
 ### horde TUI (`horde`)
 

@@ -318,10 +318,15 @@ the cluster aggregation and the TUI context pane get richer data for free.
 
 # Open follow-ups (not blocking)
 
-* **Real adapter (Claude Code).** The mock is the conformance target; a real
-  adapter is a follow-up that depends only on the host landing. The
-  `agentd-adapter-claude` reference exists against the schema-compatible
-  agentd protocol.
+* **Real adapter.** The mock is the conformance target; a real adapter is a
+  follow-up that depends only on the host landing. **pi-aap** (for the `pi`
+  coding agent) is now wired and handshake-verified through the host — declared
+  as an `agents.<name>.kind: aap` entry, spawned over stdio, and exercised by
+  `TestSpawnAAPAgent_PiAdapter` (opt-in via `HORDE_TEST_PI_ADAPTER`); a live
+  turn against a model is verified manually. See
+  [`docs/examples/pi-agent.yaml`](/docs/examples/pi-agent.yaml). A Claude Code
+  adapter remains possible against the schema-compatible agentd protocol
+  (`agentd-adapter-claude` reference).
 * **Human approve/deny UI.** The context pane renders pending approvals
   (read-only today). A `POST /agents/{id}/approvals/{requestID}` endpoint
   plus a TUI keybinding is the follow-up the plumbing here unblocks; it
