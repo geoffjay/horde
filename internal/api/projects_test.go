@@ -50,6 +50,7 @@ func TestCreateProject_SpawnFailureIsAtomic(t *testing.T) {
 	// atomically rather than returning a project with a dead team entry.
 	w := do(t, h, http.MethodPost, "/api/v1/projects/", createProjectRequest{
 		Name:       "doomed",
+		Workspace:  t.TempDir(),
 		AgentNames: []string{"ghost"},
 	})
 	assert.Equal(t, http.StatusBadRequest, w.Code)

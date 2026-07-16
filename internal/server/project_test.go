@@ -186,6 +186,7 @@ func TestServer_CreateProject_SpawnFailureRollsBack(t *testing.T) {
 	// team entry (whose empty agent id would later fail invoke with a 404).
 	_, err = srv.CreateProject(context.Background(), CreateProjectInput{
 		Name:       "doomed",
+		Workspace:  t.TempDir(),
 		AgentNames: []string{"ghost"},
 	})
 	require.Error(t, err)
