@@ -601,6 +601,117 @@ func TestAAPInvoke_SecondInvokeReplaysBuffer(t *testing.T) {
 	assert.NotEmpty(t, replayed, "replay should deliver buffered events")
 }
 
+// injectAAPProc registers an in-process AAP session as an agentProc so
+// AAPInvoke/RespondApproval can find it, mirroring the setup other AAP invoke
+// tests use.
+func injectAAPProc(t *testing.T, srv *Server, id string, s *aapHostSession) {
+	t.Helper()
+	srv.mu.Lock()
+	srv.procs[id] = &agentProc{
+		id:         id,
+		name:       id,
+		kind:       AgentKindAAP,
+		state:      AgentRunning,
+		doneCh:     make(chan struct{}),
+		aapSession: s,
+	}
+	srv.mu.Unlock()
+}
+
+// TestAAPInvoke_StreamsBeforeTurnCompletes asserts turn frames stream to the
+// client live — a message token arrives while the turn is still blocked on a
+// pending approval, before turn_complete. Before the streaming rework the
+// client saw nothing until the turn ended (so with auto_approve=false, nothing
+// until a decision).
+func TestAAPInvoke_StreamsBeforeTurnCompletes(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, cleanup := newTestAAPSession(t, ctx, "fake", AgentDef{Kind: AgentKindAAP, Command: "test", AutoApprove: false}, true)
+	defer cleanup()
+
+	srv, err := New(Config{Mode: ModeMaster, SpawnDefaultAgent: false})
+	require.NoError(t, err)
+	injectAAPProc(t, srv, "fake", s)
+
+	evCh, errCh := srv.AAPInvoke(ctx, "fake", "", "inv-live", "run tool")
+
+	// The message token must arrive before we resolve the approval; otherwise
+	// this loop times out (the old buffer-at-end behavior).
+	var sawToken bool
+	deadline := time.After(3 * time.Second)
+loop:
+	for {
+		select {
+		case ev, ok := <-evCh:
+			if !ok {
+				break loop
+			}
+			if ev.Typ == "token" && strings.Contains(string(ev.Data), "fake:") {
+				sawToken = true
+				break loop
+			}
+		case <-deadline:
+			t.Fatal("no live token arrived before the turn completed")
+		}
+	}
+	require.True(t, sawToken, "expected a live token event while the turn was still pending")
+
+	// Resolve the approval so the fake completes the turn, then drain.
+	require.NoError(t, s.resolvePending("req-inv-live", aap.DecisionAllow))
+	for range evCh { //nolint:revive // draining the stream to let goroutines finish
+	}
+	<-errCh
+}
+
+// TestAAPInvoke_TurnSurvivesClientDisconnect asserts a client disconnecting
+// (e.g. leaving the TUI invoke view) does not cancel the turn: the approval
+// stays pending, and resolving it later still drives the turn to completion,
+// observable via a reconnecting client.
+func TestAAPInvoke_TurnSurvivesClientDisconnect(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, cleanup := newTestAAPSession(t, ctx, "fake", AgentDef{Kind: AgentKindAAP, Command: "test", AutoApprove: false}, true)
+	defer cleanup()
+
+	srv, err := New(Config{Mode: ModeMaster, SpawnDefaultAgent: false})
+	require.NoError(t, err)
+	injectAAPProc(t, srv, "fake", s)
+
+	clientCtx, clientCancel := context.WithCancel(ctx)
+	evCh, errCh := srv.AAPInvoke(clientCtx, "fake", "", "inv-dc", "run tool")
+
+	// Wait until the turn is mid-flight (approval pending).
+	require.Eventually(t, func() bool {
+		c := s.ctxStore.get("fake")
+		return c != nil && len(c.PendingApprovals) == 1
+	}, 3*time.Second, 20*time.Millisecond, "approval should become pending")
+
+	// Simulate the client disconnecting / leaving the invoke view.
+	clientCancel()
+	for range evCh { //nolint:revive // drain the cancelled reader
+	}
+	<-errCh
+
+	// The turn must NOT have been cancelled by the disconnect.
+	c := s.ctxStore.get("fake")
+	require.NotNil(t, c)
+	require.Len(t, c.PendingApprovals, 1, "disconnect must not cancel the turn")
+
+	// Resolve the approval; the turn (on its own context) completes. A
+	// reconnecting client sees it through to done.
+	require.NoError(t, s.resolvePending("req-inv-dc", aap.DecisionAllow))
+
+	ev2, err2 := srv.AAPInvoke(ctx, "fake", "", "inv-dc", "run tool")
+	var sawDone bool
+	for ev := range ev2 {
+		if ev.Typ == "done" {
+			sawDone = true
+		}
+	}
+	require.NoError(t, <-err2)
+	assert.True(t, sawDone, "reconnect should observe the turn completing after approval")
+}
+
 // TestAAPHostSession_UnknownFrameSkipped asserts an unknown message type on
 // stdout is logged and skipped, not fatal (spec §3).
 func TestAAPHostSession_UnknownFrameSkipped(t *testing.T) {

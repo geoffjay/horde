@@ -38,6 +38,7 @@ type aapInvocation struct {
 	nextID   int
 	done     chan struct{}
 	finished bool
+	err      error // terminal turn error (nil for a clean turn_complete)
 	subs     map[chan struct{}]struct{}
 }
 
@@ -94,10 +95,13 @@ func (inv *aapInvocation) subscribe() (notify chan struct{}, unsubscribe func())
 	return ch, cancel
 }
 
-func (inv *aapInvocation) markFinished() {
+// finish marks the invocation complete with its terminal error (nil for a
+// clean turn_complete) and wakes any readers blocked on done.
+func (inv *aapInvocation) finish(err error) {
 	inv.mu.Lock()
 	if !inv.finished {
 		inv.finished = true
+		inv.err = err
 		close(inv.done)
 	}
 	inv.mu.Unlock()
@@ -107,6 +111,13 @@ func (inv *aapInvocation) isFinished() bool {
 	inv.mu.Lock()
 	defer inv.mu.Unlock()
 	return inv.finished
+}
+
+// result returns the terminal turn error once the invocation is finished.
+func (inv *aapInvocation) result() error {
+	inv.mu.Lock()
+	defer inv.mu.Unlock()
+	return inv.err
 }
 
 // aapInvocationRegistry tracks active and recently-finished AAP invocations
@@ -187,29 +198,32 @@ func (s *Server) AAPInvoke(ctx context.Context, agentID, _, invocationID, messag
 	evCh := make(chan AAPStreamEvent, 1)
 	errCh := make(chan error, 1)
 
-	if !created {
-		// A reconnecting client: replay from the buffer, then tail. No new
-		// turn is started.
-		go s.replayAAPInvocation(ctx, inv, evCh, errCh)
-		return evCh, errCh
+	if created {
+		// New invocation: drive the turn on a context independent of this
+		// request, so a client disconnecting (or, in the TUI, leaving the
+		// invoke view to approve a tool call) does not cancel the turn. The
+		// turn is bounded by the agent lifetime: StopAgent kills the session,
+		// closing the frame channels and ending runAAPTurn.
+		//nolint:gosec // G118: using a request-independent context is the point — the turn must outlive any single client's request.
+		go s.runAAPTurn(context.Background(), session, inv, turnID, invocationID, message)
 	}
 
-	// Start the turn in a goroutine whose lifetime is tied to the
-	// invocation, not the HTTP request (mirrors the ADK runInvocation).
-	go s.runAAPTurn(ctx, session, inv, turnID, invocationID, message, evCh, errCh)
+	// Every client — the primary caller and any reconnecting one — reads the
+	// invocation the same way: replay the buffer, then tail live. The request
+	// ctx bounds this reader only; canceling it stops streaming to this
+	// client, not the turn.
+	go s.streamAAPInvocation(ctx, inv, evCh, errCh, 0)
 	return evCh, errCh
 }
 
-// runAAPTurn sends the prompt, drains the adapter's turn output into the
-// invocation buffer as SSE-shaped events, and signals completion. evCh/errCh
-// deliver a streamed view of the buffer to this caller; a reconnecting
-// client gets a fresh reader via replayAAPInvocation.
-func (s *Server) runAAPTurn(ctx context.Context, session *aapHostSession, inv *aapInvocation, turnID, invocationID, message string, evCh chan<- AAPStreamEvent, errCh chan<- error) {
-	defer func() {
-		inv.markFinished()
-		close(evCh)
-	}()
-
+// runAAPTurn drives one AAP turn: it sends the prompt and appends the adapter's
+// turn frames to the invocation buffer as SSE-shaped events, then records the
+// terminal result. It does not stream to any client — readers tail the buffer
+// via streamAAPInvocation, so the turn's lifetime is independent of any client.
+//
+// turnCtx is a turn-scoped context (not a request): it is canceled on server /
+// agent shutdown, which also kills the session and closes the frame channels.
+func (s *Server) runAAPTurn(turnCtx context.Context, session *aapHostSession, inv *aapInvocation, turnID, invocationID, message string) {
 	// Announcement event (mirrors the ADK "invocation" event shape: an id +
 	// agent name so the client can correlate).
 	ann, _ := json.Marshal(map[string]string{
@@ -220,28 +234,23 @@ func (s *Server) runAAPTurn(ctx context.Context, session *aapHostSession, inv *a
 
 	out, done, err := session.sendPrompt(turnID, message)
 	if err != nil {
-		errData, _ := json.Marshal(map[string]string{
-			keyInvocationID: invocationID,
-			"error":         err.Error(),
-		})
-		inv.add("error", errData)
-		errCh <- err
-		close(errCh)
+		s.addAAPError(inv, invocationID, err)
+		inv.finish(err)
 		return
 	}
 
-	// Pump turn frames into the buffer until turn_complete (done closed) or
-	// context cancel. Each message/tool_call becomes a "token" event;
-	// turn_complete's result becomes a "done" event (mirroring the ADK
-	// done event shape).
-	pumpCtx, cancel := context.WithCancel(ctx)
+	// Cancel the turn if the turn context ends (server/agent shutdown), never
+	// on a client disconnect.
+	pumpCtx, cancel := context.WithCancel(turnCtx)
 	defer cancel()
-
 	go func() {
 		<-pumpCtx.Done()
 		session.cancel(turnID)
 	}()
 
+	// Pump turn frames into the buffer until turn_complete (done closed). Each
+	// message/tool_call becomes a "token" event; the terminal "done"/"error"
+	// event is synthesized here to keep event ordering consistent.
 	for {
 		select {
 		case msg, ok := <-out:
@@ -253,26 +262,24 @@ func (s *Server) runAAPTurn(ctx context.Context, session *aapHostSession, inv *a
 			s.bufferAAPFrame(inv, invocationID, msg)
 		case err := <-done:
 			if err != nil {
-				errData, _ := json.Marshal(map[string]string{
-					keyInvocationID: invocationID,
-					"error":         err.Error(),
-				})
-				inv.add("error", errData)
-				errCh <- err
+				s.addAAPError(inv, invocationID, err)
 			} else {
-				doneData, _ := json.Marshal(map[string]string{
-					keyInvocationID: invocationID,
-				})
+				doneData, _ := json.Marshal(map[string]string{keyInvocationID: invocationID})
 				inv.add("done", doneData)
-				errCh <- nil
 			}
-			close(errCh)
-			// Drain any remaining buffered events to the stream before
-			// returning; the replay path handles reconnects.
-			s.streamAAPBuffer(ctx, inv, evCh)
+			inv.finish(err)
 			return
 		}
 	}
+}
+
+// addAAPError appends a terminal "error" event to the invocation buffer.
+func (s *Server) addAAPError(inv *aapInvocation, invocationID string, err error) {
+	errData, _ := json.Marshal(map[string]string{
+		keyInvocationID: invocationID,
+		"error":         err.Error(),
+	})
+	inv.add("error", errData)
 }
 
 // bufferAAPFrame translates one AAP agent frame into an SSE-shaped event and
@@ -299,68 +306,54 @@ func (s *Server) bufferAAPFrame(inv *aapInvocation, _ string, msg aap.AgentMessa
 	}
 }
 
-// streamAAPBuffer replays buffered events with ids greater than lastID into
-// evCh. It is the streaming half of the invoke response: the caller's evCh
-// receives each event in order. A nil lastID starts from the beginning.
-func (s *Server) streamAAPBuffer(ctx context.Context, inv *aapInvocation, evCh chan<- AAPStreamEvent, lastID ...int) {
-	start := 0
-	if len(lastID) > 0 {
-		start = lastID[0]
-	}
-	for _, ev := range inv.eventsAfter(start) {
-		select {
-		case <-ctx.Done():
-			return
-		case evCh <- AAPStreamEvent{Typ: ev.typ, Data: ev.data}:
-		}
-	}
-}
+// streamAAPInvocation is the single reader path for every client of an
+// invocation — the primary caller and any reconnecting one. It subscribes,
+// replays buffered events after startID, then tails live events until the
+// invocation finishes, and finally delivers the terminal result on errCh.
+//
+// It keeps a per-reader cursor (the highest event id streamed), so concurrent
+// readers and reconnects are each served correctly without re-sending the
+// whole buffer. ctx bounds this reader only: canceling it (client disconnect)
+// stops streaming to this client, not the turn.
+func (s *Server) streamAAPInvocation(ctx context.Context, inv *aapInvocation, evCh chan<- AAPStreamEvent, errCh chan<- error, startID int) {
+	defer close(evCh)
+	defer close(errCh)
 
-// replayAAPInvocation serves a reconnecting client: replay buffered events
-// from Last-Event-ID onward, then tail new events until the invocation is
-// finished. It does not start a new turn.
-func (s *Server) replayAAPInvocation(ctx context.Context, inv *aapInvocation, evCh chan<- AAPStreamEvent, errCh chan<- error) {
-	defer func() {
-		close(evCh)
-		close(errCh)
-	}()
-	s.streamAAPBuffer(ctx, inv, evCh)
-	if inv.isFinished() {
-		return
-	}
-	ch, cancel := inv.subscribe()
-	defer cancel()
+	// Subscribe before the first drain so no event added between the drain and
+	// the subscription is missed.
+	notify, unsubscribe := inv.subscribe()
+	defer unsubscribe()
+
+	cursor := startID
 	for {
+		cursor = drainAAPEvents(ctx, inv, evCh, cursor)
+		if ctx.Err() != nil {
+			return
+		}
+		if inv.isFinished() {
+			errCh <- inv.result()
+			return
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ch:
+		case <-notify:
 		case <-inv.done:
 		}
-		finished := inv.isFinished()
-		// Drain new events since the last delivered id by tracking the
-		// highest id we have streamed. A simple approach: re-stream from the
-		// buffer each notification, relying on the caller to dedupe by SSE
-		// id. The api handler tracks Last-Event-ID, so we stream the whole
-		// buffer tail each wake is not ideal; instead track locally.
-		s.streamAAPBuffer(ctx, inv, evCh, s.lastStreamedID(inv))
-		if finished {
-			return
-		}
 	}
 }
 
-// lastStreamedID is a placeholder for per-reader cursor tracking. The
-// replay path is best-effort in v1; a real Last-Event-ID cursor is carried
-// by the HTTP handler and used to seed the replay. This helper keeps the
-// replay from re-sending the whole buffer by tracking the buffer's current
-// max id at wake time, which is correct for a single reader but approximates
-// for concurrent reconnects. A follow-up can thread an explicit cursor.
-func (s *Server) lastStreamedID(inv *aapInvocation) int {
-	inv.mu.Lock()
-	defer inv.mu.Unlock()
-	if len(inv.events) == 0 {
-		return 0
+// drainAAPEvents streams buffered events with id > cursor into evCh in order,
+// returning the new cursor (the last id streamed, or the input cursor if none).
+// It stops early if ctx is canceled.
+func drainAAPEvents(ctx context.Context, inv *aapInvocation, evCh chan<- AAPStreamEvent, cursor int) int {
+	for _, ev := range inv.eventsAfter(cursor) {
+		select {
+		case <-ctx.Done():
+			return cursor
+		case evCh <- AAPStreamEvent{Typ: ev.typ, Data: ev.data}:
+			cursor = ev.id
+		}
 	}
-	return inv.events[len(inv.events)-1].id - 1
+	return cursor
 }
