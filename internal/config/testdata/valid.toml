@@ -21,6 +21,24 @@ id = "org.horde.Test"
 workspace_dir = "/tmp/test-workspace"
 context_retention = 120
 
+[agents.claude]
+kind = "aap"
+command = "claude-aap"
+args = ["--print"]
+model = "claude-sonnet-5"
+system_prompt = "You are a careful coder."
+system_prompt_mode = "replace"
+auto_approve = true
+
+[[agents.claude.env]]
+key = "CLAUDE_CODE_ENTRYPOINT"
+value = "horde"
+
+[agents.claude.permissions]
+mode = "read_write"
+writable_paths = ["src/", "docs/"]
+deny_paths = [".git/", ".env"]
+
 [paths]
 config_dir = "/tmp/horde-config"
 data_dir = "/tmp/horde-data"

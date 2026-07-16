@@ -63,10 +63,10 @@ type ExecutionContext struct {
 }
 
 // maxErrors is the bound on retained error summaries per agent.
-const maxErrors = 10 //nolint:unused // used when AAP host feeds error frames
+const maxErrors = 10
 
 // maxPendingApprovals is the bound on retained pending approval refs.
-const maxPendingApprovals = 20 //nolint:unused // used when AAP host feeds approval frames
+const maxPendingApprovals = 20
 
 // contextStore holds an ExecutionContext per agent id, with change
 // subscribers for the SSE stream endpoint.
@@ -229,8 +229,6 @@ func (cs *contextStore) remove(agentID string) {
 }
 
 // applyStatus merges an AAP status frame into the context.
-//
-//nolint:unused // used when AAP host feeds status frames
 func (cs *contextStore) applyStatus(agentID string, st aap.Status) {
 	cs.update(agentID, func(ctx *ExecutionContext) {
 		ctx.Activity = st.State
@@ -238,8 +236,6 @@ func (cs *contextStore) applyStatus(agentID string, st aap.Status) {
 }
 
 // applyContextUpdate merges an AAP context (partial update) frame.
-//
-//nolint:unused // used when AAP host feeds context frames
 func (cs *contextStore) applyContextUpdate(agentID string, cu aap.ContextUpdate) {
 	cs.update(agentID, func(ctx *ExecutionContext) {
 		if cu.TurnID != nil {
@@ -264,8 +260,6 @@ func (cs *contextStore) applyContextUpdate(agentID string, cu aap.ContextUpdate)
 }
 
 // applyError appends an AAP error frame to the context's error list (bounded).
-//
-//nolint:unused // used when AAP host feeds error frames
 func (cs *contextStore) applyError(agentID string, e aap.Error) {
 	cs.update(agentID, func(ctx *ExecutionContext) {
 		code := ""
@@ -284,8 +278,6 @@ func (cs *contextStore) applyError(agentID string, e aap.Error) {
 }
 
 // applyApprovalRequest adds a pending approval ref.
-//
-//nolint:unused // used when AAP host feeds approval request frames
 func (cs *contextStore) applyApprovalRequest(agentID string, ar aap.ApprovalRequest) {
 	cs.update(agentID, func(ctx *ExecutionContext) {
 		ctx.PendingApprovals = append(ctx.PendingApprovals, ApprovalRef{
@@ -299,8 +291,6 @@ func (cs *contextStore) applyApprovalRequest(agentID string, ar aap.ApprovalRequ
 }
 
 // applyApprovalResponse removes a resolved pending approval by request id.
-//
-//nolint:unused // used when AAP host feeds approval response frames
 func (cs *contextStore) applyApprovalResponse(agentID, requestID string) {
 	cs.update(agentID, func(ctx *ExecutionContext) {
 		for i, a := range ctx.PendingApprovals {

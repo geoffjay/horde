@@ -65,11 +65,22 @@ type projectForwarder interface {
 }
 
 // invokeView is the subset needed by the invoke proxy (extends agentView
-// with session-key derivation and project-state checking).
+// with session-key derivation, project-state checking, and AAP streaming).
 type invokeView interface {
 	agentView
 	SessionKey(agentID string) string
 	AgentProjectState(agentID string) string
+	// AAPInvoke runs one AAP turn against the agent's adapter session and
+	// returns a stream of SSE-shaped events. It is used when the agent is an
+	// AAP agent (no unix socket to reverse-proxy). The events channel is
+	// closed when the turn is done; the err channel delivers a terminal
+	// error (nil for a normal turn_complete). invocationID drives
+	// Last-Event-ID resume against the per-invocation ring buffer.
+	AAPInvoke(ctx context.Context, agentID, sessionKey, invocationID, message string) (<-chan server.AAPStreamEvent, <-chan error)
+	// IsAAPAgent reports whether the agent is an AAP adapter (vs a native
+	// ADK agent). The invoke handler branches on this: ADK uses the
+	// reverse proxy; AAP uses AAPInvoke.
+	IsAAPAgent(agentID string) bool
 }
 
 // compile-time: *server.Server satisfies the handler interfaces.

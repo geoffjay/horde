@@ -47,6 +47,22 @@ func TestLoadConfigWithDefaults_FixtureFormats(t *testing.T) {
 			assert.Equal(t, "/tmp/horde-config", c.Paths.ConfigDir)
 			assert.Equal(t, "/tmp/horde-data", c.Paths.DataDir)
 			assert.Equal(t, "/tmp/horde-state", c.Paths.StateDir)
+
+			// AAP agent declaration parses across all formats.
+			require.Contains(t, c.Agents, "claude")
+			def := c.Agents["claude"]
+			assert.Equal(t, AgentKindAAP, def.Kind)
+			assert.Equal(t, "claude-aap", def.Command)
+			assert.Equal(t, []string{"--print"}, def.Args)
+			assert.Equal(t, []EnvPair{{Key: "CLAUDE_CODE_ENTRYPOINT", Value: "horde"}}, def.Env)
+			assert.Equal(t, "claude-sonnet-5", def.Model)
+			assert.Equal(t, "You are a careful coder.", def.SystemPrompt)
+			assert.Equal(t, "replace", def.SystemPromptMode)
+			assert.True(t, def.AutoApprove)
+			require.NotNil(t, def.Permissions)
+			assert.Equal(t, "read_write", def.Permissions.Mode)
+			assert.Equal(t, []string{"src/", "docs/"}, def.Permissions.WritablePaths)
+			assert.Equal(t, []string{".git/", ".env"}, def.Permissions.DenyPaths)
 		})
 	}
 }

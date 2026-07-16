@@ -82,6 +82,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		DataDir:             cfg.Paths.DataDir,
 		StateDir:            cfg.Paths.StateDir,
 		ProjectWorkspaceDir: cfg.Project.WorkspaceDir,
+		AgentDefs:           buildServerAgentDefs(cfg.Agents),
 	})
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
@@ -93,4 +94,39 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	return nil
+}
+
+// buildServerAgentDefs maps the config-layer agent declarations into the
+// server's value-type AgentDef. Only AAP entries are forwarded (an ADK entry
+// is redundant — the registry is the source of truth for native agents — so
+// it is skipped to avoid shadowing a registry agent with an empty def).
+func buildServerAgentDefs(cfgs map[string]config.AgentDef) map[string]server.AgentDef {
+	out := make(map[string]server.AgentDef, len(cfgs))
+	for name := range cfgs {
+		c := cfgs[name]
+		if c.Kind != config.AgentKindAAP {
+			continue
+		}
+		def := server.AgentDef{
+			Kind:             server.AgentKindAAP,
+			Command:          c.Command,
+			Args:             c.Args,
+			Model:            c.Model,
+			SystemPrompt:     c.SystemPrompt,
+			SystemPromptMode: c.SystemPromptMode,
+			AutoApprove:      c.AutoApprove,
+		}
+		for _, p := range c.Env {
+			def.Env = append(def.Env, server.EnvPair{Key: p.Key, Value: p.Value})
+		}
+		if c.Permissions != nil {
+			def.Permissions = &server.PermissionScope{
+				Mode:          c.Permissions.Mode,
+				WritablePaths: c.Permissions.WritablePaths,
+				DenyPaths:     c.Permissions.DenyPaths,
+			}
+		}
+		out[name] = def
+	}
+	return out
 }

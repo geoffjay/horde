@@ -97,6 +97,51 @@ type Config struct {
 	// ProjectWorkspaceDir is the default workspace directory for a project
 	// whose create request omits the workspace path.
 	ProjectWorkspaceDir string
+	// AgentDefs declares named agents, keyed by name. An entry with Kind
+	// "aap" configures an external AAP adapter; "adk" (or absent) falls back
+	// to the agents registry. Populated from config by cmd/serve.go.
+	AgentDefs map[string]AgentDef
+}
+
+// AgentKind is the kind of a spawned agent: a native ADK agent or an external
+// AAP adapter.
+type AgentKind string
+
+const (
+	// AgentKindADK is a native ADK agent hosted by the `horde agent` subprocess.
+	AgentKindADK AgentKind = "adk"
+	// AgentKindAAP is an external agent driven through an AAP v1 adapter
+	// subprocess over the stdio binding.
+	AgentKindAAP AgentKind = "aap"
+)
+
+// AgentDef declares a named agent for the server. Native ADK agents are
+// registry-built; an AAP def configures an external adapter subprocess.
+type AgentDef struct {
+	Kind         AgentKind
+	Command      string
+	Args         []string
+	Env          []EnvPair
+	Model        string
+	SystemPrompt string
+	// SystemPromptMode is "replace" (default) or "append".
+	SystemPromptMode string
+	Permissions      *PermissionScope
+	AutoApprove      bool
+}
+
+// EnvPair is one environment variable for an AAP adapter subprocess.
+type EnvPair struct {
+	Key   string
+	Value string
+}
+
+// PermissionScope is the advisory filesystem scope sent to an AAP adapter in
+// initialize.permissions.
+type PermissionScope struct {
+	Mode          string
+	WritablePaths []string
+	DenyPaths     []string
 }
 
 // Server is the horde node. It owns a set of agent subprocesses and, when
@@ -124,6 +169,13 @@ type Server struct {
 	// a leader is configured. API handlers use it to forward project reads
 	// and mutations to the master so project state is cluster-wide.
 	leader *leaderClient
+
+	// aapInvokes tracks active and recently-finished AAP invocations per
+	// agent, keyed by invocation id, so a reconnecting client with
+	// Last-Event-ID can resume from the per-invocation ring buffer. Only
+	// AAP agents use this; ADK agents keep their buffer in the agentapi
+	// subprocess.
+	aapInvokes *aapInvocationRegistry
 
 	// now returns the current time. A field so tests can inject a clock when
 	// exercising slave staleness; defaults to time.Now.
@@ -158,12 +210,14 @@ const (
 type agentProc struct {
 	id            string
 	name          string
+	kind          AgentKind
 	state         AgentState
 	cmd           *exec.Cmd
 	doneCh        chan struct{}
-	socketPath    string // populated from the subprocess ready handshake
-	healthy       bool   // true unless a health poll has failed
-	activeProject string // active project id; empty when no project assigned
+	socketPath    string          // populated from the subprocess ready handshake (ADK only)
+	healthy       bool            // true unless a health poll has failed
+	activeProject string          // active project id; empty when no project assigned
+	aapSession    *aapHostSession // AAP only; nil for ADK agents
 }
 
 const (
@@ -239,6 +293,7 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 		ctxStore:       newContextStore(cfg.ContextRetention),
 		projects:       projects,
 		remoteContexts: make(map[string]ExecutionContext),
+		aapInvokes:     newAAPInvocationRegistry(),
 		now:            time.Now,
 	}, nil
 }
@@ -341,18 +396,35 @@ func (s *Server) localAddr() string {
 }
 
 // SpawnAgent starts a subprocess for the named agent and registers it. The
-// name must correspond to an agent in the registry (agents.Get).
+// name must correspond to an agent in the registry (agents.Get) for an ADK
+// agent, or a configured AAP agent definition (cfg.AgentDefs).
 func (s *Server) SpawnAgent(ctx context.Context, name string) (string, error) {
 	return s.spawnAgentWithWorkspace(ctx, name, "")
+}
+
+// resolveAgentKind returns the kind of a named agent. A configured AAP def
+// wins; otherwise the name is a native ADK agent (registry-built). An unknown
+// name with no def and no registry entry returns an error.
+func (s *Server) resolveAgentKind(name string) (AgentKind, *AgentDef, error) {
+	if def, ok := s.cfg.AgentDefs[name]; ok && def.Kind == AgentKindAAP {
+		return AgentKindAAP, &def, nil
+	}
+	// ADK: validate via the registry so an unknown name fails fast.
+	if _, err := agents.Get(name); err != nil {
+		return "", nil, fmt.Errorf("verify agent %q: %w", name, err)
+	}
+	return AgentKindADK, nil, nil
 }
 
 // spawnAgentWithWorkspace is like SpawnAgent but passes the workspace path
 // to the agent subprocess (advisory filesystem scope). Used by the project
 // flows (CreateProject, AssignAgent) where the project's workspace is known.
+// It branches on the agent kind: ADK spawns `horde agent`; AAP spawns the
+// configured adapter and runs the AAP initialize→ready handshake.
 func (s *Server) spawnAgentWithWorkspace(ctx context.Context, name, workspace string) (string, error) {
-	// Verify the agent exists in the registry before spawning.
-	if _, err := agents.Get(name); err != nil {
-		return "", fmt.Errorf("verify agent %q: %w", name, err)
+	kind, aapDef, err := s.resolveAgentKind(name)
+	if err != nil {
+		return "", err
 	}
 
 	s.mu.Lock()
@@ -360,6 +432,11 @@ func (s *Server) spawnAgentWithWorkspace(ctx context.Context, name, workspace st
 	s.nextID++
 	s.mu.Unlock()
 
+	if kind == AgentKindAAP {
+		return s.spawnAAP(ctx, id, name, workspace, aapDef)
+	}
+
+	// ADK path: the original subprocess + spawn_ready handshake.
 	socketPath := s.agentSocketPath(id)
 
 	cmd, cancel, err := s.startAgentProcess(name, socketPath, workspace)
@@ -368,7 +445,6 @@ func (s *Server) spawnAgentWithWorkspace(ctx context.Context, name, workspace st
 		return "", err
 	}
 
-	// Read the spawn_ready handshake from stdout with a timeout.
 	confirmedSocket, readyErr := readReadyHandshake(cmd.stdout, s.cfg.ReadyTimeout)
 	if readyErr != nil {
 		_ = cmd.Process.Signal(os.Interrupt)
@@ -381,6 +457,7 @@ func (s *Server) spawnAgentWithWorkspace(ctx context.Context, name, workspace st
 	proc := &agentProc{
 		id:         id,
 		name:       name,
+		kind:       AgentKindADK,
 		state:      AgentRunning,
 		cmd:        cmd.Cmd,
 		doneCh:     make(chan struct{}),
@@ -396,15 +473,10 @@ func (s *Server) spawnAgentWithWorkspace(ctx context.Context, name, workspace st
 		logKeyAgent: name, "id": id, "socket": confirmedSocket,
 	}).Info("agent started")
 
-	// Seed the execution context before tracking exit, so a fast-exiting
-	// agent's AgentExited transition applies to an existing entry rather than
-	// being dropped and then resurrected as AgentRunning by init.
 	s.ctxStore.init(id, s.cfg.NodeID)
 
 	s.trackAgentExit(proc, id, confirmedSocket)
 
-	// Wire cancellation to the caller's ctx so stopping the server tears
-	// down spawned agents.
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -413,6 +485,50 @@ func (s *Server) spawnAgentWithWorkspace(ctx context.Context, name, workspace st
 			cancel()
 		}
 	}()
+
+	return id, nil
+}
+
+// spawnAAP spawns an AAP adapter, runs the handshake, and registers the
+// agentProc. AAP agents have no socket path (no HTTP endpoint); the invoke
+// path talks to the aapHostSession, not a unix socket.
+func (s *Server) spawnAAP(ctx context.Context, id, name, workspace string, def *AgentDef) (string, error) {
+	if workspace == "" {
+		workspace = "."
+	}
+	session, cancel, err := newAAPHostSession(ctx, id, name, def, workspace, s.ctxStore)
+	if err != nil {
+		cancel()
+		return "", err
+	}
+	if err := session.handshake(workspace, s.cfg.ReadyTimeout); err != nil {
+		cancel()
+		return "", err
+	}
+
+	proc := &agentProc{
+		id:         id,
+		name:       name,
+		kind:       AgentKindAAP,
+		state:      AgentRunning,
+		cmd:        session.cmd,
+		doneCh:     make(chan struct{}),
+		healthy:    true,
+		aapSession: session,
+	}
+
+	s.mu.Lock()
+	s.procs[id] = proc
+	s.mu.Unlock()
+
+	logrus.WithFields(logrus.Fields{
+		logKeyAgent: name, "id": id,
+		"agent_name": session.ready.Agent.Name,
+		"caps":       session.ready.Capabilities,
+	}).Info("aap agent started")
+
+	s.ctxStore.init(id, s.cfg.NodeID)
+	s.trackAAPAgentExit(proc, id, cancel)
 
 	return id, nil
 }
@@ -476,6 +592,26 @@ func (s *Server) trackAgentExit(proc *agentProc, id, socketPath string) {
 	}()
 }
 
+// trackAAPAgentExit starts a goroutine that cleans up an AAP agent proc when
+// the adapter subprocess exits. The aapHostSession's doneCh closes when the
+// reader sees EOF; this goroutine waits on that, marks the proc exited, and
+// mirrors the ADK trackAgentExit cleanup (without a socket to remove).
+func (s *Server) trackAAPAgentExit(proc *agentProc, id string, cancel context.CancelFunc) {
+	go func() {
+		<-proc.aapSession.doneCh
+		s.mu.Lock()
+		if p, ok := s.procs[id]; ok {
+			p.state = AgentExited
+		}
+		delete(s.procs, id)
+		s.mu.Unlock()
+		s.ctxStore.setLifecycle(id, AgentExited)
+		close(proc.doneCh)
+		cancel()
+		logrus.WithField("id", id).Info("aap agent exited")
+	}()
+}
+
 // Agents returns a snapshot of currently running agent subprocesses.
 func (s *Server) Agents() []AgentInfo {
 	s.mu.Lock()
@@ -503,8 +639,10 @@ type AgentInfo struct {
 }
 
 // StopAgent signals one agent by id to stop, mirroring Run's shutdown path:
-// SIGTERM, then SIGKILL after agentShutdownGrace. It returns an error if the
-// id is unknown or the agent has already exited.
+// SIGTERM, then SIGKILL after agentShutdownGrace. For an AAP agent it sends
+// an AAP shutdown frame first (graceful), then falls back to the same
+// SIGTERM/SIGKILL sequence. It returns an error if the id is unknown or the
+// agent has already exited.
 func (s *Server) StopAgent(id string) error {
 	s.mu.Lock()
 	p, ok := s.procs[id]
@@ -515,7 +653,10 @@ func (s *Server) StopAgent(id string) error {
 	p.state = AgentExiting
 	s.mu.Unlock()
 
-	if p.cmd.Process != nil {
+	// AAP: send a graceful shutdown frame before signaling.
+	if p.kind == AgentKindAAP && p.aapSession != nil {
+		_ = p.aapSession.shutdown()
+	} else if p.cmd.Process != nil {
 		_ = p.cmd.Process.Signal(os.Interrupt)
 	}
 	select {
@@ -706,6 +847,17 @@ func (s *Server) IsAgentReady(id string) bool {
 	return ok && p.socketPath != ""
 }
 
+// IsAAPAgent reports whether the agent with the given id is an AAP adapter
+// (vs a native ADK agent). The invoke handler branches on this: an AAP agent
+// has no unix socket to reverse-proxy, so the node runs the turn itself via
+// AAPInvoke.
+func (s *Server) IsAAPAgent(agentID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.procs[agentID]
+	return ok && p.kind == AgentKindAAP
+}
+
 // AgentContext returns the execution context for the given agent id, or
 // nil if the agent is unknown.
 func (s *Server) AgentContext(id string) *ExecutionContext {
@@ -852,6 +1004,11 @@ func (s *Server) pollAgentHealths(ctx context.Context) {
 	s.mu.Unlock()
 
 	for _, p := range procs {
+		// AAP agents have no HTTP endpoint; the reader goroutine detects
+		// process exit directly. Skip HTTP health polling for them.
+		if p.kind == AgentKindAAP {
+			continue
+		}
 		if p.socketPath == "" {
 			continue
 		}

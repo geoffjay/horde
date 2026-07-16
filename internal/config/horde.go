@@ -67,6 +67,77 @@ type ProjectConfig struct {
 	ContextRetention int `mapstructure:"context_retention"`
 }
 
+// AgentKind is the kind of an agent definition: a registry-built native ADK
+// agent or an external AAP adapter driven over the stdio binding.
+type AgentKind string
+
+const (
+	// AgentKindADK is a native ADK agent built in-process on
+	// google.golang.org/adk/v2 and hosted by the `horde agent` subprocess.
+	AgentKindADK AgentKind = "adk"
+	// AgentKindAAP is an external agent driven through an AAP v1 adapter
+	// subprocess over the stdio binding.
+	AgentKindAAP AgentKind = "aap"
+)
+
+// PermissionScope is the advisory filesystem permission scope sent to an AAP
+// adapter in initialize.permissions (capability permissions). A compliant
+// adapter self-enforces it independent of tool approval.
+type PermissionScope struct {
+	// Mode is the access mode: "read_only" or "read_write".
+	Mode string `mapstructure:"mode"`
+	// WritablePaths narrows writes when Mode is "read_write". Paths are
+	// relative to the workspace cwd unless absolute. Empty means the whole
+	// workspace is writable.
+	WritablePaths []string `mapstructure:"writable_paths"`
+	// DenyPaths are paths the adapter must not read or write, overriding the
+	// rest.
+	DenyPaths []string `mapstructure:"deny_paths"`
+}
+
+// AgentDef declares a named agent. Native ADK agents (greeter, repeater) are
+// looked up in the agents registry by name; an AgentDef with Kind "aap"
+// instead configures an external AAP adapter subprocess, so an operator can
+// add an external agent without recompiling.
+type AgentDef struct {
+	// Kind is the agent kind. Defaults to "adk" when empty (handled at
+	// resolution time, not by viper, so an unset kind is a native ADK agent).
+	Kind AgentKind `mapstructure:"kind"`
+	// Command is the AAP adapter command (argv[0]). AAP only.
+	Command string `mapstructure:"command"`
+	// Args are the adapter argv after the command. AAP only.
+	Args []string `mapstructure:"args"`
+	// Env is extra environment for the adapter subprocess, merged over the
+	// node's environment. The host sets AAP_TRANSPORT=stdio regardless. Keys
+	// preserve case (env vars are case-sensitive). AAP only.
+	Env []EnvPair `mapstructure:"env"`
+	// Model is the requested model, passed as initialize.model. Empty uses
+	// the adapter default. AAP only.
+	Model string `mapstructure:"model"`
+	// SystemPrompt is a system prompt text or path for initialize.system_prompt.
+	// AAP only.
+	SystemPrompt string `mapstructure:"system_prompt"`
+	// SystemPromptMode is "replace" (default) or "append" (requires the
+	// system_prompt_append capability). AAP only.
+	SystemPromptMode string `mapstructure:"system_prompt_mode"`
+	// Permissions is the advisory filesystem scope sent in
+	// initialize.permissions. Empty omits the scope. AAP only.
+	Permissions *PermissionScope `mapstructure:"permissions"`
+	// AutoApprove, when true and the adapter advertises tool_approval,
+	// auto-allows every approval_request. When false (the default) a request
+	// stays pending until a decision endpoint (follow-up) resolves it or the
+	// turn ends. AAP only.
+	AutoApprove bool `mapstructure:"auto_approve"`
+}
+
+// EnvPair is one environment variable for an AAP adapter subprocess. The
+// slice form (rather than a map) preserves key case: viper lowercases map
+// keys, but environment variable names are case-sensitive.
+type EnvPair struct {
+	Key   string `mapstructure:"key"`
+	Value string `mapstructure:"value"`
+}
+
 // DataPaths holds the XDG-compliant on-disk directories horde uses for
 // configuration, general storage, and trivial state. Each is overridable via
 // its respective env var; see the persistence decision doc.
@@ -92,9 +163,13 @@ type Config struct {
 	Cluster ClusterConfig `mapstructure:"cluster"`
 	Agent   AgentConfig   `mapstructure:"agent"`
 	Project ProjectConfig `mapstructure:"project"`
-	Log     LogConfig     `mapstructure:"log"`
-	Service ServiceConfig `mapstructure:"service"`
-	Paths   DataPaths     `mapstructure:"paths"`
+	// Agents declares named agents. Native ADK agents (greeter, repeater) are
+	// registry-built and need no entry here; an entry with Kind "aap"
+	// configures an external AAP adapter. The map is keyed by agent name.
+	Agents  map[string]AgentDef `mapstructure:"agents"`
+	Log     LogConfig           `mapstructure:"log"`
+	Service ServiceConfig       `mapstructure:"service"`
+	Paths   DataPaths           `mapstructure:"paths"`
 }
 
 var (
