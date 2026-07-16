@@ -119,6 +119,17 @@ func buildServerAgentDefs(cfgs map[string]config.AgentDef) map[string]server.Age
 		for _, p := range c.Env {
 			def.Env = append(def.Env, server.EnvPair{Key: p.Key, Value: p.Value})
 		}
+		if len(c.MCPServers) > 0 {
+			def.MCPServers = make(map[string]server.MCPServerDef, len(c.MCPServers))
+			for name := range c.MCPServers {
+				m := c.MCPServers[name]
+				sm := server.MCPServerDef{Command: m.Command, Args: m.Args}
+				for _, p := range m.Env {
+					sm.Env = append(sm.Env, server.EnvPair{Key: p.Key, Value: p.Value})
+				}
+				def.MCPServers[name] = sm
+			}
+		}
 		if c.Permissions != nil {
 			def.Permissions = &server.PermissionScope{
 				Mode:          c.Permissions.Mode,

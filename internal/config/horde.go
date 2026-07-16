@@ -128,6 +128,9 @@ type AgentDef struct {
 	// stays pending until a decision endpoint (follow-up) resolves it or the
 	// turn ends. AAP only.
 	AutoApprove bool `mapstructure:"auto_approve"`
+	// MCPServers provisions MCP servers for the adapter (initialize.tools),
+	// keyed by server name (requires the mcp capability). AAP only.
+	MCPServers map[string]MCPServerDef `mapstructure:"mcp_servers"`
 }
 
 // EnvPair is one environment variable for an AAP adapter subprocess. The
@@ -136,6 +139,15 @@ type AgentDef struct {
 type EnvPair struct {
 	Key   string `mapstructure:"key"`
 	Value string `mapstructure:"value"`
+}
+
+// MCPServerDef is a stdio MCP server the host provisions for an AAP adapter via
+// initialize.tools.mcp_servers. Env uses the EnvPair slice form for the same
+// case-preservation reason as the adapter env.
+type MCPServerDef struct {
+	Command string    `mapstructure:"command"`
+	Args    []string  `mapstructure:"args"`
+	Env     []EnvPair `mapstructure:"env"`
 }
 
 // DataPaths holds the XDG-compliant on-disk directories horde uses for

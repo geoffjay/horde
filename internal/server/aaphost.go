@@ -51,6 +51,11 @@ type aapHostSession struct {
 	// shared with the agentProc.
 	ctxStore *contextStore
 
+	// resume persists the adapter's resume_token (from turn_complete) keyed by
+	// agent name, and supplies it on the next handshake so a respawned adapter
+	// resumes the prior conversation. May be nil (resume disabled).
+	resume *resumeStore
+
 	// turnOut delivers agent frames belonging to the active turn to the
 	// invoke bridge. A turn subscribes before sending its prompt and drains
 	// until turn_complete (or a fatal error / ctx cancel). Only one turn is
@@ -76,7 +81,7 @@ type aapHostSession struct {
 // newAAPHostSession spawns the adapter subprocess but does not run the
 // handshake; the caller runs handshake() to complete initialization. The
 // workspace is resolved by the caller and passed to handshake, not here.
-func newAAPHostSession(ctx context.Context, agentID, name string, def *AgentDef, _ string, ctxStore *contextStore) (*aapHostSession, func(), error) {
+func newAAPHostSession(ctx context.Context, agentID, name string, def *AgentDef, _ string, ctxStore *contextStore, resume *resumeStore) (*aapHostSession, func(), error) {
 	if def.Command == "" {
 		return nil, nil, fmt.Errorf("aap agent %q has no command", name)
 	}
@@ -116,6 +121,7 @@ func newAAPHostSession(ctx context.Context, agentID, name string, def *AgentDef,
 		stdin:            stdin,
 		stdout:           stdout,
 		ctxStore:         ctxStore,
+		resume:           resume,
 		pendingApprovals: make(map[string]chan aap.ApprovalDecision),
 		doneCh:           make(chan struct{}),
 		stop:             func() { _ = cmd.Process.Signal(os.Interrupt) },
@@ -140,7 +146,7 @@ func newAAPHostSession(ctx context.Context, agentID, name string, def *AgentDef,
 // pairs (no subprocess). The handshake + reader goroutine run identically.
 //
 //nolint:unused // test-only constructor; golangci-lint has run.tests:false so its callers in _test.go don't count
-func newAAPHostSessionPipes(agentID, name string, def *AgentDef, ctxStore *contextStore, stdin io.WriteCloser, stdout io.Reader, stop func(), wait func() error) *aapHostSession {
+func newAAPHostSessionPipes(agentID, name string, def *AgentDef, ctxStore *contextStore, resume *resumeStore, stdin io.WriteCloser, stdout io.Reader, stop func(), wait func() error) *aapHostSession {
 	return &aapHostSession{
 		agentID:          agentID,
 		name:             name,
@@ -148,11 +154,25 @@ func newAAPHostSessionPipes(agentID, name string, def *AgentDef, ctxStore *conte
 		stdin:            stdin,
 		stdout:           io.NopCloser(stdout),
 		ctxStore:         ctxStore,
+		resume:           resume,
 		pendingApprovals: make(map[string]chan aap.ApprovalDecision),
 		doneCh:           make(chan struct{}),
 		stop:             stop,
 		wait:             wait,
 	}
+}
+
+// envPairsToMap converts the case-preserving EnvPair slice to the map form the
+// AAP MCPServer wire type uses. Later entries win on a duplicate key.
+func envPairsToMap(pairs []EnvPair) map[string]string {
+	if len(pairs) == 0 {
+		return nil
+	}
+	m := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		m[p.Key] = p.Value
+	}
+	return m
 }
 
 // aapAdapterEnv builds the environment for an AAP adapter subprocess: the
@@ -202,7 +222,9 @@ func (s *aapHostSession) readReadyFrame(r *bufio.Reader) (aap.AgentMessage, erro
 
 // handshake sends initialize and waits for ready. On success the reader
 // goroutine is started. On any failure the subprocess is torn down.
-func (s *aapHostSession) handshake(workspace string, timeout time.Duration) error {
+// buildInitialize assembles the initialize frame from the agent definition
+// and any persisted resume token. Optional fields are set only when configured.
+func (s *aapHostSession) buildInitialize(workspace string) aap.Initialize {
 	init := aap.Initialize{
 		ProtocolVersion: aap.ProtocolVersion,
 		Workspace:       aap.Workspace{Cwd: workspace},
@@ -226,6 +248,31 @@ func (s *aapHostSession) handshake(workspace string, timeout time.Duration) erro
 			DenyPaths:     s.def.Permissions.DenyPaths,
 		}
 	}
+	if len(s.def.MCPServers) > 0 {
+		servers := make(map[string]aap.MCPServer, len(s.def.MCPServers))
+		for name := range s.def.MCPServers {
+			m := s.def.MCPServers[name]
+			servers[name] = aap.MCPServer{
+				Command: m.Command,
+				Args:    m.Args,
+				Env:     envPairsToMap(m.Env),
+			}
+		}
+		init.Tools = &aap.Tools{MCPServers: servers}
+	}
+	// Resume the prior conversation if we have a persisted token for this
+	// agent. Sent optimistically: an adapter without the resume capability
+	// ignores it.
+	if s.resume != nil {
+		if tok := s.resume.get(s.name); tok != "" {
+			init.ResumeToken = &tok
+		}
+	}
+	return init
+}
+
+func (s *aapHostSession) handshake(workspace string, timeout time.Duration) error {
+	init := s.buildInitialize(workspace)
 
 	if err := aap.WriteMessage(s.stdin, init); err != nil {
 		_ = s.kill()
@@ -315,6 +362,9 @@ func (s *aapHostSession) dispatch(msg aap.AgentMessage) {
 	case aap.Message, aap.ToolCall:
 		s.deliverTurn(msg)
 	case aap.TurnComplete:
+		if s.resume != nil && m.ResumeToken != nil && *m.ResumeToken != "" {
+			s.resume.set(s.name, *m.ResumeToken)
+		}
 		s.deliverTurn(msg)
 		s.endTurn(nil)
 	case aap.Status:

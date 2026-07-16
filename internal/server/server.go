@@ -129,6 +129,16 @@ type AgentDef struct {
 	SystemPromptMode string
 	Permissions      *PermissionScope
 	AutoApprove      bool
+	// MCPServers are MCP server definitions provisioned via
+	// initialize.tools.mcp_servers, keyed by server name. AAP only.
+	MCPServers map[string]MCPServerDef
+}
+
+// MCPServerDef is a stdio MCP server definition sent in initialize.tools.
+type MCPServerDef struct {
+	Command string
+	Args    []string
+	Env     []EnvPair
 }
 
 // EnvPair is one environment variable for an AAP adapter subprocess.
@@ -161,6 +171,10 @@ type Server struct {
 	router   http.Handler
 	ctxStore *contextStore
 	projects ProjectStore
+
+	// resume persists the latest AAP resume_token per agent so a respawned
+	// adapter can resume its prior conversation.
+	resume *resumeStore
 
 	// remoteContexts holds contexts reported by slaves, keyed by
 	// (nodeID, agentID). Only populated on a master.
@@ -294,6 +308,12 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 		projects = newProjectStore()
 	}
 
+	// AAP resume tokens persist alongside projects under the state dir.
+	resumePath := ""
+	if cfg.StateDir != "" {
+		resumePath = filepath.Join(cfg.StateDir, "aap-resume.json")
+	}
+
 	return &Server{
 		cfg:            cfg,
 		procs:          make(map[string]*agentProc),
@@ -301,6 +321,7 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 		bus:            NewEventBus(),
 		ctxStore:       newContextStore(cfg.ContextRetention),
 		projects:       projects,
+		resume:         newResumeStore(resumePath),
 		remoteContexts: make(map[string]ExecutionContext),
 		aapInvokes:     newAAPInvocationRegistry(),
 		now:            time.Now,
@@ -505,7 +526,7 @@ func (s *Server) spawnAAP(ctx context.Context, id, name, workspace string, def *
 	if workspace == "" {
 		workspace = "."
 	}
-	session, cancel, err := newAAPHostSession(ctx, id, name, def, workspace, s.ctxStore)
+	session, cancel, err := newAAPHostSession(ctx, id, name, def, workspace, s.ctxStore, s.resume)
 	if err != nil {
 		// newAAPHostSession cleans up its own context on failure and returns a
 		// nil cancel, so do not call cancel() here (it would nil-panic).

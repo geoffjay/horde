@@ -77,10 +77,19 @@ config-file/`HORDE_*` settable but are typically set in a config file (see
 | `agents.<name>.permissions.writable_paths` | `[]` | AAP only: writable paths when mode is `read_write`. |
 | `agents.<name>.permissions.deny_paths` | `[]` | AAP only: paths the adapter must not read or write. |
 | `agents.<name>.auto_approve` | `false` | AAP only: auto-allow every `approval_request` when the adapter advertises `tool_approval`. |
+| `agents.<name>.mcp_servers.<server>.command` | *(empty)* | AAP only: MCP server command, provisioned via `initialize.tools.mcp_servers` (requires the `mcp` capability). The adapter exposes each tool as `<server>_<tool>`. |
+| `agents.<name>.mcp_servers.<server>.args` | `[]` | AAP only: MCP server argv after the command. |
+| `agents.<name>.mcp_servers.<server>.env` | `[]` | AAP only: MCP server environment (list of `{key, value}`). |
 
 The pi provider key the adapter needs (e.g. `ANTHROPIC_API_KEY`) is inherited
 from the node's own environment — the host passes its environment plus the
 configured `env` entries to the adapter subprocess.
+
+**Resume.** The host records the adapter's `resume_token` (reported in
+`turn_complete`) under `<state_dir>/aap-resume.json`, keyed by agent name, and
+replays it in the next `initialize` so a respawned adapter (or a node restart)
+resumes the prior conversation. No configuration is required; an adapter
+without the `resume` capability ignores the token.
 
 ### Data and state directories (XDG)
 

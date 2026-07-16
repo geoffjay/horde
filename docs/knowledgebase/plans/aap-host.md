@@ -336,9 +336,15 @@ the cluster aggregation and the TUI context pane get richer data for free.
   approval-decision](tui-projects.md) item.
 * **Websocket binding.** stdio is the mandatory baseline; websocket arrives
   when a real adapter needs a non-subprocess transport.
-* **AAP `resume_token`.** Adapter-level resume is additive over the
-  `(agent_id, project_id)` session key and deferred.
-* **MCP server provisioning.** `initialize.tools.mcp_servers` is sent empty
-  in v1; provisioning is a follow-up once a real adapter uses tools.
+* **AAP `resume_token`.** ✅ **Delivered** (follow-up). The host records the
+  adapter's `resume_token` from `turn_complete` under
+  `<state_dir>/aap-resume.json` (keyed by agent name) and replays it in the
+  next `initialize`, so a respawned adapter resumes the prior conversation
+  (`internal/server/aapresume.go`, `aaphost.go`). pi-aap consumes it via a pi
+  `SessionManager`. Verified end-to-end (respawn recalled a prior codeword).
+* **MCP server provisioning.** ✅ **Delivered** (follow-up). `agents.<name>.
+  mcp_servers` config is sent in `initialize.tools.mcp_servers`; pi-aap
+  provisions each and exposes `<server>_<tool>`. Verified end-to-end (a turn
+  called `mock_echo` through the provisioned server).
 * **Per-principal `permissions`.** Varying the scope by who is invoking is
   3.5b; v1 sends one configured scope per agent.

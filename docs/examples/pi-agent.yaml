@@ -44,3 +44,17 @@ agents:
     # POST /api/v1/agents/{id}/approvals/{requestID}. Set true to auto-allow
     # every request (unattended; only for a trusted/sandboxed workspace).
     auto_approve: false
+    # MCP servers provisioned for the adapter (sent in initialize.tools). Keyed
+    # by server name; the adapter exposes each tool as <server>_<tool>. Env uses
+    # the same {key, value} list form as the adapter env (case-preserving).
+    mcp_servers:
+      mock:
+        command: "node"
+        args: ["/absolute/path/to/pi-aap/packages/pi-adapter/scripts/mock-mcp-server.mjs"]
+        # env:
+        #   - { key: "SOME_VAR", value: "x" }
+
+# Resume: no config needed. The host records the adapter's resume_token (from
+# turn_complete) under <state_dir>/aap-resume.json, keyed by agent name, and
+# replays it in the next initialize so a respawned adapter (or a node restart)
+# continues the prior conversation instead of starting cold.

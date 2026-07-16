@@ -59,7 +59,7 @@ func newTestAAPSession(t *testing.T, ctx context.Context, name string, def Agent
 		return nil
 	}
 
-	s := newAAPHostSessionPipes(name, name, &def, ctxStore, hostStdinW, hostStdoutR, stop, wait)
+	s := newAAPHostSessionPipes(name, name, &def, ctxStore, newResumeStore(""), hostStdinW, hostStdoutR, stop, wait)
 	require.NoError(t, s.handshake(".", 5*time.Second))
 	cleanup := func() {
 		_ = s.shutdown()
@@ -102,7 +102,7 @@ func TestAAPHostSession_HandshakeSkipsPreReadyLog(t *testing.T) {
 
 	ctxStore := newContextStore(0)
 	ctxStore.init("pi", "test-node")
-	s := newAAPHostSessionPipes("pi", "pi", &AgentDef{Kind: AgentKindAAP}, ctxStore,
+	s := newAAPHostSessionPipes("pi", "pi", &AgentDef{Kind: AgentKindAAP}, ctxStore, newResumeStore(""),
 		nopWriteCloser{io.Discard}, bytes.NewReader(buf.Bytes()), func() {}, func() error { return nil })
 
 	require.NoError(t, s.handshake(".", 2*time.Second))
@@ -238,7 +238,7 @@ func TestAAPHostSession_ResolvePendingUnknown(t *testing.T) {
 	ctxStore := newContextStore(0)
 	ctxStore.init("fake", "test-node")
 	s := newAAPHostSessionPipes("fake", "fake", &AgentDef{Kind: AgentKindAAP},
-		ctxStore, nopWriteCloser{io.Discard}, strings.NewReader(""), func() {}, func() error { return nil })
+		ctxStore, newResumeStore(""), nopWriteCloser{io.Discard}, strings.NewReader(""), func() {}, func() error { return nil })
 
 	err := s.resolvePending("no-such-request", aap.DecisionAllow)
 	assert.ErrorIs(t, err, ErrApprovalNotFound)
@@ -252,7 +252,7 @@ func TestAAPHostSession_ResolvePendingWritesDecision(t *testing.T) {
 	ctxStore := newContextStore(0)
 	ctxStore.init("fake", "test-node")
 	s := newAAPHostSessionPipes("fake", "fake", &AgentDef{Kind: AgentKindAAP},
-		ctxStore, pw, strings.NewReader(""), func() {}, func() error { return nil })
+		ctxStore, newResumeStore(""), pw, strings.NewReader(""), func() {}, func() error { return nil })
 
 	// Record a pending approval as resolveApproval would (auto_approve=false).
 	s.pendingApprovals["req1"] = make(chan aap.ApprovalDecision, 1)
@@ -329,7 +329,7 @@ func TestAAPHostSession_PermissionsScope(t *testing.T) {
 		_ = runFakeAAPAdapter(ctx, adapterInR, adapterOutW, false)
 	}()
 
-	s := newAAPHostSessionPipes("fake", "fake", &def, ctxStore, hostStdinW, hostStdoutR,
+	s := newAAPHostSessionPipes("fake", "fake", &def, ctxStore, newResumeStore(""), hostStdinW, hostStdoutR,
 		func() { cancel(); _ = adapterInR.Close(); _ = adapterOutW.Close() },
 		func() error {
 			select {
@@ -363,6 +363,88 @@ func TestAAPHostSession_PermissionsScope(t *testing.T) {
 	assert.Contains(t, string(raw), `"read_write"`)
 	assert.Contains(t, string(raw), `"src/"`)
 	assert.Contains(t, string(raw), `".git/"`)
+}
+
+// readInitFromHandshake runs handshake against a stdin pipe the test reads and
+// a stdout pre-loaded with a ready frame, returning the initialize frame the
+// host wrote. It is the honest stdin-capture helper for initialize assertions.
+func readInitFromHandshake(t *testing.T, def *AgentDef, resume *resumeStore) aap.Initialize {
+	t.Helper()
+	ctxStore := newContextStore(0)
+	ctxStore.init(def.Command, "test-node")
+
+	stdinR, stdinW := io.Pipe()
+	var ready bytes.Buffer
+	require.NoError(t, aap.WriteMessage(&ready, aap.Ready{
+		ProtocolVersion: aap.ProtocolVersion, Agent: aap.AgentInfo{Name: "fake"},
+	}))
+	s := newAAPHostSessionPipes("fake", "fake", def, ctxStore, resume,
+		stdinW, bytes.NewReader(ready.Bytes()), func() {}, func() error { return nil })
+	go func() { _ = s.handshake(".", 2*time.Second) }()
+
+	line, err := aap.ReadLine(bufio.NewReader(stdinR))
+	require.NoError(t, err)
+	msg, err := aap.ParseHostMessage(line)
+	require.NoError(t, err)
+	init, ok := msg.(aap.Initialize)
+	require.True(t, ok, "expected an initialize frame, got %s", msg.Type())
+	return init
+}
+
+// TestAAPHostSession_MCPServersInInitialize asserts a configured mcp_servers
+// map is carried into initialize.tools.
+func TestAAPHostSession_MCPServersInInitialize(t *testing.T) {
+	def := AgentDef{
+		Kind:    AgentKindAAP,
+		Command: "test",
+		MCPServers: map[string]MCPServerDef{
+			"mock": {Command: "node", Args: []string{"srv.mjs"}, Env: []EnvPair{{Key: "K", Value: "v"}}},
+		},
+	}
+	init := readInitFromHandshake(t, &def, newResumeStore(""))
+
+	require.NotNil(t, init.Tools, "initialize.tools should be set when mcp_servers configured")
+	srv, ok := init.Tools.MCPServers["mock"]
+	require.True(t, ok, "mcp server 'mock' should be in initialize.tools")
+	assert.Equal(t, "node", srv.Command)
+	assert.Equal(t, []string{"srv.mjs"}, srv.Args)
+	assert.Equal(t, "v", srv.Env["K"])
+}
+
+// TestAAPHostSession_ResumeTokenCaptureAndSend asserts a resume_token from
+// turn_complete is persisted per agent and sent in a later handshake's
+// initialize (so a respawned adapter resumes).
+func TestAAPHostSession_ResumeTokenCaptureAndSend(t *testing.T) {
+	resume := newResumeStore("")
+
+	// Capture: a session (agent name "fake") dispatching turn_complete with a
+	// resume_token persists it. The readInitFromHandshake helper also uses the
+	// name "fake", so the send step below resolves the same key.
+	ctxStore := newContextStore(0)
+	ctxStore.init("fake", "test-node")
+	s := newAAPHostSessionPipes("fake", "fake", &AgentDef{Kind: AgentKindAAP}, ctxStore, resume,
+		nopWriteCloser{io.Discard}, strings.NewReader(""), func() {}, func() error { return nil })
+	tok := "sess-123"
+	s.dispatch(aap.TurnComplete{TurnID: "t1", ResumeToken: &tok})
+	require.Equal(t, "sess-123", resume.get("fake"))
+
+	// Send: a fresh session for the same agent carries the token in initialize.
+	init := readInitFromHandshake(t, &AgentDef{Kind: AgentKindAAP, Command: "pi"}, resume)
+	require.NotNil(t, init.ResumeToken, "initialize should carry the persisted resume token")
+	assert.Equal(t, "sess-123", *init.ResumeToken)
+}
+
+// TestResumeStore_Persistence asserts tokens flush to disk and reload.
+func TestResumeStore_Persistence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aap-resume.json")
+	rs := newResumeStore(path)
+	rs.set("pi", "sess-abc")
+	rs.set("other", "sess-xyz")
+
+	reloaded := newResumeStore(path)
+	assert.Equal(t, "sess-abc", reloaded.get("pi"))
+	assert.Equal(t, "sess-xyz", reloaded.get("other"))
+	assert.Equal(t, "", reloaded.get("missing"))
 }
 
 // TestSpawnAAPAgent_MockBinary spawns the real horde aap-mock subprocess via
@@ -509,7 +591,7 @@ func TestAAPInvoke_NotAnAAPAgent(t *testing.T) {
 
 // TestAAPHostSession_MissingCommand asserts an AAP def with no command fails.
 func TestAAPHostSession_MissingCommand(t *testing.T) {
-	_, _, err := newAAPHostSession(context.Background(), "x", "bad", &AgentDef{Kind: AgentKindAAP, Command: ""}, ".", newContextStore(0))
+	_, _, err := newAAPHostSession(context.Background(), "x", "bad", &AgentDef{Kind: AgentKindAAP, Command: ""}, ".", newContextStore(0), newResumeStore(""))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no command")
 }
@@ -543,7 +625,7 @@ func TestAAPHostSession_GracefulDegradationNoExecContext(t *testing.T) {
 		_ = aap.RunMockAdapter(ctx, adapterInR, adapterOutW)
 	}()
 
-	s := newAAPHostSessionPipes("minimal", "minimal", &AgentDef{Kind: AgentKindAAP, Command: "mock"}, ctxStore,
+	s := newAAPHostSessionPipes("minimal", "minimal", &AgentDef{Kind: AgentKindAAP, Command: "mock"}, ctxStore, newResumeStore(""),
 		hostStdinW, hostStdoutR,
 		func() { cancel(); _ = adapterInR.Close(); _ = adapterOutW.Close() },
 		func() error {
@@ -774,7 +856,7 @@ func TestAAPHostSession_UnknownFrameSkipped(t *testing.T) {
 		}
 	}()
 
-	s := newAAPHostSessionPipes("unk", "unk", &AgentDef{Kind: AgentKindAAP, Command: "test"}, ctxStore,
+	s := newAAPHostSessionPipes("unk", "unk", &AgentDef{Kind: AgentKindAAP, Command: "test"}, ctxStore, newResumeStore(""),
 		hostStdinW, hostStdoutR,
 		func() { cancel(); _ = adapterInR.Close(); _ = adapterOutW.Close() },
 		func() error {
@@ -838,7 +920,7 @@ func TestAAPHostSession_FatalError(t *testing.T) {
 		})
 	}()
 
-	s := newAAPHostSessionPipes("fatal", "fatal", &AgentDef{Kind: AgentKindAAP, Command: "test"}, ctxStore,
+	s := newAAPHostSessionPipes("fatal", "fatal", &AgentDef{Kind: AgentKindAAP, Command: "test"}, ctxStore, newResumeStore(""),
 		hostStdinW, hostStdoutR,
 		func() { cancel(); _ = adapterInR.Close(); _ = adapterOutW.Close() },
 		func() error {
@@ -903,7 +985,7 @@ func TestAAPHostSession_WorkspacePassedThrough(t *testing.T) {
 		}
 	}()
 
-	s := newAAPHostSessionPipes("ws", "ws", &AgentDef{Kind: AgentKindAAP, Command: "test"}, ctxStore,
+	s := newAAPHostSessionPipes("ws", "ws", &AgentDef{Kind: AgentKindAAP, Command: "test"}, ctxStore, newResumeStore(""),
 		hostStdinW, hostStdoutR,
 		func() { cancel(); _ = adapterInR.Close(); _ = adapterOutW.Close() },
 		func() error {
