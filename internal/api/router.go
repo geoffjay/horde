@@ -41,6 +41,7 @@ func Router(srv *server.Server) http.Handler {
 		r.Post("/agents/{id}/invoke", invokeAgent(srv))
 		r.Get("/agents/{id}/context", getAgentContext(srv))
 		r.Get("/agents/{id}/context/stream", streamAgentContext(srv))
+		r.Post("/agents/{id}/approvals/{requestID}", respondApproval(srv))
 
 		// Cluster (slave ↔ master)
 		r.Post("/cluster/register", registerSlave(srv))

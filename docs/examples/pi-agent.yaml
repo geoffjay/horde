@@ -38,7 +38,9 @@ agents:
       mode: "read_write"
       writable_paths: ["src/", "docs/"]
       deny_paths: [".git/", ".env"]
-    # v1 approval policy: auto-allow every approval_request when the adapter
-    # advertises tool_approval. Set false to leave requests pending (a human
-    # approve/deny decision endpoint is a follow-up).
-    auto_approve: true
+    # Approval policy. With auto_approve false (recommended for a write-capable
+    # agent) every approval_request stays pending until a human decides it —
+    # in the TUI agent view (↑↓ to select, `a` allow, `d` deny) or via
+    # POST /api/v1/agents/{id}/approvals/{requestID}. Set true to auto-allow
+    # every request (unattended; only for a trusted/sandboxed workspace).
+    auto_approve: false

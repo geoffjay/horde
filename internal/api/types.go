@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/geoffjay/horde/internal/aap"
 	"github.com/geoffjay/horde/internal/server"
 )
 
@@ -29,6 +30,9 @@ type agentView interface {
 	AllAgentContexts() []server.ExecutionContext
 	SubscribeAgentContext(id string) (<-chan server.ExecutionContext, func())
 	ContextShareFull() bool
+	// RespondApproval resolves a pending AAP tool-use approval with an
+	// allow/deny decision (node-as-approval-authority).
+	RespondApproval(agentID, requestID string, decision aap.ApprovalDecision) error
 }
 
 // clusterView is the subset of *server.Server that cluster handlers need.

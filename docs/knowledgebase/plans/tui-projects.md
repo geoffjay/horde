@@ -140,8 +140,10 @@ projects › auth-service › reviewer
 
 Feeds: `GET /agents/{id}/context/stream` (SSE `event: context`, snapshot then
 deltas). `live ●` is a status-line block indicating the stream is connected.
-(Approve/deny is a proposed action surface; the approval-decision endpoint is
-Phase 3.6 / AAP-host territory — until then this pane is read-only.)
+(Approve/deny is now wired: with an AAP agent and `auto_approve: false`, the
+pane lists pending approvals; `↑↓` selects and `a`/`d` allow/deny via
+`POST /api/v1/agents/{id}/approvals/{requestID}`. For agents without pending
+approvals the pane is read-only.)
 
 ## 4 — Invoke / conversation (multi-turn)
 
@@ -258,10 +260,14 @@ The disconnected / 60s-retry panel and the `paint`-based dimming are unchanged.
 
 # Out of scope / follow-ups (not landed)
 
+Delivered as a follow-up after the AAP host landed:
+
+* Approval **decisions** (approve/deny wiring). ✅ The agent-context pane
+  selects a pending approval (`↑↓`) and decides with `a`/`d` against
+  `POST /api/v1/agents/{id}/approvals/{requestID}`.
+
 These remain deferred:
 
-* Approval **decisions** (approve/deny wiring) depend on the AAP host
-  ([Phase 3.6](roadmap.md)); the context pane is read-only.
 * Per-user identity in the UI (whose project, who is invoking) is 3.5b.
 * Cross-node project listing (the cluster view shows remote *agents*; a
   cluster-wide *project* surface arrives with Phase 4 sync).

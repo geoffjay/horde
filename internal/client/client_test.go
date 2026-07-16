@@ -101,3 +101,30 @@ func TestSpawnAndStopAgent(t *testing.T) {
 
 	require.NoError(t, c.StopAgent(context.Background(), a.ID))
 }
+
+func TestRespondApproval(t *testing.T) {
+	var gotPath, gotDecision string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotDecision = body["decision"]
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(srv.Listener.Addr().String())
+	require.NoError(t, c.RespondApproval(context.Background(), "a1", "req-1", "deny"))
+	assert.Equal(t, "/api/v1/agents/a1/approvals/req-1", gotPath)
+	assert.Equal(t, "deny", gotDecision)
+}
+
+func TestRespondApproval_ErrorStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(srv.Listener.Addr().String())
+	assert.Error(t, c.RespondApproval(context.Background(), "a1", "missing", "allow"))
+}

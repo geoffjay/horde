@@ -139,6 +139,13 @@ declarations](#aap-agent-declarations-agentsname) and
 binary; the adapter lives in its own repository and speaks the AAP stdio
 binding.
 
+**Tool approval.** With `auto_approve: false`, a tool call the adapter flags for
+approval stays pending until a human decides it: in the TUI agent view (`↑↓` to
+select a pending approval, `a` allow, `d` deny) or via
+`POST /api/v1/agents/{id}/approvals/{requestID}` with a
+`{"decision": "allow"|"deny"}` body. With `auto_approve: true` the node allows
+every request unattended.
+
 **Test-only variable** (read by `internal/server` tests, not by the config
 loader):
 

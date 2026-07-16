@@ -34,6 +34,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/geoffjay/horde/agents"
+	"github.com/geoffjay/horde/internal/aap"
 )
 
 // Mode is the node role.
@@ -186,6 +187,14 @@ type Server struct {
 // Callers (e.g. the API's DELETE handler) match it with errors.Is rather
 // than string-comparing the error message.
 var ErrAgentNotFound = errors.New("agent not found")
+
+// ErrNotAAPAgent is returned when an operation valid only for AAP agents
+// (e.g. resolving a tool approval) is attempted on a native ADK agent.
+var ErrNotAAPAgent = errors.New("agent is not an AAP agent")
+
+// ErrApprovalNotFound is returned when a tool-approval request id is not
+// pending: unknown, already resolved, or cleared when the turn ended.
+var ErrApprovalNotFound = errors.New("approval request not found")
 
 // logKeyAgent is the logrus field key for an agent name.
 const logKeyAgent = "agent"
@@ -856,6 +865,27 @@ func (s *Server) IsAAPAgent(agentID string) bool {
 	defer s.mu.Unlock()
 	p, ok := s.procs[agentID]
 	return ok && p.kind == AgentKindAAP
+}
+
+// RespondApproval resolves a pending tool-use approval for an AAP agent with
+// an explicit allow/deny decision. It writes the approval_response frame to
+// the adapter and clears the pending ref from the execution context. This is
+// the node-as-approval-authority decision path (the API/TUI call it), the
+// counterpart to the auto_approve policy in the host session.
+//
+// It errors if the agent is unknown (ErrAgentNotFound), is a native ADK agent
+// (ErrNotAAPAgent), or the request id is not pending (ErrApprovalNotFound).
+func (s *Server) RespondApproval(agentID, requestID string, decision aap.ApprovalDecision) error {
+	s.mu.Lock()
+	proc, ok := s.procs[agentID]
+	s.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("respond approval %q: %w", agentID, ErrAgentNotFound)
+	}
+	if proc.kind != AgentKindAAP || proc.aapSession == nil {
+		return fmt.Errorf("respond approval %q: %w", agentID, ErrNotAAPAgent)
+	}
+	return proc.aapSession.resolvePending(requestID, decision)
 }
 
 // AgentContext returns the execution context for the given agent id, or

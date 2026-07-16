@@ -80,6 +80,12 @@ type Model struct {
 	// list cursor within the current view (index into the visible list)
 	cursor int
 
+	// approvalCursor selects among the selected agent's pending approvals on
+	// the agent view (viewAgent). It is independent of cursor (which indexes
+	// the team agents) so up/down can drive approval selection without losing
+	// the agent selection.
+	approvalCursor int
+
 	// selectedProjectID is the project open in the projectDetail/agent/invoke
 	// views. Set by pushView when drilling in from the projects list; used to
 	// look up the project independently of the cursor (which indexes team
@@ -301,6 +307,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case projectActionMsg:
 		return m.handleProjectAction(&msg)
+
+	case approvalActionMsg:
+		return m.handleApprovalAction(&msg)
 	}
 
 	return m, nil
@@ -380,24 +389,41 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m.handleNavigationKey(msg)
 }
 
-// handleNavigationKey handles arrow/list/navigation keys and view-aware
-// ctrl+X shortcuts (ctrl+a assign, ctrl+s pause/resume, ctrl+f finish) for
-// the connected non-invoke views.
+// handleNavigationKey handles arrow/list/navigation keys for the connected
+// non-invoke views; view-specific action keys are delegated to
+// handleViewActionKey.
 func (m *Model) handleNavigationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case keyEsc:
 		if len(m.crumbs) > 0 {
 			m.popView()
-			return m, nil
 		}
+		return m, nil
 	case keyEnter:
 		return m.drillIn()
 	case "up", "k":
-		m.moveCursor(-1)
+		m.moveSelection(-1)
 		return m, nil
 	case keyDown, "j":
-		m.moveCursor(1)
+		m.moveSelection(1)
 		return m, nil
+	}
+	return m.handleViewActionKey(msg)
+}
+
+// handleViewActionKey handles the view-aware action keys: approve/deny (a/d)
+// on the agent view and the ctrl+X project lifecycle shortcuts (ctrl+a assign,
+// ctrl+s pause/resume, ctrl+f finish) on the project detail view.
+func (m *Model) handleViewActionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "a":
+		if m.view == viewAgent {
+			return m, m.approvalDecisionCmd(approvalAllow) //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
+		}
+	case "d":
+		if m.view == viewAgent {
+			return m, m.approvalDecisionCmd(approvalDeny) //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
+		}
 	case "ctrl+s":
 		if m.view == viewProjectDetail {
 			return m.handlePauseOrResume()
@@ -615,6 +641,7 @@ func (m *Model) handleInvokeEvent(msg invokeEventMsg) (tea.Model, tea.Cmd) {
 // unsubscribeAgentContext cancels it.
 func (m *Model) subscribeAgentContext(agentID string) tea.Cmd {
 	m.unsubscribeAgentContext()
+	m.approvalCursor = 0
 
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.streamCancel = cancel

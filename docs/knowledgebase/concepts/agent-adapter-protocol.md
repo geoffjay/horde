@@ -71,6 +71,15 @@ cross-node, and remote-principal authorization live in horde's node +
 the node enforces write-gating at the AAP boundary by being the sole approval
 authority.
 
+When an adapter advertises `tool_approval`, an `approval_request` arriving
+mid-turn is resolved one of two ways: the `agents.<name>.auto_approve` policy
+(auto-allow, for a trusted/sandboxed workspace) or a **human decision**. A
+human decides in the TUI agent view (`↑↓` to select, `a` allow, `d` deny) or
+via `POST /api/v1/agents/{id}/approvals/{requestID}` with a `{"decision":
+"allow"|"deny"}` body; the node writes the `approval_response` back to the
+adapter and clears the pending ref from the execution context. Until a decision
+arrives the request stays pending (the turn waits).
+
 # In the codebase
 
 * `internal/aap` — typed `HostMessage`/`AgentMessage`, (de)serialization,

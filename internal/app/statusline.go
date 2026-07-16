@@ -197,6 +197,9 @@ func viewHints(m *Model) string {
 		}
 		return hints
 	case viewAgent:
+		if m.hasPendingApprovals() {
+			return "↑↓ select · a allow · d deny · enter invoke · esc back"
+		}
 		return "enter invoke · esc back"
 	case viewInvoke:
 		return "enter send · esc back"

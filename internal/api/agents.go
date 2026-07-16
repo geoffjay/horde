@@ -8,11 +8,16 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/geoffjay/horde/internal/aap"
 	"github.com/geoffjay/horde/internal/server"
 )
 
 // errAgentNotFound is the error message for an unknown agent id.
 const errAgentNotFound = "agent not found"
+
+// errInvalidDecision is returned when an approval decision is neither allow
+// nor deny.
+const errInvalidDecision = `decision must be "allow" or "deny"`
 
 // agentDTO is the JSON shape for an agent in API responses.
 type agentDTO struct {
@@ -98,6 +103,58 @@ func deleteAgent(srv agentView) http.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// respondApprovalRequest is the body of
+// POST /api/v1/agents/{id}/approvals/{requestID}.
+type respondApprovalRequest struct {
+	Decision string `json:"decision"`
+}
+
+// respondApproval resolves a pending tool-use approval for an AAP agent with
+// an allow/deny decision — the node-as-approval-authority decision path. On
+// success it returns the updated agent execution context (the pending ref is
+// now cleared).
+func respondApproval(srv agentView) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		requestID := chi.URLParam(r, "requestID")
+
+		var req respondApprovalRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: errInvalidBody})
+			return
+		}
+		var decision aap.ApprovalDecision
+		switch req.Decision {
+		case string(aap.DecisionAllow):
+			decision = aap.DecisionAllow
+		case string(aap.DecisionDeny):
+			decision = aap.DecisionDeny
+		default:
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: errInvalidDecision})
+			return
+		}
+
+		if err := srv.RespondApproval(id, requestID, decision); err != nil {
+			switch {
+			case errors.Is(err, server.ErrAgentNotFound), errors.Is(err, server.ErrApprovalNotFound):
+				writeJSON(w, http.StatusNotFound, errorResponse{Error: err.Error()})
+			case errors.Is(err, server.ErrNotAAPAgent):
+				writeJSON(w, http.StatusConflict, errorResponse{Error: err.Error()})
+			default:
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			}
+			return
+		}
+
+		ctx := srv.AgentContext(id)
+		if ctx == nil {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		writeJSON(w, http.StatusOK, projectContext(ctx, fullContextAllowed(r, srv)))
 	}
 }
 

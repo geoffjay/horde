@@ -84,6 +84,14 @@ func (c *Client) GetAgentContext(ctx context.Context, id string) (ExecutionConte
 	return ec, nil
 }
 
+// RespondApproval resolves a pending AAP tool-use approval with an allow/deny
+// decision (node-as-approval-authority). decision must be "allow" or "deny".
+// The updated context arrives via the SSE stream, so no body is returned.
+func (c *Client) RespondApproval(ctx context.Context, agentID, requestID, decision string) error {
+	body, _ := json.Marshal(map[string]string{"decision": decision})
+	return c.postJSON(ctx, "/api/v1/agents/"+agentID+"/approvals/"+requestID, body, nil)
+}
+
 // StreamAgentContext subscribes to the SSE context stream for one agent.
 // It returns a channel that receives each ExecutionContext snapshot (the
 // first immediately, then deltas) and an error if the initial request fails.

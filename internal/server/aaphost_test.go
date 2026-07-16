@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -179,6 +180,85 @@ func TestAAPHostSession_NoAutoApproveStaysPending(t *testing.T) {
 	require.NotNil(t, ctxSnapshot)
 	require.Len(t, ctxSnapshot.PendingApprovals, 1, "approval should stay pending without auto_approve")
 	assert.Equal(t, "req-t-pending", ctxSnapshot.PendingApprovals[0].RequestID)
+}
+
+// TestAAPHostSession_ManualApproveCompletesTurn asserts that, with
+// auto_approve=false, an external allow decision (resolvePending) unblocks the
+// waiting adapter, the turn completes, and the pending ref clears — the
+// human/API decision path.
+func TestAAPHostSession_ManualApproveCompletesTurn(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	def := AgentDef{Kind: AgentKindAAP, Command: "test", AutoApprove: false}
+	s, cleanup := newTestAAPSession(t, ctx, "fake", def, true)
+	defer cleanup()
+
+	_, done, err := s.sendPrompt("t-manual", "run tool")
+	require.NoError(t, err)
+	// Let the approval_request go pending before deciding.
+	time.Sleep(200 * time.Millisecond)
+
+	require.NoError(t, s.resolvePending("req-t-manual", aap.DecisionAllow))
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("turn did not complete after manual approval")
+	}
+	assert.Empty(t, s.ctxStore.get("fake").PendingApprovals, "pending approval should clear after allow")
+}
+
+// TestAAPHostSession_ResolvePendingUnknown asserts resolving an unknown request
+// id returns ErrApprovalNotFound rather than writing a stray response.
+func TestAAPHostSession_ResolvePendingUnknown(t *testing.T) {
+	ctxStore := newContextStore(0)
+	ctxStore.init("fake", "test-node")
+	s := newAAPHostSessionPipes("fake", "fake", &AgentDef{Kind: AgentKindAAP},
+		ctxStore, nopWriteCloser{io.Discard}, strings.NewReader(""), func() {}, func() error { return nil })
+
+	err := s.resolvePending("no-such-request", aap.DecisionAllow)
+	assert.ErrorIs(t, err, ErrApprovalNotFound)
+}
+
+// TestAAPHostSession_ResolvePendingWritesDecision asserts resolvePending writes
+// an approval_response carrying the correct request id and decision, and clears
+// the pending ref from the context store.
+func TestAAPHostSession_ResolvePendingWritesDecision(t *testing.T) {
+	pr, pw := io.Pipe()
+	ctxStore := newContextStore(0)
+	ctxStore.init("fake", "test-node")
+	s := newAAPHostSessionPipes("fake", "fake", &AgentDef{Kind: AgentKindAAP},
+		ctxStore, pw, strings.NewReader(""), func() {}, func() error { return nil })
+
+	// Record a pending approval as resolveApproval would (auto_approve=false).
+	s.pendingApprovals["req1"] = make(chan aap.ApprovalDecision, 1)
+	ctxStore.applyApprovalRequest("fake", aap.ApprovalRequest{RequestID: "req1", ToolName: "Bash"})
+
+	// resolvePending writes to the synchronous pipe; run it while we read.
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.resolvePending("req1", aap.DecisionDeny) }()
+
+	line, err := aap.ReadLine(bufio.NewReader(pr))
+	require.NoError(t, err)
+	msg, err := aap.ParseHostMessage(line)
+	require.NoError(t, err)
+	resp, ok := msg.(aap.ApprovalResponse)
+	require.True(t, ok, "expected an approval_response frame, got %s", msg.Type())
+	assert.Equal(t, "req1", resp.RequestID)
+	assert.Equal(t, aap.DecisionDeny, resp.Decision)
+
+	require.NoError(t, <-errCh)
+	assert.Empty(t, ctxStore.get("fake").PendingApprovals, "pending ref should clear after the decision")
+}
+
+// TestRespondApproval_UnknownAgent asserts the server-level wrapper maps an
+// unknown agent id to ErrAgentNotFound.
+func TestRespondApproval_UnknownAgent(t *testing.T) {
+	srv, err := New(Config{Mode: ModeMaster, SpawnDefaultAgent: false})
+	require.NoError(t, err)
+	err = srv.RespondApproval("no-such-agent", "req", aap.DecisionAllow)
+	assert.ErrorIs(t, err, ErrAgentNotFound)
 }
 
 // TestAAPHostSession_GracefulShutdown asserts shutdown closes the session.
@@ -687,6 +767,12 @@ func TestAAPHostSession_WorkspacePassedThrough(t *testing.T) {
 
 	assert.Equal(t, "/some/workspace", capturedInit.Workspace.Cwd)
 }
+
+// nopWriteCloser adapts an io.Writer to io.WriteCloser for tests that build a
+// session whose stdin is never meaningfully written to.
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
 
 // findHordeBinaryLocal returns the path to the built horde binary at
 // bin/horde, mirroring the external server_test.findHordeBinary. Tests that

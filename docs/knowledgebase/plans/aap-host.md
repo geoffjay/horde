@@ -327,10 +327,13 @@ the cluster aggregation and the TUI context pane get richer data for free.
   [`docs/examples/pi-agent.yaml`](/docs/examples/pi-agent.yaml). A Claude Code
   adapter remains possible against the schema-compatible agentd protocol
   (`agentd-adapter-claude` reference).
-* **Human approve/deny UI.** The context pane renders pending approvals
-  (read-only today). A `POST /agents/{id}/approvals/{requestID}` endpoint
-  plus a TUI keybinding is the follow-up the plumbing here unblocks; it
-  closes the [TUI plan's deferred approval-decision](tui-projects.md) item.
+* **Human approve/deny UI.** ✅ **Delivered** (follow-up after 3.6). The
+  `POST /api/v1/agents/{id}/approvals/{requestID}` endpoint (`{"decision":
+  "allow"|"deny"}`) resolves a pending approval through `Server.RespondApproval`
+  → the host session; the TUI agent view selects a pending approval (`↑↓`) and
+  decides with `a`/`d`. With `auto_approve: false` a request stays pending until
+  a human decides. This closes the [TUI plan's deferred
+  approval-decision](tui-projects.md) item.
 * **Websocket binding.** stdio is the mandatory baseline; websocket arrives
   when a real adapter needs a non-subprocess transport.
 * **AAP `resume_token`.** Adapter-level resume is additive over the

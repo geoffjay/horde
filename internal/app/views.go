@@ -198,7 +198,7 @@ func (m *Model) renderAgentView() string {
 	}
 
 	// Pending approvals and errors
-	b.WriteString(renderAgentApprovals(&ctx))
+	b.WriteString(renderAgentApprovals(&ctx, m.approvalCursor))
 	b.WriteString(renderAgentErrors(&ctx))
 
 	// Note
@@ -210,14 +210,21 @@ func (m *Model) renderAgentView() string {
 }
 
 // renderAgentApprovals renders the pending approvals section for the agent
-// view, handling both full (local) and redacted (remote) contexts.
-func renderAgentApprovals(ctx *client.ExecutionContext) string {
+// view, handling both full (local) and redacted (remote) contexts. For a full
+// context the entry at cursor is marked with "▸" (others "·") and an allow/deny
+// hint is shown; a redacted context has only a count.
+func renderAgentApprovals(ctx *client.ExecutionContext, cursor int) string {
 	var b strings.Builder
 	if len(ctx.PendingApprovals) > 0 {
 		fmt.Fprintf(&b, "\n  Pending approvals (%d)\n", len(ctx.PendingApprovals))
-		for _, ap := range ctx.PendingApprovals {
-			fmt.Fprintf(&b, "    ▸ %-20s req %s\n", ap.ToolName, truncateID(ap.RequestID))
+		for i, ap := range ctx.PendingApprovals {
+			marker := "·"
+			if i == cursor {
+				marker = "▸"
+			}
+			fmt.Fprintf(&b, "    %s %-20s req %s\n", marker, ap.ToolName, truncateID(ap.RequestID))
 		}
+		b.WriteString("    [a] allow   [d] deny\n")
 	} else if ctx.PendingApprovalCount > 0 {
 		fmt.Fprintf(&b, "\n  Pending approvals (%d)\n", ctx.PendingApprovalCount)
 	}

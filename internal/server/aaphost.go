@@ -444,9 +444,25 @@ func (s *aapHostSession) resolveApproval(req aap.ApprovalRequest) {
 	s.respondApproval(req.RequestID, aap.DecisionAllow)
 }
 
+// resolvePending resolves a pending approval by request id with an explicit
+// decision — the external (human/API) decision path. Unlike respondApproval it
+// guards against a request id that is not currently pending (unknown, already
+// resolved, or cleared when the turn ended), returning ErrApprovalNotFound so
+// the caller can map it to a 404 rather than silently writing a stray response.
+func (s *aapHostSession) resolvePending(requestID string, decision aap.ApprovalDecision) error {
+	s.approvalsMu.Lock()
+	_, ok := s.pendingApprovals[requestID]
+	s.approvalsMu.Unlock()
+	if !ok {
+		return ErrApprovalNotFound
+	}
+	s.respondApproval(requestID, decision)
+	return nil
+}
+
 // respondApproval sends an approval_response and clears the pending ref. It
-// is the single path that writes the response, used by both the auto-approve
-// policy and (later) an external decision endpoint.
+// is the single path that writes the response, used by the auto-approve policy
+// and by resolvePending (the external decision path).
 func (s *aapHostSession) respondApproval(requestID string, decision aap.ApprovalDecision) {
 	resp := aap.ApprovalResponse{RequestID: requestID, Decision: decision}
 	if err := aap.WriteMessage(s.stdin, resp); err != nil {
