@@ -561,17 +561,15 @@ func TestIntegration_ReassignmentMovesAgent(t *testing.T) {
 	require.Equal(t, http.StatusCreated, code)
 	projB := resp2["id"].(string)
 
-	// Find the first project's agent.
-	var agentID string
-	require.Eventually(t, func() bool {
-		for _, a := range srv.Agents() {
-			if a.Name == "greeter" {
-				agentID = a.ID
-				return true
-			}
-		}
-		return false
-	}, 5*time.Second, 50*time.Millisecond)
+	// Find proj-a's greeter agent. Both projects have a "greeter", so select
+	// it from proj-a's team (the create response carries the spawned agent id)
+	// rather than the first agent named "greeter" across the whole node, whose
+	// order is nondeterministic.
+	teamA0, _ := resp1["team"].(map[string]any)
+	agentsA0, _ := teamA0["agents"].([]any)
+	require.Len(t, agentsA0, 1)
+	agentID, _ := agentsA0[0].(map[string]any)["agent_id"].(string)
+	require.NotEmpty(t, agentID)
 	waitForAgentReady(t, srv, agentID)
 
 	// Initially the agent is active on proj-a.
