@@ -173,6 +173,33 @@ func aapAdapterEnv(extra []EnvPair) []string {
 	return env
 }
 
+// readReadyFrame reads agent frames until it finds ready or error, skipping
+// diagnostic log frames and unknown-type frames that may legitimately precede
+// ready (spec §3, §logging). It returns the ready/error message, or an error
+// on a read/parse failure.
+func (s *aapHostSession) readReadyFrame(r *bufio.Reader) (aap.AgentMessage, error) {
+	for {
+		line, err := aap.ReadLine(r)
+		if err != nil {
+			return nil, fmt.Errorf("read ready: %w", err)
+		}
+		msg, perr := aap.ParseAgentMessage(line)
+		if perr != nil {
+			var unknown *aap.UnknownTypeError
+			if errors.As(perr, &unknown) {
+				continue // unknown frame before ready — skip it
+			}
+			return nil, fmt.Errorf("parse ready: %w", perr)
+		}
+		if lg, ok := msg.(aap.Log); ok {
+			// Diagnostic log emitted before ready; surface it and keep waiting.
+			logrus.WithField(logKeyAgent, s.name).Debugf("aap: pre-ready log: %s", lg.Message)
+			continue
+		}
+		return msg, nil
+	}
+}
+
 // handshake sends initialize and waits for ready. On success the reader
 // goroutine is started. On any failure the subprocess is torn down.
 func (s *aapHostSession) handshake(workspace string, timeout time.Duration) error {
@@ -205,8 +232,9 @@ func (s *aapHostSession) handshake(workspace string, timeout time.Duration) erro
 		return fmt.Errorf("aap %q: write initialize: %w", s.name, err)
 	}
 
-	// Read the first agent frame with a timeout; it must be ready (or a
-	// fatal error).
+	// Read agent frames with a timeout until ready (or a fatal error). An
+	// adapter may emit diagnostic log frames (and, per spec §3, unknown-type
+	// frames) before ready; readReadyFrame skips those.
 	type result struct {
 		msg aap.AgentMessage
 		err error
@@ -214,17 +242,8 @@ func (s *aapHostSession) handshake(workspace string, timeout time.Duration) erro
 	ch := make(chan result, 1)
 	r := bufio.NewReader(s.stdout)
 	go func() {
-		line, err := aap.ReadLine(r)
-		if err != nil {
-			ch <- result{nil, fmt.Errorf("read ready: %w", err)}
-			return
-		}
-		msg, perr := aap.ParseAgentMessage(line)
-		if perr != nil {
-			ch <- result{nil, fmt.Errorf("parse ready: %w", perr)}
-			return
-		}
-		ch <- result{msg, nil}
+		msg, err := s.readReadyFrame(r)
+		ch <- result{msg, err}
 	}()
 
 	select {
@@ -253,9 +272,10 @@ func (s *aapHostSession) handshake(workspace string, timeout time.Duration) erro
 		return fmt.Errorf("aap %q: ready handshake timed out", s.name)
 	}
 
-	// Start the reader goroutine now that the handshake consumed only the
-	// first line. The reader owns stdout from here.
-	go s.readLoop(bufio.NewReader(s.stdout))
+	// Start the reader goroutine, reusing the handshake's buffered reader so
+	// any frame already buffered after ready is not lost. The reader owns
+	// stdout from here.
+	go s.readLoop(r)
 	return nil
 }
 

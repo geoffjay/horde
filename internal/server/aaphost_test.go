@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -85,6 +86,28 @@ func TestAAPHostSession_HandshakeAndReady(t *testing.T) {
 	assert.Contains(t, s.ready.Capabilities, aap.CapStreaming)
 	assert.Contains(t, s.ready.Capabilities, aap.CapExecutionContext)
 	assert.True(t, s.hasCapability(aap.CapToolApproval))
+}
+
+// TestAAPHostSession_HandshakeSkipsPreReadyLog asserts the handshake tolerates
+// a diagnostic log frame (and unknown frames) emitted before ready — some
+// adapters (e.g. pi-aap) log during initialize before sending ready.
+func TestAAPHostSession_HandshakeSkipsPreReadyLog(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, aap.WriteMessage(&buf, aap.Log{Level: aap.LogInfo, Message: "starting up"}))
+	require.NoError(t, aap.WriteMessage(&buf, aap.Ready{
+		ProtocolVersion: aap.ProtocolVersion,
+		Agent:           aap.AgentInfo{Name: "pi"},
+		Capabilities:    []string{aap.CapStreaming},
+	}))
+
+	ctxStore := newContextStore(0)
+	ctxStore.init("pi", "test-node")
+	s := newAAPHostSessionPipes("pi", "pi", &AgentDef{Kind: AgentKindAAP}, ctxStore,
+		nopWriteCloser{io.Discard}, bytes.NewReader(buf.Bytes()), func() {}, func() error { return nil })
+
+	require.NoError(t, s.handshake(".", 2*time.Second))
+	require.NotNil(t, s.ready)
+	assert.Equal(t, "pi", s.ready.Agent.Name)
 }
 
 // TestAAPHostSession_PromptAndTurnComplete drives a prompt and asserts the
