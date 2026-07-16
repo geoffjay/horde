@@ -67,8 +67,8 @@ Detailed plan: [Agent execution context](agent-execution-context.md).
 * Minimal node-granular principal model (`local` vs `remote`).
 
 Signal fidelity note: full AAP `context`/`error`/`approval` frames arrive with
-the AAP host (Phase 3.6); native ADK agents yield only coarse context (activity
-+ errors) until then. Slice A ships the model, API, and aggregation regardless.
+the AAP host (Phase 3.6, complete); native ADK agents yield only coarse context
+(activity + errors). Slice A ships the model, API, and aggregation regardless.
 
 ## Slice B — Projects, teams, and multi-turn context (complete)
 
@@ -95,7 +95,7 @@ without committing to an auth mechanism. When 3.5b lands, the project/team
 model already has the right shape — it just gains an `owner` field and
 access control.
 
-# Phase 3.6 — AAP host (external coding agents)
+# Phase 3.6 — AAP host (external coding agents) (complete)
 
 Detailed plan: [AAP host — driving external coding agents](aap-host.md).
 

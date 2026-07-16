@@ -78,3 +78,12 @@ authority.
 * `internal/aap/testdata/vectors.json` — the shared wire test vectors.
 * `cmd/aapmock.go` — the hidden `horde aap-mock` subcommand (conformance
   fixture / reference adapter).
+* `internal/server/aaphost.go` — the node-side AAP host session: adapter
+  subprocess lifecycle, the `initialize`→`ready` handshake, the reader
+  goroutine that dispatches every agent frame, approval resolution, and
+  graceful shutdown (Phase 3.6).
+* `internal/server/aapinvoke.go` — bridges an AAP turn to the invoke SSE
+  stream shape, with a per-invocation ring buffer for `Last-Event-ID` resume.
+* AAP agents are a second agent *kind* alongside native ADK, declared in
+  config (`agents.<name>.kind: aap`) and sharing the `agentProc` map, the
+  invoke API, and project assignment.

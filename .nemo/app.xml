@@ -5,7 +5,7 @@
       <header-bar github-url="https://github.com/geoffjay/horde"
                   theme-toggle="true" />
     </window>
-    <theme name="nord" mode="dark" />
+    <theme name="kanagawa dragon" mode="dark" />
   </app>
 
   <!--
