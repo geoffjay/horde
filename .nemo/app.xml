@@ -1,0 +1,164 @@
+<nemo>
+  <app title="Horde">
+    <window title="Horde — Control Panel" width="1100" height="760"
+            min-width="720" min-height="480">
+      <header-bar github-url="https://github.com/geoffjay/horde"
+                  theme-toggle="true" />
+    </window>
+    <theme name="kanagawa" mode="dark" />
+  </app>
+
+  <!--
+    Base URL of the horde node API. The default is the node's default listen
+    address (server.port = 13420). If you run the node elsewhere, edit this
+    value AND api_base() in scripts/handlers.rhai to match.
+  -->
+  <variable name="api_base" type="string"
+            default="http://localhost:13420/api/v1" />
+
+  <!-- Rhai event handlers; on_load seeds the status line. -->
+  <script src="./scripts" on-load="on_load" />
+
+  <!--
+    Read-only data sources. Each polls the node API and republishes the
+    parsed JSON under data.<name>. Tables/labels below bind to these paths,
+    so the UI refreshes on its own every few seconds after any change.
+  -->
+  <data>
+    <source name="node"     type="http" url="${var.api_base}/node"          interval="5" />
+    <source name="agents"   type="http" url="${var.api_base}/agents"        interval="5" />
+    <source name="projects" type="http" url="${var.api_base}/projects"      interval="5" />
+    <source name="cluster"  type="http" url="${var.api_base}/cluster/nodes" interval="10" />
+  </data>
+
+  <layout type="stack">
+    <stack id="root" direction="vertical" spacing="12" padding="16" flex="1" scroll="true">
+      <label id="title" text="Horde Control Panel" size="lg" />
+      <label id="status_line" text="Starting…" size="sm" />
+
+      <tabs id="main_tabs">
+        <!-- ============================ OVERVIEW ============================ -->
+        <tab-item id="tab_overview" label="Overview">
+          <stack id="overview_body" direction="vertical" spacing="12" padding="16">
+            <alert id="hint"
+                   title="Welcome"
+                   variant="info"
+                   message="This panel talks to your local Horde node. Start it with 'horde serve' if the values below stay empty." />
+
+            <panel title="Node" padding="16" border="1" rounded="lg">
+              <stack direction="vertical" spacing="8">
+                <stack direction="horizontal" spacing="8">
+                  <label text="Mode:" size="md" />
+                  <label id="node_mode" text="—" size="md">
+                    <binding source="data.node" target="text" transform="mode" />
+                  </label>
+                </stack>
+                <stack direction="horizontal" spacing="8">
+                  <label text="Node ID:" size="md" />
+                  <label id="node_id" text="—" size="md">
+                    <binding source="data.node" target="text" transform="node_id" />
+                  </label>
+                </stack>
+                <stack direction="horizontal" spacing="8">
+                  <label text="Leader connected:" size="md" />
+                  <label id="node_leader" text="—" size="md">
+                    <binding source="data.node" target="text" transform="leader_connected" />
+                  </label>
+                </stack>
+                <stack direction="horizontal" spacing="8">
+                  <label text="Version:" size="md" />
+                  <label id="node_version" text="—" size="md">
+                    <binding source="data.node" target="text" transform="version" />
+                  </label>
+                </stack>
+              </stack>
+            </panel>
+          </stack>
+        </tab-item>
+
+        <!-- ============================= AGENTS ============================= -->
+        <tab-item id="tab_agents" label="Agents">
+          <stack id="agents_body" direction="vertical" spacing="12" padding="16">
+            <panel title="Start an agent" padding="16" border="1" rounded="lg">
+              <stack direction="horizontal" spacing="8" align="center">
+                <input id="new_agent_name" placeholder="Agent name (e.g. planner)" flex="1" />
+                <button id="create_agent" label="Start agent" variant="primary" on-click="create_agent" />
+              </stack>
+            </panel>
+
+            <panel title="Running agents" padding="16" border="1" rounded="lg">
+              <table id="agents_table" height="320" stripe="true" bordered="true"
+                     columns='[{"key":"name","label":"Name","width":180},{"key":"status","label":"Status","width":110},{"key":"healthy","label":"Healthy","width":90},{"key":"id","label":"ID","width":140}]'>
+                <binding source="data.agents" target="data" />
+              </table>
+            </panel>
+          </stack>
+        </tab-item>
+
+        <!-- ============================ PROJECTS ============================ -->
+        <tab-item id="tab_projects" label="Projects">
+          <stack id="projects_body" direction="vertical" spacing="12" padding="16">
+            <panel title="Create a project" padding="16" border="1" rounded="lg">
+              <stack direction="vertical" spacing="8">
+                <input id="new_project_name" placeholder="Project name" />
+                <input id="new_project_workspace" placeholder="Workspace path (e.g. /Users/you/code/app)" />
+                <textarea id="new_project_goal" placeholder="What should the team accomplish?" rows="3" />
+                <button id="create_project" label="Create project" variant="primary" on-click="create_project" />
+              </stack>
+            </panel>
+
+            <panel title="Projects" padding="16" border="1" rounded="lg">
+              <table id="projects_table" height="260" stripe="true" bordered="true"
+                     columns='[{"key":"name","label":"Name","width":160},{"key":"state","label":"State","width":100},{"key":"goal","label":"Goal","width":260},{"key":"workspace","label":"Workspace","width":220},{"key":"id","label":"ID","width":90}]'>
+                <binding source="data.projects" target="data" />
+              </table>
+            </panel>
+
+            <panel title="Change a project's state" padding="16" border="1" rounded="lg">
+              <stack direction="vertical" spacing="8">
+                <input id="manage_project_id" placeholder="Project ID (copy from the table above)" />
+                <stack direction="horizontal" spacing="8">
+                  <button id="pause_project"  label="Pause"  variant="warning" on-click="pause_project" />
+                  <button id="resume_project" label="Resume" variant="success" on-click="resume_project" />
+                  <button id="finish_project" label="Finish" variant="danger"  on-click="finish_project" />
+                </stack>
+              </stack>
+            </panel>
+          </stack>
+        </tab-item>
+
+        <!-- ========================= TALK TO AGENT ========================= -->
+        <tab-item id="tab_talk" label="Talk to an agent">
+          <stack id="talk_body" direction="vertical" spacing="12" padding="16">
+            <panel title="Send a task" padding="16" border="1" rounded="lg">
+              <stack direction="vertical" spacing="8">
+                <input id="invoke_agent_id" placeholder="Agent ID (copy from the Agents tab)" />
+                <textarea id="task_message" placeholder="Describe the task in plain language…" rows="4" />
+                <button id="send_task" label="Send task" variant="primary" on-click="send_task" />
+              </stack>
+            </panel>
+
+            <panel title="Response" padding="16" border="1" rounded="lg">
+              <textarea id="task_result" placeholder="The agent's reply will appear here." rows="10" />
+            </panel>
+          </stack>
+        </tab-item>
+
+        <!-- ============================= CLUSTER ============================ -->
+        <tab-item id="tab_cluster" label="Cluster">
+          <stack id="cluster_body" direction="vertical" spacing="12" padding="16">
+            <alert id="cluster_hint"
+                   variant="info"
+                   message="Nodes registered with this master. Empty on a standalone node." />
+            <panel title="Nodes" padding="16" border="1" rounded="lg">
+              <table id="cluster_table" height="320" stripe="true" bordered="true"
+                     columns='[{"key":"node_id","label":"Node ID","width":200},{"key":"addr","label":"Address","width":200},{"key":"stale","label":"Stale","width":80},{"key":"last_seen","label":"Last Seen","width":200}]'>
+                <binding source="data.cluster.nodes" target="data" />
+              </table>
+            </panel>
+          </stack>
+        </tab-item>
+      </tabs>
+    </stack>
+  </layout>
+</nemo>

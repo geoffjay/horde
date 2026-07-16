@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "nemo-component-patterns": {
+      "source": "geoffjay/nemo",
+      "sourceType": "github",
+      "skillPath": "skills/nemo-component-patterns/SKILL.md",
+      "computedHash": "d97c60db1c564743b586e103cdab935929479ec491081f8ebbb0011c006f6cc0"
+    },
+    "nemo-plugin-patterns": {
+      "source": "geoffjay/nemo",
+      "sourceType": "github",
+      "skillPath": "skills/nemo-plugin-patterns/SKILL.md",
+      "computedHash": "fe7b0c2d6a964afdaed79dea169039716b634cabd1fce9fff7743d70d976db8e"
+    },
+    "nemo-xml-reference": {
+      "source": "geoffjay/nemo",
+      "sourceType": "github",
+      "skillPath": "skills/nemo-xml-reference/SKILL.md",
+      "computedHash": "5d3f21b3c62af5de10e4fe57bfb813f1e0ca8d332fb78e774ffa0b35b021e077"
+    }
+  }
+}
