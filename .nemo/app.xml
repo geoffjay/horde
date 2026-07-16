@@ -1,11 +1,11 @@
 <nemo>
   <app title="Horde">
-    <window title="Horde — Control Panel" width="1100" height="760"
+    <window title="Horde - Control Panel" width="1100" height="760"
             min-width="720" min-height="480">
       <header-bar github-url="https://github.com/geoffjay/horde"
                   theme-toggle="true" />
     </window>
-    <theme name="kanagawa" mode="dark" />
+    <theme name="nord" mode="dark" />
   </app>
 
   <!--
