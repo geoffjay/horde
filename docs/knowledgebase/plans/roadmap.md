@@ -131,8 +131,14 @@ already in place — the AAP spec and the `internal/aap` package (typed messages
 
 # Phase 4 — Distributed
 
-* Slave registration with the master.
-* Agent placement and coordination across nodes.
-* Cluster discovery beyond `static` (dns, gossip).
+Detailed plan: [Phase 4 — Distributed](phase-4-distributed.md). Built in slices.
+
+* Slave registration with the master. ✅ (Phase 3.5a + slice 1 hardening:
+  routable advertised address, stale-slave eviction.)
+* Agent placement and coordination across nodes. **Slice 1 done**: the master
+  routes an invoke to whichever node hosts the agent (cross-node invoke, via a
+  reachable advertised address). Active placement/scheduling (choosing a node
+  to spawn on) is a later slice.
+* Cluster discovery beyond `static` (dns, gossip). *(later slice)*
 * Cross-node event fan-out (the event bus may gain an nng or HTTP
-  fan-out layer here).
+  fan-out layer here). *(later slice; the in-process bus is currently unused.)*

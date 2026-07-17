@@ -85,6 +85,11 @@ type invokeView interface {
 	// ADK agent). The invoke handler branches on this: ADK uses the
 	// reverse proxy; AAP uses AAPInvoke.
 	IsAAPAgent(agentID string) bool
+	// RemoteAgentNode resolves an agent id hosted on another node to that
+	// node's reachable address, for cross-node invoke routing. ok is false
+	// for a local/unknown/stale/ambiguous id. Consulted only when the agent
+	// is not local.
+	RemoteAgentNode(agentID string) (string, bool)
 }
 
 // compile-time: *server.Server satisfies the handler interfaces.

@@ -45,6 +45,7 @@ environment variable (any extension: `yaml`, `yml`, `json`, `toml`).
 | `server.idle_timeout`            | `120`               | `HORDE_SERVER_IDLE_TIMEOUT`            | API idle timeout (seconds).             |
 | `cluster.node_id`                | *(empty)*           | `HORDE_CLUSTER_NODE_ID`                | Unique node id within the cluster.       |
 | `cluster.discovery_mechanism`    | `static`            | `HORDE_CLUSTER_DISCOVERY_MECHANISM`    | How nodes find each other (`static`).   |
+| `cluster.advertise_addr`         | *(empty)*           | `HORDE_CLUSTER_ADVERTISE_ADDR`         | Reachable `host:port` this node advertises to peers (sent to the master on register). Required for the master to route cross-node invokes back to a slave; empty falls back to `:<port>`, which is not routable across hosts. |
 | `agent.socket_dir`               | `/tmp`              | `HORDE_AGENT_SOCKET_DIR`               | Directory for agent unix socket files.  |
 | `agent.ready_timeout`            | `5`                 | `HORDE_AGENT_READY_TIMEOUT`            | Seconds to wait for agent ready handshake. |
 | `agent.health_poll_interval`     | `30`                | `HORDE_AGENT_HEALTH_POLL_INTERVAL`     | Seconds between agent health polls.     |

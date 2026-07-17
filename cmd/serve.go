@@ -74,6 +74,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		WriteTimeout:        time.Duration(cfg.Server.WriteTimeout) * time.Second,
 		IdleTimeout:         time.Duration(cfg.Server.IdleTimeout) * time.Second,
 		NodeID:              cfg.Cluster.NodeID,
+		AdvertiseAddr:       cfg.Cluster.AdvertiseAddr,
 		SocketDir:           cfg.Agent.SocketDir,
 		ReadyTimeout:        time.Duration(cfg.Agent.ReadyTimeout) * time.Second,
 		HealthPollInterval:  time.Duration(cfg.Agent.HealthPollInterval) * time.Second,

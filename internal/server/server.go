@@ -72,6 +72,10 @@ type Config struct {
 	// NodeID is the unique identifier for this node within the cluster. When
 	// empty a generated id is used. Populated from cluster.node_id.
 	NodeID string
+	// AdvertiseAddr is the reachable host:port this node advertises to peers
+	// (from cluster.advertise_addr). Empty falls back to ":<port>", which is
+	// not routable across hosts, so master→slave routing needs it set.
+	AdvertiseAddr string
 	// SocketDir is the directory for agent unix socket files. Defaults to
 	// os.TempDir when empty.
 	SocketDir string
@@ -254,6 +258,12 @@ const (
 	// before the master marks it stale in the cluster view. Three missed
 	// heartbeat intervals.
 	slaveStaleAfter = 3 * leaderReconnectInterval
+	// slaveEvictAfter is how long since a slave's last register/heartbeat
+	// before the master drops it from the registry entirely. Longer than
+	// slaveStaleAfter so a node stays visible as "stale" for a window before
+	// it is reaped, bounding registry growth without hiding a just-departed
+	// node.
+	slaveEvictAfter = 4 * slaveStaleAfter
 	// defaultServerPort is the default TCP port for the node API listener.
 	defaultServerPort = 13420
 	// idTimeDivisor truncates the UnixNano component of agent ids to keep
@@ -418,10 +428,16 @@ func (s *Server) connectLeader(ctx context.Context) {
 	}
 }
 
-// localAddr returns this slave's reachable address for the register
-// payload. In this first version it derives from the configured leader
-// plus the node's port; a real advertised address is a follow-up.
+// localAddr returns this node's reachable address for the register payload —
+// the address the master routes back to. It is the configured advertise
+// address when set; otherwise it falls back to ":<port>", which is not
+// routable from another host, so cross-node routing to this node will fail
+// until cluster.advertise_addr is set.
 func (s *Server) localAddr() string {
+	if s.cfg.AdvertiseAddr != "" {
+		return s.cfg.AdvertiseAddr
+	}
+	logrus.Warn("cluster.advertise_addr is not set; advertising \":<port>\" which is not routable across hosts — master→slave routing will not reach this node")
 	return fmt.Sprintf(":%d", s.cfg.Port)
 }
 
@@ -832,6 +848,7 @@ func (s *Server) Slaves() []SlaveInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
+	s.evictStaleSlavesLocked(now)
 	out := make([]SlaveInfo, 0, len(s.slaves))
 	for id, sl := range s.slaves {
 		out = append(out, SlaveInfo{
@@ -843,6 +860,59 @@ func (s *Server) Slaves() []SlaveInfo {
 		})
 	}
 	return out
+}
+
+// evictStaleSlavesLocked drops slaves whose last register/heartbeat is older
+// than slaveEvictAfter (well past stale), bounding registry growth. The caller
+// must hold s.mu. Mirrors the reap-on-read pattern of RemoteAgentContexts.
+func (s *Server) evictStaleSlavesLocked(now time.Time) {
+	for id, sl := range s.slaves {
+		if now.Sub(sl.lastSeen) > slaveEvictAfter {
+			delete(s.slaves, id)
+		}
+	}
+}
+
+// RemoteAgentNode resolves an agent id to the reachable address of the slave
+// hosting it, for cross-node invoke routing. It returns ok=false when the id
+// is not a known remote agent, its node is stale (not routable) or unknown, or
+// the id is ambiguous (reported by more than one node — logged, never
+// misrouted). Local agents are handled before this is consulted, so a local id
+// does not reach here.
+func (s *Server) RemoteAgentNode(agentID string) (string, bool) {
+	if s.cfg.Mode != ModeMaster {
+		return "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+
+	// Find the node(s) reporting this agent id in the aggregated remote view.
+	// Keys are the unique "nodeID/agentID", so each match is a distinct node;
+	// more than one means the id collides across nodes.
+	var nodeID string
+	matches := 0
+	for key := range s.remoteContexts {
+		i := strings.IndexByte(key, '/')
+		if i < 0 || key[i+1:] != agentID {
+			continue
+		}
+		nodeID = key[:i]
+		matches++
+	}
+	if matches == 0 {
+		return "", false
+	}
+	if matches > 1 {
+		logrus.WithField(logKeyAgent, agentID).Warn("cross-node invoke: agent id is ambiguous across nodes; not routing")
+		return "", false
+	}
+
+	sl, ok := s.slaves[nodeID]
+	if !ok || sl.addr == "" || now.Sub(sl.lastSeen) > slaveStaleAfter {
+		return "", false
+	}
+	return sl.addr, true
 }
 
 // agentNames returns the names of the currently running local agents, sent to

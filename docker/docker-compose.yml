@@ -41,6 +41,7 @@ services:
       HORDE_LOG_LEVEL: "info"
       HORDE_SERVER_LEADER: "master:13420"
       HORDE_CLUSTER_NODE_ID: "slave-1"
+      HORDE_CLUSTER_ADVERTISE_ADDR: "slave1:13420"
     ports:
       - "13421:13420"
     depends_on:
@@ -59,6 +60,7 @@ services:
       HORDE_LOG_LEVEL: "info"
       HORDE_SERVER_LEADER: "master:13420"
       HORDE_CLUSTER_NODE_ID: "slave-2"
+      HORDE_CLUSTER_ADVERTISE_ADDR: "slave2:13420"
     ports:
       - "13422:13420"
     depends_on:

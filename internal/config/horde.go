@@ -35,6 +35,10 @@ type ClusterConfig struct {
 	// DiscoveryMechanism is how nodes find each other. Initially "static"
 	// (configured via Leader), future options: dns, gossip.
 	DiscoveryMechanism string `mapstructure:"discovery_mechanism"`
+	// AdvertiseAddr is the reachable host:port this node advertises to peers
+	// (sent to the master on register so it can route back to this node).
+	// Empty falls back to ":<port>", which is not routable across hosts.
+	AdvertiseAddr string `mapstructure:"advertise_addr"`
 }
 
 // AgentConfig represents agent subprocess configuration.
@@ -223,6 +227,7 @@ var defaults = map[string]any{
 	// Cluster defaults
 	"cluster.node_id":             "",
 	"cluster.discovery_mechanism": "static",
+	"cluster.advertise_addr":      "",
 
 	// Agent defaults
 	"agent.socket_dir":           "/tmp",

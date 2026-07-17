@@ -58,9 +58,37 @@ func invokeAgent(srv invokeView) http.HandlerFunc {
 			invokeAAPAgent(srv, w, r, id)
 			return
 		}
-
-		invokeADKAgent(srv, w, r, id)
+		// A local ADK agent has a unix socket to reverse-proxy to.
+		if srv.AgentSocket(id) != "" {
+			invokeADKAgent(srv, w, r, id)
+			return
+		}
+		// Not local: route to the node that hosts the agent, if known
+		// (master → owning slave). Otherwise it's genuinely unknown.
+		if addr, ok := srv.RemoteAgentNode(id); ok {
+			invokeRemoteAgent(w, r, addr)
+			return
+		}
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: errAgentNotFound})
 	}
+}
+
+// invokeRemoteAgent reverse-proxies the invoke to the node hosting the agent,
+// streaming the SSE response back. The path (/api/v1/agents/{id}/invoke) and
+// body are preserved; Last-Event-ID and other headers pass through, so resume
+// works across the hop. FlushInterval -1 streams each write immediately.
+func invokeRemoteAgent(w http.ResponseWriter, r *http.Request, addr string) {
+	target := &url.URL{Scheme: "http", Host: addr}
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(req *httputil.ProxyRequest) {
+			req.SetURL(target) // host+scheme only; preserves the incoming path + query
+		},
+		FlushInterval: -1,
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+			writeJSON(w, http.StatusBadGateway, errorResponse{Error: "route to owning node: " + err.Error()})
+		},
+	}
+	proxy.ServeHTTP(w, r)
 }
 
 // invokeADKAgent is the Phase 3 reverse-proxy path for native ADK agents.

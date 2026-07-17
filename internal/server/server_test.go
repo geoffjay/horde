@@ -109,6 +109,77 @@ func TestHeartbeat_BeforeRegister(t *testing.T) {
 	})
 }
 
+func TestLocalAddr_AdvertiseAddrOrFallback(t *testing.T) {
+	srv, err := New(Config{Mode: ModeSlave, Port: 13420, AdvertiseAddr: "slave1:13420"})
+	require.NoError(t, err)
+	assert.Equal(t, "slave1:13420", srv.localAddr(), "configured advertise addr is used verbatim")
+
+	srv2, err := New(Config{Mode: ModeSlave, Port: 13421})
+	require.NoError(t, err)
+	assert.Equal(t, ":13421", srv2.localAddr(), "falls back to :<port> when unset")
+}
+
+func TestSlaves_EvictedWhenLongStale(t *testing.T) {
+	srv, err := New(Config{Mode: ModeMaster, NodeID: "master-1"})
+	require.NoError(t, err)
+	base := time.Unix(1_700_000_000, 0)
+	srv.now = func() time.Time { return base }
+	srv.RegisterSlave("slave-1", "slave1:13420")
+	require.Len(t, srv.Slaves(), 1)
+
+	// Past stale but before evict: still present, marked stale (TUI visibility).
+	srv.now = func() time.Time { return base.Add(slaveStaleAfter + time.Second) }
+	sl := srv.Slaves()
+	require.Len(t, sl, 1)
+	assert.True(t, sl[0].Stale)
+
+	// Past the evict threshold: dropped from the registry.
+	srv.now = func() time.Time { return base.Add(slaveEvictAfter + time.Second) }
+	assert.Empty(t, srv.Slaves(), "a long-stale slave should be evicted")
+}
+
+func TestRemoteAgentNode(t *testing.T) {
+	srv, err := New(Config{Mode: ModeMaster, NodeID: "master-1"})
+	require.NoError(t, err)
+	base := time.Unix(1_700_000_000, 0)
+	srv.now = func() time.Time { return base }
+	srv.RegisterSlave("slave-1", "slave1:13420")
+	srv.ReportContexts("slave-1", []ExecutionContext{{AgentID: "a0-1", NodeID: "slave-1"}})
+
+	addr, ok := srv.RemoteAgentNode("a0-1")
+	assert.True(t, ok)
+	assert.Equal(t, "slave1:13420", addr)
+
+	_, ok = srv.RemoteAgentNode("no-such-agent")
+	assert.False(t, ok, "unknown id does not resolve")
+
+	// A stale node is not routable.
+	srv.now = func() time.Time { return base.Add(slaveStaleAfter + time.Second) }
+	_, ok = srv.RemoteAgentNode("a0-1")
+	assert.False(t, ok, "stale node should not be routable")
+}
+
+func TestRemoteAgentNode_Ambiguous(t *testing.T) {
+	srv, err := New(Config{Mode: ModeMaster, NodeID: "master-1"})
+	require.NoError(t, err)
+	base := time.Unix(1_700_000_000, 0)
+	srv.now = func() time.Time { return base }
+	srv.RegisterSlave("slave-1", "slave1:13420")
+	srv.RegisterSlave("slave-2", "slave2:13420")
+	srv.ReportContexts("slave-1", []ExecutionContext{{AgentID: "dup", NodeID: "slave-1"}})
+	srv.ReportContexts("slave-2", []ExecutionContext{{AgentID: "dup", NodeID: "slave-2"}})
+
+	_, ok := srv.RemoteAgentNode("dup")
+	assert.False(t, ok, "an id reported by two nodes must not route")
+}
+
+func TestRemoteAgentNode_SlaveModeReturnsFalse(t *testing.T) {
+	srv, err := New(Config{Mode: ModeSlave, Leader: "master:13420"})
+	require.NoError(t, err)
+	_, ok := srv.RemoteAgentNode("anything")
+	assert.False(t, ok, "a slave holds no remote registry")
+}
+
 func TestSlaves_MarkedStale(t *testing.T) {
 	srv, err := New(Config{Mode: ModeMaster, NodeID: "master-1"})
 	require.NoError(t, err)
