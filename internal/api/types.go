@@ -33,6 +33,13 @@ type agentView interface {
 	// RespondApproval resolves a pending AAP tool-use approval with an
 	// allow/deny decision (node-as-approval-authority).
 	RespondApproval(agentID, requestID string, decision aap.ApprovalDecision) error
+	// ResolveSpawnTarget maps a requested placement node to a concrete
+	// target. local=true means spawn on this node; otherwise addr is the
+	// slave address to forward the spawn to (master → owning node).
+	ResolveSpawnTarget(requested string) (addr string, local bool, err error)
+	// ForwardSpawn posts a spawn to a slave's agents endpoint and relays its
+	// response (status, headers, body) — including the id the slave assigned.
+	ForwardSpawn(ctx context.Context, addr, name string) (int, http.Header, []byte, error)
 }
 
 // clusterView is the subset of *server.Server that cluster handlers need.

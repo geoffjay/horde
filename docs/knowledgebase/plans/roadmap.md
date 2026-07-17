@@ -135,10 +135,11 @@ Detailed plan: [Phase 4 — Distributed](phase-4-distributed.md). Built in slice
 
 * Slave registration with the master. ✅ (Phase 3.5a + slice 1 hardening:
   routable advertised address, stale-slave eviction.)
-* Agent placement and coordination across nodes. **Slice 1 done**: the master
-  routes an invoke to whichever node hosts the agent (cross-node invoke, via a
-  reachable advertised address). Active placement/scheduling (choosing a node
-  to spawn on) is a later slice.
+* Agent placement and coordination across nodes. **Slices 1–2 done**: the
+  master routes an invoke to whichever node hosts the agent (slice 1,
+  cross-node invoke via a reachable advertised address) and can place a new
+  agent on a chosen node — an explicit slave, or `auto` (least-loaded) — via
+  `POST /api/v1/agents` with a `node` field (slice 2, spawn forwarding).
 * Cluster discovery beyond `static` (dns, gossip). *(later slice)*
 * Cross-node event fan-out (the event bus may gain an nng or HTTP
   fan-out layer here). *(later slice; the in-process bus is currently unused.)*

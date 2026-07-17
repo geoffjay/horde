@@ -27,9 +27,13 @@ type agentDTO struct {
 	Healthy bool   `json:"healthy"`
 }
 
-// createAgentRequest is the body of POST /api/v1/agents.
+// createAgentRequest is the body of POST /api/v1/agents. Node is an optional
+// placement target: "" or "local" spawns on this node (unchanged behavior),
+// "auto" asks the master to pick the least-loaded node, and a slave node id
+// places the agent on that slave. Remote placement is master-only.
 type createAgentRequest struct {
 	Name string `json:"name"`
+	Node string `json:"node,omitempty"`
 }
 
 // listAgents returns all currently registered agent subprocesses.
@@ -57,6 +61,23 @@ func createAgent(srv agentView) http.HandlerFunc {
 			return
 		}
 
+		// Resolve placement. A local target spawns here as before; a remote
+		// target forwards the spawn to the owning slave (master → node) and
+		// relays its response, so the id the slave assigns reaches the caller.
+		addr, local, err := srv.ResolveSpawnTarget(req.Node)
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, server.ErrNodeNotFound) {
+				status = http.StatusNotFound
+			}
+			writeJSON(w, status, errorResponse{Error: err.Error()})
+			return
+		}
+		if !local {
+			forwardSpawn(srv, w, r, addr, req.Name)
+			return
+		}
+
 		id, err := srv.SpawnAgent(context.Background(), req.Name)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
@@ -74,6 +95,26 @@ func createAgent(srv agentView) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusCreated, dto)
 	}
+}
+
+// forwardSpawn relays a spawn to the slave hosting the placement target and
+// copies its response (status, headers, body) back to the caller. The slave's
+// local agents endpoint does the actual spawn and returns the agent DTO with
+// the id it assigned; that id becomes routable for invoke once the slave's
+// next heartbeat reaches the master.
+func forwardSpawn(srv agentView, w http.ResponseWriter, r *http.Request, addr, name string) {
+	status, header, body, err := srv.ForwardSpawn(r.Context(), addr, name)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorResponse{Error: "forward spawn to node: " + err.Error()})
+		return
+	}
+	for k, vs := range header {
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 // getAgent returns a single agent by id.

@@ -91,7 +91,7 @@ func invokeRemoteAgent(w http.ResponseWriter, r *http.Request, addr string) {
 	proxy.ServeHTTP(w, r)
 }
 
-// invokeADKAgent is the Phase 3 reverse-proxy path for native ADK agents.
+// invokeADKAgent is the reverse-proxy path for native ADK agents.
 func invokeADKAgent(srv invokeView, w http.ResponseWriter, r *http.Request, id string) {
 	socketPath := srv.AgentSocket(id)
 	if socketPath == "" {
