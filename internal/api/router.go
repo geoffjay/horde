@@ -46,8 +46,12 @@ func Router(srv *server.Server) http.Handler {
 		// Cluster (slave ↔ master)
 		r.Post("/cluster/register", registerSlave(srv))
 		r.Post("/cluster/heartbeat", heartbeat(srv))
+		r.Post("/cluster/events", receiveClusterEvent(srv))
 		r.Get("/cluster/nodes", listNodes(srv))
 		r.Get("/cluster/agents/context", listRemoteAgentContexts(srv))
+
+		// Cluster-activity event stream (SSE)
+		r.Get("/events/stream", streamEvents(srv))
 
 		// Projects
 		r.Route("/projects", func(r chi.Router) {

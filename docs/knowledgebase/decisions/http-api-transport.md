@@ -92,11 +92,14 @@ Brokerless messaging libraries (ZeroMQ, nng/nanomsg) were considered for the
 pub/sub layer and **deferred**. They earn their complexity only when publisher
 and subscriber are separate processes with no shared hub. In horde the server
 *is* the hub, so an in-process bus is strictly simpler and still brokerless.
-Cross-node event fan-out is a Phase 4 problem (see the
-[roadmap](/docs/knowledgebase/plans/roadmap.md)); if HTTP fan-out proves
-insufficient then, nng (nanomsg-next-generation, the actively-maintained
-brokerless option) is the candidate. ActiveMQ and other brokered options are
-out of scope by design.
+Cross-node event fan-out was resolved in Phase 4 slice 4 **over HTTP, no new
+transport**: each node runs its own in-process bus, and a slave pushes its
+events to the master (`POST /api/v1/cluster/events`) which republishes them onto
+its bus, so the master's `/events/stream` is a cluster-wide feed (see the
+[Phase 4 plan](/docs/knowledgebase/plans/phase-4-distributed.md)). nng
+(nanomsg-next-generation, the actively-maintained brokerless option) remains the
+candidate only if HTTP fan-out later proves insufficient (e.g. very high event
+volume). ActiveMQ and other brokered options are out of scope by design.
 
 > **Naming note.** The brokerless ZeroMQ-alternative lineage is
 > `nanomsg → nng` (nanomsg-next-generation). "NanoMQ" is EMQ's edge *MQTT
@@ -110,10 +113,11 @@ out of scope by design.
   `ServerConfig` (currently unused) are consumed by the new HTTP listener.
 * SSE gives `Last-Event-ID` resume for agent token streams; gRPC streaming has
   no equivalent without custom checkpointing.
-* The event bus is internal (not an endpoint); SSE handlers subscribe to it
-  filtered by invocation id. This is the seam Phase 3 (real agents driven by
-  the API) plugs into — the bus + SSE shape does not change, only what the
-  subprocess emits.
-* A second transport (nng or similar) is *not* locked in; the cross-node event
-  shape can be decided in Phase 4 with the distributed topology better
-  understood.
+* The event bus is internal (Go channels, not an endpoint). It carries
+  node/cluster activity — agent lifecycle events (`agent.spawned`/`exiting`/
+  `exited`) — surfaced to clients via the `/events/stream` SSE handler, which
+  subscribes to all events. (Agent token streams use their own per-invocation
+  ring buffers with `Last-Event-ID` resume, not this bus.)
+* A second transport (nng or similar) was *not* needed: Phase 4 slice 4 fans
+  out cross-node events over the existing HTTP transport (slave→master push +
+  republish), matching the direction heartbeat digests already flow.

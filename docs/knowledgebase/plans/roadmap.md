@@ -144,5 +144,9 @@ Detailed plan: [Phase 4 — Distributed](phase-4-distributed.md). Built in slice
   leader via `discovery_mechanism: dns` (an SRV lookup of
   `cluster.discovery_dns_name`, re-resolved each reconnect) instead of a
   hardcoded `server.leader`. Gossip discovery is a later slice.
-* Cross-node event fan-out (the event bus may gain an nng or HTTP
-  fan-out layer here). *(later slice; the in-process bus is currently unused.)*
+* Cross-node event fan-out. **Slice 4 done**: the previously-unused in-process
+  `EventBus` now carries agent lifecycle events (`agent.spawned`/`exiting`/
+  `exited`), streamed over `GET /api/v1/events/stream` (SSE). Slaves push their
+  events to the master (`POST /api/v1/cluster/events`), which republishes them,
+  so the master's stream is a cluster-wide feed. Gossip discovery is the
+  remaining Phase 4 slice.

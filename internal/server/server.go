@@ -387,6 +387,7 @@ func (s *Server) Start(ctx context.Context) error {
 		default:
 			s.leader = newLeaderClient(disco, s.cfg.NodeID, s.localAddr())
 			go s.connectLeader(ctx)
+			go s.forwardEvents(ctx)
 		}
 	}
 
@@ -443,6 +444,39 @@ func (s *Server) connectLeader(ctx context.Context) {
 				s.mu.Lock()
 				s.leaderOK = false
 				s.mu.Unlock()
+			}
+		}
+	}
+}
+
+// forwardEvents subscribes to the local event bus and forwards each event to
+// the master over the cluster API, so the master's /events/stream is a
+// cluster-wide feed. It runs only in slave mode with a leader client and
+// exits when ctx is canceled. Forwarding is best-effort: a failed POST is
+// logged at debug and dropped (the master reconstructs current state from
+// heartbeat digests regardless).
+func (s *Server) forwardEvents(ctx context.Context) {
+	client := s.leader
+	if client == nil {
+		return
+	}
+	events, cancel := s.bus.Subscribe()
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-events:
+			if !ok {
+				return
+			}
+			body, err := json.Marshal(ev)
+			if err != nil {
+				continue
+			}
+			if _, _, _, err := client.forwardRequest(ctx, http.MethodPost, "/api/v1/cluster/events", body); err != nil {
+				logrus.WithError(err).Debug("forward event to leader failed")
 			}
 		}
 	}
@@ -540,6 +574,7 @@ func (s *Server) spawnAgentWithWorkspace(ctx context.Context, name, workspace st
 	}).Info("agent started")
 
 	s.ctxStore.init(id, s.cfg.NodeID)
+	s.publishEvent(EventAgentSpawned, id, name)
 
 	s.trackAgentExit(proc, id, confirmedSocket)
 
@@ -595,6 +630,7 @@ func (s *Server) spawnAAP(ctx context.Context, id, name, workspace string, def *
 	}).Info("aap agent started")
 
 	s.ctxStore.init(id, s.cfg.NodeID)
+	s.publishEvent(EventAgentSpawned, id, name)
 	s.trackAAPAgentExit(proc, id, cancel)
 
 	return id, nil
@@ -653,6 +689,7 @@ func (s *Server) trackAgentExit(proc *agentProc, id, socketPath string) {
 		delete(s.procs, id)
 		s.mu.Unlock()
 		s.ctxStore.setLifecycle(id, AgentExited)
+		s.publishEvent(EventAgentExited, id, "")
 		close(proc.doneCh)
 		_ = os.Remove(socketPath)
 		logrus.WithField("id", id).Info("agent exited")
@@ -673,6 +710,7 @@ func (s *Server) trackAAPAgentExit(proc *agentProc, id string, cancel context.Ca
 		delete(s.procs, id)
 		s.mu.Unlock()
 		s.ctxStore.setLifecycle(id, AgentExited)
+		s.publishEvent(EventAgentExited, id, "")
 		close(proc.doneCh)
 		cancel()
 		logrus.WithField("id", id).Info("aap agent exited")
@@ -719,6 +757,7 @@ func (s *Server) StopAgent(id string) error {
 	}
 	p.state = AgentExiting
 	s.mu.Unlock()
+	s.publishEvent(EventAgentExiting, id, p.name)
 
 	// AAP: send a graceful shutdown frame before signaling.
 	if p.kind == AgentKindAAP && p.aapSession != nil {
@@ -778,9 +817,26 @@ func (s *Server) Port() int { return s.cfg.Port }
 // NodeID returns the node's cluster identifier.
 func (s *Server) NodeID() string { return s.cfg.NodeID }
 
-// EventBus returns the node's in-process event bus, used by SSE handlers
-// to stream agent invocation events to clients.
-func (s *Server) EventBus() *EventBus { return s.bus }
+// publishEvent publishes a cluster-activity event onto the node's bus, tagged
+// with this node's id as the origin.
+func (s *Server) publishEvent(typ, agentID, name string) {
+	s.bus.Publish(Event{Type: typ, Node: s.cfg.NodeID, AgentID: agentID, Name: name})
+}
+
+// SubscribeEvents returns a channel of cluster-activity events and a cancel
+// func the caller must invoke when done. On the master the stream is
+// cluster-wide: it includes events forwarded from slaves.
+//
+//nolint:gocritic // unnamedResult: result types are clear
+func (s *Server) SubscribeEvents() (<-chan Event, func()) {
+	return s.bus.Subscribe()
+}
+
+// PublishClusterEvent republishes an event received from another node onto
+// this node's bus (master-side fan-in), making /events/stream cluster-wide.
+func (s *Server) PublishClusterEvent(ev Event) {
+	s.bus.Publish(ev)
+}
 
 // SetRouter injects the HTTP handler for the node API. When set before Run,
 // Run starts an http.Server on the configured Port serving this handler.

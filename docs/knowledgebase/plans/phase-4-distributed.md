@@ -91,10 +91,38 @@ resolver (`discovery_test.go`); config validation rejects `dns` with no name
 and unknown mechanisms; the static path is unchanged (the real-API
 register/heartbeat integration test still passes).
 
+## Slice 4 — Cross-node event fan-out (complete)
+
+Bring the dormant in-process `EventBus` to life as a **cluster-wide activity
+feed**: a live stream of agent lifecycle transitions, aggregated at the master.
+
+* **Real events.** The node now publishes agent lifecycle events on the bus at
+  the natural seams: `agent.spawned` (after a subprocess starts and its context
+  is initialized — ADK and AAP), `agent.exiting` (on `StopAgent`, before the
+  process exits), and `agent.exited` (after the proc is reaped). Events carry an
+  agent id, the origin node id, and the operator-chosen agent name only — no
+  issue text, notes, or message content — so they are safe to propagate across
+  nodes without the redaction the context store needs.
+* **Local stream.** `GET /api/v1/events/stream` is an SSE feed of the bus
+  (`streamEvents`). It carries only live events (no backlog replay), so the
+  per-frame `id:` is for client correlation, not Last-Event-ID resume.
+* **Cross-node fan-out (slave → master push).** Rather than a fan-in reverse
+  proxy, events flow the same direction as heartbeat digests: a slave runs a
+  `forwardEvents` goroutine that subscribes to its own bus and POSTs each event
+  to the master's `POST /api/v1/cluster/events` (best-effort — a failed POST is
+  logged and dropped). The master republishes received events onto its own bus
+  (`PublishClusterEvent`), so the master's `/events/stream` is the whole
+  cluster's feed with each event's origin node preserved. The receiver is
+  master-only (a slave rejects it with 404), and the master never forwards, so
+  there is no echo loop.
+
+Verified: bus fan-out/drop-on-full/cancel and the republish path are unit
+tested; the SSE framing and the master-only receiver are tested at the API
+layer; the full `POST /cluster/events` → bus → `/events/stream` wiring is
+covered through the router.
+
 ## Later slices (not started)
 
-* **Cross-node event fan-out** — the in-process `EventBus` is currently unused;
-  wire it to real events, then propagate across nodes (HTTP/nng).
 * **Gossip discovery** — a membership protocol (peer-to-peer), the other
   `discovery_mechanism` option beyond `static`/`dns`.
 

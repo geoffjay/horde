@@ -99,6 +99,15 @@ type invokeView interface {
 	RemoteAgentNode(agentID string) (string, bool)
 }
 
+// eventView is the subset of *server.Server the cluster event stream needs.
+// streamEvents subscribes to the bus; receiveClusterEvent (master-only)
+// republishes an event forwarded by a slave.
+type eventView interface {
+	Mode() server.Mode
+	SubscribeEvents() (<-chan server.Event, func())
+	PublishClusterEvent(ev server.Event)
+}
+
 // compile-time: *server.Server satisfies the handler interfaces.
 var (
 	_ nodeView         = (*server.Server)(nil)
@@ -107,4 +116,5 @@ var (
 	_ projectView      = (*server.Server)(nil)
 	_ projectForwarder = (*server.Server)(nil)
 	_ invokeView       = (*server.Server)(nil)
+	_ eventView        = (*server.Server)(nil)
 )

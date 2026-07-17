@@ -77,6 +77,14 @@ response structs; an integration test
 (`internal/server/integration_test.go`) drives the real leader-client against
 the real `api.Router` to catch drift between the two.
 
+Beyond the periodic heartbeat snapshot, the cluster has a live activity feed:
+each node publishes agent lifecycle events (`agent.spawned`/`exiting`/`exited`)
+on an in-process bus, served over SSE at `GET /api/v1/events/stream`. A slave
+pushes its events to the master (`POST /api/v1/cluster/events`), which
+republishes them, so the master's stream is a cluster-wide feed with each
+event's origin node preserved — the same slave→master direction the heartbeat
+digests flow, no new transport.
+
 Readiness reflects this: `GET /api/v1/ready` returns 200 for a master (always
 ready) and for a connected slave, but **503** for a slave whose leader
 connection is not established (`{status:"degraded", leader:"degraded"}`), so
