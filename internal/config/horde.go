@@ -33,8 +33,8 @@ type ClusterConfig struct {
 	// empty a generated id is used.
 	NodeID string `mapstructure:"node_id"`
 	// DiscoveryMechanism is how a slave finds its leader: "static" (via
-	// server.leader) or "dns" (an SRV lookup of DiscoveryDNSName). "gossip" is
-	// a future option.
+	// server.leader), "dns" (an SRV lookup of DiscoveryDNSName), or "gossip"
+	// (a peer-to-peer membership ring; the master advertises itself).
 	DiscoveryMechanism string `mapstructure:"discovery_mechanism"`
 	// DiscoveryDNSName is the SRV name a slave looks up when DiscoveryMechanism
 	// is "dns" (e.g. "_horde._tcp.example.com"). The lowest-priority target's
@@ -44,6 +44,15 @@ type ClusterConfig struct {
 	// (sent to the master on register so it can route back to this node).
 	// Empty falls back to ":<port>", which is not routable across hosts.
 	AdvertiseAddr string `mapstructure:"advertise_addr"`
+	// GossipBindAddr / GossipAdvertiseAddr are the host:port the gossip
+	// listeners bind and advertise when DiscoveryMechanism is "gossip". Empty
+	// uses the memberlist LAN defaults (0.0.0.0:7946).
+	GossipBindAddr      string `mapstructure:"gossip_bind_addr"`
+	GossipAdvertiseAddr string `mapstructure:"gossip_advertise_addr"`
+	// GossipSeeds is a comma-separated list of gossip addresses a node joins to
+	// bootstrap ring membership (e.g. "master:7946"). A scalar (not a list) so
+	// it also works via HORDE_CLUSTER_GOSSIP_SEEDS. A slave needs at least one.
+	GossipSeeds string `mapstructure:"gossip_seeds"`
 }
 
 // AgentConfig represents agent subprocess configuration.
@@ -230,10 +239,13 @@ var defaults = map[string]any{
 	"server.idle_timeout":  defaultServerIdleTimeout,
 
 	// Cluster defaults
-	"cluster.node_id":             "",
-	"cluster.discovery_mechanism": "static",
-	"cluster.discovery_dns_name":  "",
-	"cluster.advertise_addr":      "",
+	"cluster.node_id":               "",
+	"cluster.discovery_mechanism":   "static",
+	"cluster.discovery_dns_name":    "",
+	"cluster.gossip_bind_addr":      "",
+	"cluster.gossip_advertise_addr": "",
+	"cluster.gossip_seeds":          "",
+	"cluster.advertise_addr":        "",
 
 	// Agent defaults
 	"agent.socket_dir":           "/tmp",
@@ -340,8 +352,14 @@ func (c *Config) Validate() error {
 		if c.Cluster.DiscoveryDNSName == "" {
 			return fmt.Errorf("cluster.discovery_mechanism \"dns\" requires cluster.discovery_dns_name")
 		}
+	case "gossip":
+		// A slave must know at least one seed to join the ring; a master is
+		// typically the seed itself, so seeds are optional for it.
+		if c.Mode == "slave" && c.Cluster.GossipSeeds == "" {
+			return fmt.Errorf("cluster.discovery_mechanism \"gossip\" requires cluster.gossip_seeds on a slave")
+		}
 	default:
-		return fmt.Errorf("invalid cluster.discovery_mechanism %q: want static or dns", c.Cluster.DiscoveryMechanism)
+		return fmt.Errorf("invalid cluster.discovery_mechanism %q: want static, dns, or gossip", c.Cluster.DiscoveryMechanism)
 	}
 
 	return nil

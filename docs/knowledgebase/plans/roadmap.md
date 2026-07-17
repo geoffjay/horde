@@ -148,5 +148,9 @@ Detailed plan: [Phase 4 — Distributed](phase-4-distributed.md). Built in slice
   `EventBus` now carries agent lifecycle events (`agent.spawned`/`exiting`/
   `exited`), streamed over `GET /api/v1/events/stream` (SSE). Slaves push their
   events to the master (`POST /api/v1/cluster/events`), which republishes them,
-  so the master's stream is a cluster-wide feed. Gossip discovery is the
-  remaining Phase 4 slice.
+  so the master's stream is a cluster-wide feed.
+* Gossip discovery. **Slice 5 done**: the third `discovery_mechanism` —
+  `gossip` — has slaves find the master through a `hashicorp/memberlist` (SWIM)
+  ring, where the master advertises itself; no per-slave leader address. This
+  completes Phase 4. Automatic leader *failover* is deferred (see the
+  [cluster failover](../concepts/cluster-failover.md) concept doc).

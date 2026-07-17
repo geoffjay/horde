@@ -57,6 +57,7 @@ every edit.
 * [Agent execution context](concepts/agent-execution-context.md) - queryable per-agent work-state (project, issue, blocked, waiting, errors, approvals).
 * [Releases](concepts/releases.md) - how releases work: tagging, goreleaser, GitHub releases, and the Homebrew tap.
 * [systemd service](concepts/systemd-service.md) - running horde as a user systemd service on Linux.
+* [Cluster leader failover](concepts/cluster-failover.md) - what automatic leader failover would require (not implemented); why gossip discovery stops at membership + leader lookup.
 
 ## Decisions
 
@@ -90,7 +91,7 @@ every edit.
 * [TUI for projects, teams, and execution context](plans/tui-projects.md) - complete; the breadcrumb-navigated TUI over the Slice B domain (projects, teams, execution context, invoke, cluster).
 * [Distributed project management](plans/distributed-project-management.md) - forward project mutations from slave to master, and add a `horde project` CLI subcommand.
 * [AAP host — driving external coding agents](plans/aap-host.md) - Phase 3.6: the node spawns AAP adapters over stdio, bridges turns to the invoke SSE stream, wires node-as-approval-authority, and consumes context/error/approval frames at full fidelity.
-* [Phase 4 — Distributed](plans/phase-4-distributed.md) - making a cluster act across nodes, in slices; slices 1 (cross-node invoke routing), 2 (agent placement/scheduling via a `node` field), 3 (dns leader discovery), and 4 (cross-node event fan-out) are done; gossip discovery remains.
+* [Phase 4 — Distributed](plans/phase-4-distributed.md) - making a cluster act across nodes, in slices; **complete**: cross-node invoke routing (1), agent placement (2), dns discovery (3), cross-node event fan-out (4), and gossip discovery (5). Automatic leader failover is deferred — see [cluster failover](concepts/cluster-failover.md).
 
 ## References
 

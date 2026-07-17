@@ -1,0 +1,37 @@
+# Gossip-discovery overlay for the integration cluster.
+#
+# Layers on top of docker-compose.yml to switch leader discovery from the
+# default `static` (HORDE_SERVER_LEADER) to `gossip`: every node joins a
+# memberlist ring, the master advertises itself as the leader, and slaves learn
+# the master's HTTP address from the gossiped membership — no per-slave leader
+# address. HORDE_SERVER_LEADER stays set in the base file but is ignored under
+# the gossip mechanism.
+#
+# Run:
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.gossip.yml up --build -d
+#
+# Gossip uses UDP+TCP 7946 between containers on the shared `horde` network; no
+# host port mapping is needed. The master must advertise a routable HTTP addr
+# (cluster.advertise_addr) so the address it gossips is reachable by slaves.
+
+services:
+  master:
+    environment:
+      HORDE_CLUSTER_DISCOVERY_MECHANISM: "gossip"
+      HORDE_CLUSTER_ADVERTISE_ADDR: "master:13420"
+      HORDE_CLUSTER_GOSSIP_BIND_ADDR: "0.0.0.0:7946"
+      HORDE_CLUSTER_GOSSIP_ADVERTISE_ADDR: "master:7946"
+
+  slave1:
+    environment:
+      HORDE_CLUSTER_DISCOVERY_MECHANISM: "gossip"
+      HORDE_CLUSTER_GOSSIP_BIND_ADDR: "0.0.0.0:7946"
+      HORDE_CLUSTER_GOSSIP_ADVERTISE_ADDR: "slave1:7946"
+      HORDE_CLUSTER_GOSSIP_SEEDS: "master:7946"
+
+  slave2:
+    environment:
+      HORDE_CLUSTER_DISCOVERY_MECHANISM: "gossip"
+      HORDE_CLUSTER_GOSSIP_BIND_ADDR: "0.0.0.0:7946"
+      HORDE_CLUSTER_GOSSIP_ADVERTISE_ADDR: "slave2:7946"
+      HORDE_CLUSTER_GOSSIP_SEEDS: "master:7946"

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -70,6 +71,9 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		Leader:              cfg.Server.Leader,
 		DiscoveryMechanism:  cfg.Cluster.DiscoveryMechanism,
 		DiscoveryDNSName:    cfg.Cluster.DiscoveryDNSName,
+		GossipBindAddr:      cfg.Cluster.GossipBindAddr,
+		GossipAdvertiseAddr: cfg.Cluster.GossipAdvertiseAddr,
+		GossipSeeds:         splitSeeds(cfg.Cluster.GossipSeeds),
 		SpawnDefaultAgent:   true,
 		Port:                cfg.Server.Port,
 		ReadTimeout:         time.Duration(cfg.Server.ReadTimeout) * time.Second,
@@ -141,6 +145,21 @@ func buildServerAgentDefs(cfgs map[string]config.AgentDef) map[string]server.Age
 			}
 		}
 		out[name] = def
+	}
+	return out
+}
+
+// splitSeeds parses the comma-separated cluster.gossip_seeds value into a slice
+// of gossip addresses, trimming whitespace and dropping empties.
+func splitSeeds(seeds string) []string {
+	if seeds == "" {
+		return nil
+	}
+	var out []string
+	for _, s := range strings.Split(seeds, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
 	}
 	return out
 }

@@ -121,10 +121,55 @@ tested; the SSE framing and the master-only receiver are tested at the API
 layer; the full `POST /cluster/events` → bus → `/events/stream` wiring is
 covered through the router.
 
-## Later slices (not started)
+## Slice 5 — Gossip discovery (complete)
 
-* **Gossip discovery** — a membership protocol (peer-to-peer), the other
-  `discovery_mechanism` option beyond `static`/`dns`.
+The last `discovery_mechanism`: a slave finds its master through a **peer-to-peer
+membership ring** — no per-slave leader address and no DNS.
+
+* **Transport.** `github.com/hashicorp/memberlist` (SWIM) — the de-facto Go
+  gossip library, chosen over a hand-rolled protocol for its mature failure
+  detection and anti-entropy.
+* **Discovery only.** The master is still statically designated
+  (`--mode master`); there is no leader election. Every node joins the ring; the
+  master advertises `role=master` plus its HTTP address in memberlist node
+  metadata (`nodeMeta`, JSON, ≤512 B — a role and an address, nothing
+  sensitive). A slave's `gossipDiscoverer` reads the ring for the master's
+  address and then registers/heartbeats over HTTP exactly as before — the
+  `leaderClient` re-resolves through the `Discoverer` each reconnect, so gossip
+  slots in with no change to the register path.
+* **Node.** `internal/server/gossip.go` wraps memberlist: `newGossipNode` binds
+  the listeners (fatal on failure, surfaced from `Start`), does an initial
+  `Join(seeds)`, and runs a background re-join loop while no master is visible
+  so a node that starts before the master converges without a restart.
+  `leaderAPIAddr()` scans members for `role=master`; `shutdown()` (Leave +
+  Shutdown) runs on `ctx` cancel (there is no `Stop()`). A `gossipMembers` seam
+  keeps `gossipDiscoverer` unit-testable without binding ports (mirrors the
+  `lookupSRV` seam for dns).
+* **Config.** `cluster.gossip_bind_addr`, `cluster.gossip_advertise_addr`, and
+  `cluster.gossip_seeds` (a comma-separated **string**, not a list, so it also
+  works via `HORDE_CLUSTER_GOSSIP_SEEDS` — viper here has no slice-env decode
+  hook). `Validate` requires seeds for a gossip *slave* (a master is the seed).
+  Under `gossip` the master must set `cluster.advertise_addr` so the HTTP
+  address it gossips is routable.
+
+Verified: real two-node memberlist convergence on loopback
+(`gossip_test.go`), the discoverer via a fake, config validation, and
+end-to-end on a three-node docker cluster (`docker-compose.gossip.yml`) where
+slaves registered with the master having discovered its address through gossip
+alone (no `server.leader`), then a slave-hosted agent was invoked through the
+master.
+
+**Leader failover is out of scope** — see the
+[cluster leader failover](../concepts/cluster-failover.md) concept doc for what
+it would require.
+
+## Phase 4 complete
+
+All five slices have landed: cross-node invoke routing (1), agent placement (2),
+dns discovery (3), cross-node event fan-out (4), and gossip discovery (5). A
+horde cluster now acts across nodes — routing, placement, discovery, and a
+cluster-wide event feed. Automatic leader failover is deliberately deferred
+(concept doc above).
 
 ## Slice follow-ups (logged, out of scope)
 

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -13,9 +14,44 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// fakeGossip is a gossipMembers test double so the gossipDiscoverer can be
+// tested without binding real gossip listeners.
+type fakeGossip struct {
+	addr string
+	err  error
+}
+
+func (f *fakeGossip) leaderAPIAddr() (string, error) { return f.addr, f.err }
+func (f *fakeGossip) describe() string               { return "gossip(fake)" }
+
+func TestGossipDiscoverer(t *testing.T) {
+	d := &gossipDiscoverer{node: &fakeGossip{addr: "master:13420"}}
+	addr, err := d.Leader(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "master:13420", addr)
+	assert.Equal(t, "gossip(fake)", d.Describe())
+
+	// No master visible yet → the resolve error propagates (the leaderClient
+	// retries on its next reconnect tick).
+	derr := &gossipDiscoverer{node: &fakeGossip{err: errors.New("no master yet")}}
+	_, err = derr.Leader(context.Background())
+	assert.Error(t, err)
+}
+
+func TestNewDiscoverer_Gossip(t *testing.T) {
+	// gossip with a running node → gossipDiscoverer.
+	d, err := newDiscoverer(DiscoveryConfig{Mechanism: "gossip"}, &fakeGossip{addr: "master:13420"})
+	require.NoError(t, err)
+	assert.IsType(t, &gossipDiscoverer{}, d)
+
+	// gossip with no node → error.
+	_, err = newDiscoverer(DiscoveryConfig{Mechanism: "gossip"}, nil)
+	assert.Error(t, err)
+}
+
 func TestNewDiscoverer(t *testing.T) {
 	// static with a leader → static discoverer, scheme stripped.
-	d, err := newDiscoverer(DiscoveryConfig{Mechanism: "static", Leader: "http://master:13420"})
+	d, err := newDiscoverer(DiscoveryConfig{Mechanism: "static", Leader: "http://master:13420"}, nil)
 	require.NoError(t, err)
 	require.IsType(t, &staticDiscoverer{}, d)
 	addr, err := d.Leader(context.Background())
@@ -23,26 +59,30 @@ func TestNewDiscoverer(t *testing.T) {
 	assert.Equal(t, "master:13420", addr)
 
 	// empty mechanism defaults to static.
-	d, err = newDiscoverer(DiscoveryConfig{Leader: "master:13420"})
+	d, err = newDiscoverer(DiscoveryConfig{Leader: "master:13420"}, nil)
 	require.NoError(t, err)
 	assert.IsType(t, &staticDiscoverer{}, d)
 
 	// static with no leader → standalone sentinel.
-	d, err = newDiscoverer(DiscoveryConfig{Mechanism: "static"})
+	d, err = newDiscoverer(DiscoveryConfig{Mechanism: "static"}, nil)
 	assert.ErrorIs(t, err, errStandaloneSlave, "a slave with no leader is standalone")
 	assert.Nil(t, d)
 
 	// dns with a name → dns discoverer.
-	d, err = newDiscoverer(DiscoveryConfig{Mechanism: "dns", DNSName: "_horde._tcp.example.com"})
+	d, err = newDiscoverer(DiscoveryConfig{Mechanism: "dns", DNSName: "_horde._tcp.example.com"}, nil)
 	require.NoError(t, err)
 	assert.IsType(t, &dnsDiscoverer{}, d)
 
 	// dns without a name → error.
-	_, err = newDiscoverer(DiscoveryConfig{Mechanism: "dns"})
+	_, err = newDiscoverer(DiscoveryConfig{Mechanism: "dns"}, nil)
+	require.Error(t, err)
+
+	// gossip with no running node → error.
+	_, err = newDiscoverer(DiscoveryConfig{Mechanism: "gossip"}, nil)
 	require.Error(t, err)
 
 	// unknown mechanism → error.
-	_, err = newDiscoverer(DiscoveryConfig{Mechanism: "gossip"})
+	_, err = newDiscoverer(DiscoveryConfig{Mechanism: "raft"}, nil)
 	require.Error(t, err)
 }
 
@@ -120,7 +160,7 @@ func TestLeaderClient_ResolvesViaDNSThenRegisters(t *testing.T) {
 }
 
 func TestLeaderClient_StaticSeedsCachedAddr(t *testing.T) {
-	disco, err := newDiscoverer(DiscoveryConfig{Leader: "master:13420"})
+	disco, err := newDiscoverer(DiscoveryConfig{Leader: "master:13420"}, nil)
 	require.NoError(t, err)
 	c := newLeaderClient(disco, "slave-1", "")
 	assert.Equal(t, "master:13420", c.leaderAddr(), "static discoverer seeds leaderAddr before the first register")

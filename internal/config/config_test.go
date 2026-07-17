@@ -189,9 +189,27 @@ func TestConfig_Validate(t *testing.T) {
 
 	t.Run("unknown discovery mechanism", func(t *testing.T) {
 		c := valid()
-		c.Cluster.DiscoveryMechanism = "gossip"
+		c.Cluster.DiscoveryMechanism = "raft"
 		err := c.Validate()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "discovery_mechanism")
+	})
+
+	t.Run("gossip requires seeds on a slave", func(t *testing.T) {
+		c := valid()
+		c.Mode = "slave"
+		c.Cluster.DiscoveryMechanism = "gossip"
+		err := c.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "gossip_seeds")
+
+		c.Cluster.GossipSeeds = "master:7946"
+		assert.NoError(t, c.Validate())
+	})
+
+	t.Run("gossip master needs no seeds", func(t *testing.T) {
+		c := valid() // master
+		c.Cluster.DiscoveryMechanism = "gossip"
+		assert.NoError(t, c.Validate())
 	})
 }

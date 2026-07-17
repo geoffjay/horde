@@ -66,6 +66,16 @@ type Config struct {
 	// DiscoveryDNSName is the SRV name a slave looks up when DiscoveryMechanism
 	// is "dns". Populated from cluster.discovery_dns_name.
 	DiscoveryDNSName string
+	// GossipBindAddr / GossipAdvertiseAddr are the host:port the gossip
+	// listeners bind and advertise when DiscoveryMechanism is "gossip"
+	// (from cluster.gossip_bind_addr / cluster.gossip_advertise_addr). Empty
+	// uses the memberlist LAN defaults (0.0.0.0:7946).
+	GossipBindAddr      string
+	GossipAdvertiseAddr string
+	// GossipSeeds are the gossip addresses a node joins to bootstrap ring
+	// membership (from cluster.gossip_seeds, comma-split). A slave needs at
+	// least one; a master is typically the seed itself.
+	GossipSeeds []string
 	// SpawnDefaultAgent controls whether Start spawns the default greeter
 	// agent. Tests set this to false to avoid spawning real subprocesses.
 	SpawnDefaultAgent bool
@@ -180,6 +190,7 @@ type Server struct {
 	leaderOK bool
 	slaves   map[string]knownSlave
 	bus      *EventBus
+	gossip   *gossipNode
 	router   http.Handler
 	ctxStore *contextStore
 	projects ProjectStore
@@ -373,12 +384,43 @@ func (s *Server) Start(ctx context.Context) error {
 	// never blocks local operation. The leader client is created here (not
 	// in connectLeader) so LeaderAddr() returns the master address as soon
 	// as Start returns, even before the first register attempt completes.
+	// Gossip discovery requires every node to join the ring so the master is
+	// discoverable: the master advertises Role=master, a slave Role=slave.
+	// Create it synchronously (a bind failure surfaces from Start) and tear it
+	// down on ctx cancel (there is no Stop() method — teardown is ctx-driven,
+	// matching connectLeader/forwardEvents).
+	var gossip gossipMembers
+	if s.cfg.DiscoveryMechanism == discoveryGossip {
+		role := roleSlave
+		if s.cfg.Mode == ModeMaster {
+			role = roleMaster
+		}
+		node, err := newGossipNode(gossipConfig{
+			NodeID:        s.cfg.NodeID,
+			Role:          role,
+			APIAddr:       s.localAddr(),
+			BindAddr:      s.cfg.GossipBindAddr,
+			AdvertiseAddr: s.cfg.GossipAdvertiseAddr,
+			Seeds:         s.cfg.GossipSeeds,
+		})
+		if err != nil {
+			return fmt.Errorf("start gossip: %w", err)
+		}
+		s.gossip = node
+		gossip = node
+		logrus.WithFields(logrus.Fields{"role": role, "seeds": s.cfg.GossipSeeds}).Info("gossip discovery started")
+		go func() {
+			<-ctx.Done()
+			node.shutdown()
+		}()
+	}
+
 	if s.cfg.Mode == ModeSlave {
 		disco, err := newDiscoverer(DiscoveryConfig{
 			Mechanism: s.cfg.DiscoveryMechanism,
 			Leader:    s.cfg.Leader,
 			DNSName:   s.cfg.DiscoveryDNSName,
-		})
+		}, gossip)
 		switch {
 		case errors.Is(err, errStandaloneSlave):
 			logrus.Warn("slave mode without a leader source; running standalone")

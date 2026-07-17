@@ -40,13 +40,23 @@ type DiscoveryConfig struct {
 const (
 	discoveryStatic = "static"
 	discoveryDNS    = "dns"
+	discoveryGossip = "gossip"
 )
+
+// gossipMembers is the subset of a gossip node the gossipDiscoverer needs. It
+// is an interface so Leader() can be unit-tested with a fake, without binding
+// the gossip listeners (mirrors the lookupSRV seam used by dnsDiscoverer).
+type gossipMembers interface {
+	leaderAPIAddr() (string, error)
+	describe() string
+}
 
 // newDiscoverer builds the Discoverer for a slave. It returns errStandaloneSlave
 // for the static mechanism with no leader configured — the caller runs without
-// a leader connection. It returns another error for an unknown mechanism or a
-// dns mechanism missing its name.
-func newDiscoverer(cfg DiscoveryConfig) (Discoverer, error) {
+// a leader connection. It returns another error for an unknown mechanism, a dns
+// mechanism missing its name, or a gossip mechanism with no running gossip node.
+// gossip is the node's live gossip membership (nil for static/dns).
+func newDiscoverer(cfg DiscoveryConfig, gossip gossipMembers) (Discoverer, error) {
 	switch cfg.Mechanism {
 	case "", discoveryStatic:
 		if cfg.Leader == "" {
@@ -58,8 +68,13 @@ func newDiscoverer(cfg DiscoveryConfig) (Discoverer, error) {
 			return nil, fmt.Errorf("discovery_mechanism %q requires cluster.discovery_dns_name", discoveryDNS)
 		}
 		return &dnsDiscoverer{name: cfg.DNSName, lookupSRV: net.DefaultResolver.LookupSRV}, nil
+	case discoveryGossip:
+		if gossip == nil {
+			return nil, fmt.Errorf("discovery_mechanism %q requires a running gossip node", discoveryGossip)
+		}
+		return &gossipDiscoverer{node: gossip}, nil
 	default:
-		return nil, fmt.Errorf("unknown cluster.discovery_mechanism %q (want %q or %q)", cfg.Mechanism, discoveryStatic, discoveryDNS)
+		return nil, fmt.Errorf("unknown cluster.discovery_mechanism %q (want %q, %q, or %q)", cfg.Mechanism, discoveryStatic, discoveryDNS, discoveryGossip)
 	}
 }
 
@@ -118,3 +133,16 @@ func pickSRV(addrs []*net.SRV) *net.SRV {
 	}
 	return best
 }
+
+// gossipDiscoverer resolves the leader from a peer-to-peer gossip membership:
+// the master advertises Role=master in its gossip metadata, and this reads the
+// ring for the master's advertised HTTP address. It errors until a master is
+// visible, which the leaderClient treats like any transient resolve failure
+// (retried on the next reconnect tick).
+type gossipDiscoverer struct{ node gossipMembers }
+
+func (d *gossipDiscoverer) Leader(context.Context) (string, error) {
+	return d.node.leaderAPIAddr()
+}
+
+func (d *gossipDiscoverer) Describe() string { return d.node.describe() }
