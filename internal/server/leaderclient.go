@@ -7,39 +7,69 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+	"sync"
 	"time"
 )
 
 // leaderClient is a thin HTTP client over the master node's cluster API.
-// A slave uses it in connectLeader to register and then heartbeat.
+// A slave uses it in connectLeader to register and then heartbeat. The leader
+// address is resolved through a Discoverer on each call, so a dns-discovered
+// leader that moves is picked up without a restart; the last resolved address
+// is cached for leaderAddr().
 type leaderClient struct {
-	leader string
+	disco  Discoverer
 	nodeID string
 	addr   string
 	client *http.Client
+
+	mu     sync.Mutex
+	leader string // last resolved leader address (cached for leaderAddr)
 }
 
 // leaderClientTimeout is the per-request timeout for leader round-trips.
 const leaderClientTimeout = 5 * time.Second
 
-// newLeaderClient constructs a leader client. leader is the master address
-// (host:port), nodeID is this slave's cluster id, addr is this slave's
-// reachable address (optional, for the register payload).
-func newLeaderClient(leader, nodeID, addr string) *leaderClient {
-	leader = strings.TrimPrefix(leader, "http://")
-	leader = strings.TrimPrefix(leader, "https://")
-	return &leaderClient{
-		leader: leader,
+// newLeaderClient constructs a leader client. disco resolves the master
+// address, nodeID is this slave's cluster id, addr is this slave's reachable
+// address (optional, for the register payload). A static discoverer seeds the
+// cached address immediately so leaderAddr() is available before the first
+// register; a dns discoverer resolves lazily in the background (no network in
+// the constructor).
+func newLeaderClient(disco Discoverer, nodeID, addr string) *leaderClient {
+	c := &leaderClient{
+		disco:  disco,
 		nodeID: nodeID,
 		addr:   addr,
 		client: &http.Client{Timeout: leaderClientTimeout},
 	}
+	if sd, ok := disco.(*staticDiscoverer); ok {
+		c.leader = sd.addr
+	}
+	return c
+}
+
+// resolve asks the discoverer for the current leader address, caches it for
+// leaderAddr(), and returns it.
+func (c *leaderClient) resolve(ctx context.Context) (string, error) {
+	addr, err := c.disco.Leader(ctx)
+	if err != nil {
+		return "", err
+	}
+	addr = normalizeAddr(addr)
+	c.mu.Lock()
+	c.leader = addr
+	c.mu.Unlock()
+	return addr, nil
 }
 
 // register calls POST /api/v1/cluster/register on the master. Returns the
 // leader's node id on success.
 func (c *leaderClient) register(ctx context.Context) (string, error) {
+	leader, err := c.resolve(ctx)
+	if err != nil {
+		return "", err
+	}
+
 	body, err := json.Marshal(registerPayload{
 		NodeID: c.nodeID,
 		Mode:   string(ModeSlave),
@@ -49,7 +79,7 @@ func (c *leaderClient) register(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	url := fmt.Sprintf("http://%s/api/v1/cluster/register", c.leader)
+	url := fmt.Sprintf("http://%s/api/v1/cluster/register", leader)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return "", err
@@ -76,6 +106,11 @@ func (c *leaderClient) register(ctx context.Context) (string, error) {
 // heartbeat calls POST /api/v1/cluster/heartbeat on the master, reporting this
 // slave's node id, its running agents, and their execution context digests.
 func (c *leaderClient) heartbeat(ctx context.Context, agents []string, digests []ExecutionContextDigest) error {
+	leader, err := c.resolve(ctx)
+	if err != nil {
+		return err
+	}
+
 	body, err := json.Marshal(heartbeatPayload{
 		NodeID:   c.nodeID,
 		Agents:   agents,
@@ -85,7 +120,7 @@ func (c *leaderClient) heartbeat(ctx context.Context, agents []string, digests [
 		return err
 	}
 
-	url := fmt.Sprintf("http://%s/api/v1/cluster/heartbeat", c.leader)
+	url := fmt.Sprintf("http://%s/api/v1/cluster/heartbeat", leader)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -104,9 +139,14 @@ func (c *leaderClient) heartbeat(ctx context.Context, agents []string, digests [
 	return nil
 }
 
-// leaderAddr returns the master address (host:port) or empty when no leader
-// is configured.
-func (c *leaderClient) leaderAddr() string { return c.leader }
+// leaderAddr returns the last resolved master address (host:port), or empty
+// before the first successful resolve (e.g. a dns discoverer that has not yet
+// looked up its SRV record).
+func (c *leaderClient) leaderAddr() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.leader
+}
 
 // forwardRequest forwards an HTTP request to the master node, copying the
 // response status, headers, and body back to the caller. It is used by slave
@@ -115,7 +155,11 @@ func (c *leaderClient) leaderAddr() string { return c.leader }
 //
 //nolint:gocritic // unnamedResult: result types are clear from context
 func (c *leaderClient) forwardRequest(ctx context.Context, method, path string, body []byte) (int, http.Header, []byte, error) {
-	url := fmt.Sprintf("http://%s%s", c.leader, path)
+	leader, err := c.resolve(ctx)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("resolve leader: %w", err)
+	}
+	url := fmt.Sprintf("http://%s%s", leader, path)
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, nil, err

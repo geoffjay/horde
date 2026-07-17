@@ -68,6 +68,8 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		Mode:                server.Mode(cfg.Mode),
 		AgentCommand:        cfg.Server.AgentCommand,
 		Leader:              cfg.Server.Leader,
+		DiscoveryMechanism:  cfg.Cluster.DiscoveryMechanism,
+		DiscoveryDNSName:    cfg.Cluster.DiscoveryDNSName,
 		SpawnDefaultAgent:   true,
 		Port:                cfg.Server.Port,
 		ReadTimeout:         time.Duration(cfg.Server.ReadTimeout) * time.Second,

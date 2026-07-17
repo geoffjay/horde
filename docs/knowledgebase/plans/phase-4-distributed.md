@@ -62,12 +62,41 @@ Verified end-to-end: on a two-node cluster, `POST /api/v1/agents` with
 `node: "slave-1"` on the master spawned the agent on the slave and a subsequent
 invoke through the master streamed its response back.
 
+## Slice 3 — Discovery beyond `static` (complete)
+
+Remove the hardcoded-leader-address dependency: a slave can **find its leader
+via DNS** instead of a configured `server.leader`.
+
+* **Mechanism.** `cluster.discovery_mechanism` is now honoured: `static`
+  (default, dial the configured `server.leader`) or `dns` (an SRV lookup of
+  `cluster.discovery_dns_name`). `gossip` remains a future option.
+  `static`-with-a-hostname already resolves via the OS resolver, so the `dns`
+  mechanism specifically adds **SRV** discovery — dynamic host+port and multiple
+  prioritized targets, which a plain hostname cannot express.
+* **Abstraction.** A `Discoverer` (`internal/server/discovery.go`) resolves the
+  leader address: `staticDiscoverer` returns the configured address;
+  `dnsDiscoverer` does an SRV lookup and picks the lowest-priority target (ties
+  broken by highest weight), trimming the trailing dot and joining `host:port`.
+  `newDiscoverer` returns `(nil, nil)` for a standalone slave (static, no
+  leader), and an error for an unknown mechanism or a `dns` mechanism missing
+  its name (also validated in `config.Validate`).
+* **Re-resolution.** The `leaderClient` resolves through the `Discoverer` on
+  every register/heartbeat/forward and caches the result for `leaderAddr()`, so
+  a dns-discovered leader that moves or comes up later is picked up without a
+  restart (a static discoverer seeds the cache immediately; dns resolves lazily
+  in the background so `Start` never blocks on a lookup).
+
+Verified: SRV target selection and the resolve→register path via an injected
+resolver (`discovery_test.go`); config validation rejects `dns` with no name
+and unknown mechanisms; the static path is unchanged (the real-API
+register/heartbeat integration test still passes).
+
 ## Later slices (not started)
 
-* **Discovery beyond `static`** — implement `cluster.discovery_mechanism`
-  (dns/gossip) so nodes find peers without a hardcoded leader address.
 * **Cross-node event fan-out** — the in-process `EventBus` is currently unused;
   wire it to real events, then propagate across nodes (HTTP/nng).
+* **Gossip discovery** — a membership protocol (peer-to-peer), the other
+  `discovery_mechanism` option beyond `static`/`dns`.
 
 ## Slice follow-ups (logged, out of scope)
 

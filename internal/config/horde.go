@@ -32,9 +32,14 @@ type ClusterConfig struct {
 	// NodeID is the unique identifier for this node within the cluster. When
 	// empty a generated id is used.
 	NodeID string `mapstructure:"node_id"`
-	// DiscoveryMechanism is how nodes find each other. Initially "static"
-	// (configured via Leader), future options: dns, gossip.
+	// DiscoveryMechanism is how a slave finds its leader: "static" (via
+	// server.leader) or "dns" (an SRV lookup of DiscoveryDNSName). "gossip" is
+	// a future option.
 	DiscoveryMechanism string `mapstructure:"discovery_mechanism"`
+	// DiscoveryDNSName is the SRV name a slave looks up when DiscoveryMechanism
+	// is "dns" (e.g. "_horde._tcp.example.com"). The lowest-priority target's
+	// host:port becomes the leader address.
+	DiscoveryDNSName string `mapstructure:"discovery_dns_name"`
 	// AdvertiseAddr is the reachable host:port this node advertises to peers
 	// (sent to the master on register so it can route back to this node).
 	// Empty falls back to ":<port>", which is not routable across hosts.
@@ -227,6 +232,7 @@ var defaults = map[string]any{
 	// Cluster defaults
 	"cluster.node_id":             "",
 	"cluster.discovery_mechanism": "static",
+	"cluster.discovery_dns_name":  "",
 	"cluster.advertise_addr":      "",
 
 	// Agent defaults
@@ -326,6 +332,16 @@ func (c *Config) Validate() error {
 		if v < 0 {
 			return fmt.Errorf("%s must not be negative, got %d", name, v)
 		}
+	}
+
+	switch c.Cluster.DiscoveryMechanism {
+	case "", "static":
+	case "dns":
+		if c.Cluster.DiscoveryDNSName == "" {
+			return fmt.Errorf("cluster.discovery_mechanism \"dns\" requires cluster.discovery_dns_name")
+		}
+	default:
+		return fmt.Errorf("invalid cluster.discovery_mechanism %q: want static or dns", c.Cluster.DiscoveryMechanism)
 	}
 
 	return nil

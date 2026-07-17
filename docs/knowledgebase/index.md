@@ -90,7 +90,7 @@ every edit.
 * [TUI for projects, teams, and execution context](plans/tui-projects.md) - complete; the breadcrumb-navigated TUI over the Slice B domain (projects, teams, execution context, invoke, cluster).
 * [Distributed project management](plans/distributed-project-management.md) - forward project mutations from slave to master, and add a `horde project` CLI subcommand.
 * [AAP host — driving external coding agents](plans/aap-host.md) - Phase 3.6: the node spawns AAP adapters over stdio, bridges turns to the invoke SSE stream, wires node-as-approval-authority, and consumes context/error/approval frames at full fidelity.
-* [Phase 4 — Distributed](plans/phase-4-distributed.md) - making a cluster act across nodes, in slices; slice 1 (cross-node invoke routing) and slice 2 (agent placement/scheduling via a `node` field) are done.
+* [Phase 4 — Distributed](plans/phase-4-distributed.md) - making a cluster act across nodes, in slices; slices 1 (cross-node invoke routing), 2 (agent placement/scheduling via a `node` field), and 3 (dns leader discovery) are done.
 
 ## References
 

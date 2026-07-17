@@ -44,7 +44,8 @@ environment variable (any extension: `yaml`, `yml`, `json`, `toml`).
 | `server.write_timeout`           | `30`                | `HORDE_SERVER_WRITE_TIMEOUT`           | API write timeout (seconds).            |
 | `server.idle_timeout`            | `120`               | `HORDE_SERVER_IDLE_TIMEOUT`            | API idle timeout (seconds).             |
 | `cluster.node_id`                | *(empty)*           | `HORDE_CLUSTER_NODE_ID`                | Unique node id within the cluster.       |
-| `cluster.discovery_mechanism`    | `static`            | `HORDE_CLUSTER_DISCOVERY_MECHANISM`    | How nodes find each other (`static`).   |
+| `cluster.discovery_mechanism`    | `static`            | `HORDE_CLUSTER_DISCOVERY_MECHANISM`    | How a slave finds its leader: `static` (via `server.leader`) or `dns` (an SRV lookup of `cluster.discovery_dns_name`, re-resolved each reconnect). |
+| `cluster.discovery_dns_name`     | *(empty)*           | `HORDE_CLUSTER_DISCOVERY_DNS_NAME`     | SRV name a slave looks up when `discovery_mechanism` is `dns` (e.g. `_horde._tcp.example.com`); the lowest-priority target's `host:port` is the leader. Required for `dns`. |
 | `cluster.advertise_addr`         | *(empty)*           | `HORDE_CLUSTER_ADVERTISE_ADDR`         | Reachable `host:port` this node advertises to peers (sent to the master on register). Required for the master to route cross-node invokes back to a slave; empty falls back to `:<port>`, which is not routable across hosts. |
 | `agent.socket_dir`               | `/tmp`              | `HORDE_AGENT_SOCKET_DIR`               | Directory for agent unix socket files.  |
 | `agent.ready_timeout`            | `5`                 | `HORDE_AGENT_READY_TIMEOUT`            | Seconds to wait for agent ready handshake. |

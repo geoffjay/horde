@@ -175,4 +175,23 @@ func TestConfig_Validate(t *testing.T) {
 		c.Server.ReadTimeout = -1
 		assert.Error(t, c.Validate())
 	})
+
+	t.Run("dns discovery requires a name", func(t *testing.T) {
+		c := valid()
+		c.Cluster.DiscoveryMechanism = "dns"
+		err := c.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "discovery_dns_name")
+
+		c.Cluster.DiscoveryDNSName = "_horde._tcp.example.com"
+		assert.NoError(t, c.Validate())
+	})
+
+	t.Run("unknown discovery mechanism", func(t *testing.T) {
+		c := valid()
+		c.Cluster.DiscoveryMechanism = "gossip"
+		err := c.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "discovery_mechanism")
+	})
 }

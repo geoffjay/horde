@@ -140,6 +140,9 @@ Detailed plan: [Phase 4 — Distributed](phase-4-distributed.md). Built in slice
   cross-node invoke via a reachable advertised address) and can place a new
   agent on a chosen node — an explicit slave, or `auto` (least-loaded) — via
   `POST /api/v1/agents` with a `node` field (slice 2, spawn forwarding).
-* Cluster discovery beyond `static` (dns, gossip). *(later slice)*
+* Cluster discovery beyond `static`. **Slice 3 done**: a slave can find its
+  leader via `discovery_mechanism: dns` (an SRV lookup of
+  `cluster.discovery_dns_name`, re-resolved each reconnect) instead of a
+  hardcoded `server.leader`. Gossip discovery is a later slice.
 * Cross-node event fan-out (the event bus may gain an nng or HTTP
   fan-out layer here). *(later slice; the in-process bus is currently unused.)*

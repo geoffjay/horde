@@ -56,8 +56,16 @@ type Config struct {
 	// current executable invoked with the "agent" subcommand, which is how
 	// the horde binary serves as its own agent host.
 	AgentCommand string
-	// Leader is the address of the master node. Only used in slave mode.
+	// Leader is the address of the master node. Only used in slave mode with
+	// the "static" discovery mechanism.
 	Leader string
+	// DiscoveryMechanism selects how a slave finds its leader: "static"
+	// (default, via Leader) or "dns" (an SRV lookup of DiscoveryDNSName).
+	// Populated from cluster.discovery_mechanism.
+	DiscoveryMechanism string
+	// DiscoveryDNSName is the SRV name a slave looks up when DiscoveryMechanism
+	// is "dns". Populated from cluster.discovery_dns_name.
+	DiscoveryDNSName string
 	// SpawnDefaultAgent controls whether Start spawns the default greeter
 	// agent. Tests set this to false to avoid spawning real subprocesses.
 	SpawnDefaultAgent bool
@@ -365,9 +373,21 @@ func (s *Server) Start(ctx context.Context) error {
 	// never blocks local operation. The leader client is created here (not
 	// in connectLeader) so LeaderAddr() returns the master address as soon
 	// as Start returns, even before the first register attempt completes.
-	if s.cfg.Mode == ModeSlave && s.cfg.Leader != "" {
-		s.leader = newLeaderClient(s.cfg.Leader, s.cfg.NodeID, s.localAddr())
-		go s.connectLeader(ctx)
+	if s.cfg.Mode == ModeSlave {
+		disco, err := newDiscoverer(DiscoveryConfig{
+			Mechanism: s.cfg.DiscoveryMechanism,
+			Leader:    s.cfg.Leader,
+			DNSName:   s.cfg.DiscoveryDNSName,
+		})
+		switch {
+		case errors.Is(err, errStandaloneSlave):
+			logrus.Warn("slave mode without a leader source; running standalone")
+		case err != nil:
+			return fmt.Errorf("configure discovery: %w", err)
+		default:
+			s.leader = newLeaderClient(disco, s.cfg.NodeID, s.localAddr())
+			go s.connectLeader(ctx)
+		}
 	}
 
 	// Start background health polling for agent subprocesses.
@@ -381,23 +401,23 @@ func (s *Server) Start(ctx context.Context) error {
 // connectivity status (leaderOK) without blocking local work. On failure
 // it retries on the next tick.
 func (s *Server) connectLeader(ctx context.Context) {
-	if s.cfg.Leader == "" {
-		logrus.Warn("slave mode without a configured leader; running standalone")
+	// s.leader was created in Start() (only when a discoverer exists), so a nil
+	// client here means standalone.
+	client := s.leader
+	if client == nil {
+		logrus.Warn("slave mode without a leader source; running standalone")
 		return
 	}
-
-	// s.leader was created in Start() so LeaderAddr() is available
-	// immediately; use it here for registration and heartbeats.
-	client := s.leader
+	discovery := client.disco.Describe()
 
 	// First registration: try immediately, then loop on the ticker.
 	if leaderID, err := client.register(ctx); err != nil {
-		logrus.WithError(err).WithField("leader", s.cfg.Leader).Warn("leader register failed")
+		logrus.WithError(err).WithField("discovery", discovery).Warn("leader register failed")
 	} else {
 		s.mu.Lock()
 		s.leaderOK = true
 		s.mu.Unlock()
-		logrus.WithFields(logrus.Fields{"leader": s.cfg.Leader, "leader_id": leaderID}).Info("registered with leader")
+		logrus.WithFields(logrus.Fields{"leader": client.leaderAddr(), "leader_id": leaderID}).Info("registered with leader")
 	}
 
 	ticker := time.NewTicker(leaderReconnectInterval)
@@ -410,16 +430,16 @@ func (s *Server) connectLeader(ctx context.Context) {
 		case <-ticker.C:
 			if !s.leaderOK {
 				if _, err := client.register(ctx); err != nil {
-					logrus.WithError(err).WithField("leader", s.cfg.Leader).Debug("leader register retry failed")
+					logrus.WithError(err).WithField("discovery", discovery).Debug("leader register retry failed")
 					continue
 				}
 				s.mu.Lock()
 				s.leaderOK = true
 				s.mu.Unlock()
-				logrus.WithField("leader", s.cfg.Leader).Info("registered with leader")
+				logrus.WithField("leader", client.leaderAddr()).Info("registered with leader")
 			}
 			if err := client.heartbeat(ctx, s.agentNames(), s.localContextDigests()); err != nil {
-				logrus.WithError(err).WithField("leader", s.cfg.Leader).Debug("heartbeat failed")
+				logrus.WithError(err).WithField("discovery", discovery).Debug("heartbeat failed")
 				s.mu.Lock()
 				s.leaderOK = false
 				s.mu.Unlock()
