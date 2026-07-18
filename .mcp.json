@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "overmind": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/geoffjay/mcp-servers#subdirectory=overmind",
+        "mcp-server-overmind"
+      ],
+      "env": {}
+    }
+  }
+}
