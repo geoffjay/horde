@@ -154,3 +154,10 @@ Detailed plan: [Phase 4 — Distributed](phase-4-distributed.md). Built in slice
   ring, where the master advertises itself; no per-slave leader address. This
   completes Phase 4. Automatic leader *failover* is deferred (see the
   [cluster failover](../concepts/cluster-failover.md) concept doc).
+* Phase 4 hardening / surfacing. **Done**: cluster request auth (shared bearer
+  token `cluster.auth_token`) + gossip wire encryption
+  (`cluster.gossip_encryption_key`); any node is a valid invoke entry point
+  (a slave forwards an unknown-agent invoke to the master); and the TUI/client
+  surfaces for placement (a new-agent form with a node picker) and the event
+  feed (a live cluster-activity view). mTLS is the intended long-term node auth
+  (see the [cluster mTLS](../concepts/cluster-mtls.md) concept doc).

@@ -58,6 +58,7 @@ every edit.
 * [Releases](concepts/releases.md) - how releases work: tagging, goreleaser, GitHub releases, and the Homebrew tap.
 * [systemd service](concepts/systemd-service.md) - running horde as a user systemd service on Linux.
 * [Cluster leader failover](concepts/cluster-failover.md) - what automatic leader failover would require (not implemented); why gossip discovery stops at membership + leader lookup.
+* [Cluster mTLS](concepts/cluster-mtls.md) - mutual TLS as the intended long-term node→node auth; why the shared bearer token is the interim.
 
 ## Decisions
 
