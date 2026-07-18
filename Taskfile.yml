@@ -51,12 +51,18 @@ tasks:
       - golangci-lint run --timeout=5m
 
   test:
-    desc: Run tests
+    desc: Run unit tests (fast, deterministic — no subprocess/cluster tests)
     cmds:
       - go test -race -count=1 ./...
 
+  test:integration:
+    desc: Run the exhaustive integration suite (subprocess + multi-node cluster)
+    deps: [build]
+    cmds:
+      - go test -race -count=1 -tags=integration -timeout=300s ./...
+
   test:cover:
-    desc: Run tests with coverage
+    desc: Run unit tests with coverage
     cmds:
       - go test -race -coverprofile=coverage.out ./...
 

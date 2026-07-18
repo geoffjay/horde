@@ -5,7 +5,8 @@ Go 1.26 project. Build with `go build .` (binary: `./bin/horde` via Taskfile).
 ## Commands
 
 - **Default flow:** `task` (runs tidy → fmt → vet → test → build).
-- **Test (all):** `task test` or `go test -race -count=1 ./...`.
+- **Test (unit):** `task test` or `go test -race -count=1 ./...` — fast, deterministic, no binary/network. This is what CI runs.
+- **Test (integration):** `task test:integration` — the exhaustive suite (subprocess agents + multi-node cluster) behind the `//go:build integration` tag; it builds `bin/horde` first. Run manually to verify integrated behaviour. Never in the default `task`/CI test path.
 - **Test (one package):** `go test -race ./internal/config/...`
 - **Test (one test):** `go test -race -run TestNew_DefaultsToMaster ./internal/server/...`
 - **Lint:** `task lint` (`golangci-lint run --timeout=5m`). Must report 0 issues before done.
@@ -39,8 +40,8 @@ Required order when changing code: fmt → vet → lint → test → build. The 
 - **No phase/milestone references in code:** name and describe code by what it is, not by the phase/plan/issue that introduced it — in file names, comments, and identifiers. `context_test.go`, not `phase3_test.go`; "falls back to per-invocation sessions", not "Phase 3 fallback". See [no phase/milestone references](docs/knowledgebase/patterns/no-phase-references.md).
 - `internal/config` tests load fixtures from `internal/config/testdata/` (yaml/json/toml). They set `HORDE_CONFIG` and call `config.Reset()` to clear the singleton — **always call `Reset()` before relying on `Get()`** in a test.
 - `internal/server` tests set `SpawnDefaultAgent: false` in `server.Config` to avoid spawning real subprocesses. Keep doing this; do not spawn the `horde agent` subprocess from unit tests.
-- Subprocess integration tests (e.g. `spawn_test.go`) require the built binary at `bin/horde`. They skip when it's absent (e.g. in CI without a build step). Use `go build -o bin/horde .` locally before running them.
-- `TestStart_SlaveBecomesLeaderConnected` relies on a goroutine marking `leaderOK`; if you change `connectLeader`, keep the background + non-blocking contract.
+- **Unit vs integration split (`//go:build integration`):** heavy or non-deterministic tests — subprocess spawn (`spawn_test.go`, `aaphost_integration_test.go`, `project_integration_test.go`), real memberlist (`gossip_integration_test.go`), network/goroutine lifecycle (`server_integration_test.go`, `integration_test.go`), and the multi-node cluster suite (`cluster_integration_test.go`) — carry the `//go:build integration` tag and run only under `task test:integration`. The default `task test` (and CI) compiles/runs unit tests only, so it stays fast and deterministic. When adding a test that spawns a subprocess, binds a real port, or depends on timing, tag it `integration` (or move the flaky case into the matching `*_integration_test.go`) rather than leaving it in the unit path. Integration files that need the binary reuse `findHordeBinary`/`findHordeBinaryLocal`, which skip when `bin/horde` is absent.
+- `TestStart_SlaveBecomesLeaderConnected` (now in `server_integration_test.go`) relies on a goroutine marking `leaderOK`; if you change `connectLeader`, keep the background + non-blocking contract.
 
 ## Gotchas
 

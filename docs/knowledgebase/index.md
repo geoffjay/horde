@@ -81,6 +81,7 @@ every edit.
 * [Subprocess agent hosting](patterns/subprocess-agent-hosting.md) - the binary hosts its own agents.
 * [TUI status line and command palette](patterns/tui-status-line-and-palette.md) - configurable status blocks + a ctrl+p palette over a dimmed background.
 * [No phase/milestone references in code](patterns/no-phase-references.md) - name and describe code by what it is, not by the phase/plan/issue that introduced it (file names, comments, identifiers).
+* [Unit / integration test split via build tags](patterns/unit-integration-test-split.md) - `task test` stays unit-only + deterministic; subprocess/network/timing tests are `//go:build integration`, run via `task test:integration`.
 
 ## Plans
 

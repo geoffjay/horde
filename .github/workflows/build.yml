@@ -24,10 +24,11 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Build binary for subprocess tests
-        run: go build -o bin/horde .
-
-      - name: Run tests
+      # Unit tests only — fast and deterministic. The exhaustive integration
+      # suite (subprocess + multi-node cluster, //go:build integration) is run
+      # manually via `task test:integration`; the docker job below exercises the
+      # full cluster topology in CI.
+      - name: Run unit tests
         run: go test -race -count=1 -coverprofile=coverage.out ./...
 
       - name: Upload coverage

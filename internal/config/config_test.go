@@ -4,11 +4,26 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestMain clears HORDE_*-prefixed environment variables before the config
+// tests run so a developer's local environment (e.g. HORDE_LOG_LEVEL set via a
+// .env / direnv) cannot leak into the loader tests, which assert built-in
+// defaults. Tests that need a specific value still set it explicitly with
+// t.Setenv.
+func TestMain(m *testing.M) {
+	for _, kv := range os.Environ() {
+		if k, _, ok := strings.Cut(kv, "="); ok && strings.HasPrefix(k, envPrefix+"_") {
+			_ = os.Unsetenv(k)
+		}
+	}
+	os.Exit(m.Run())
+}
 
 // fixturePath returns an absolute path to a testdata fixture.
 func fixturePath(name string) string {
