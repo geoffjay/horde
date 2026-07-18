@@ -76,6 +76,12 @@ type Config struct {
 	// membership (from cluster.gossip_seeds, comma-split). A slave needs at
 	// least one; a master is typically the seed itself.
 	GossipSeeds []string
+	// AuthToken is the shared secret required on node→node cluster calls
+	// (from cluster.auth_token). Empty disables cluster request auth.
+	AuthToken string
+	// GossipEncryptionKey is the decoded 16/24/32-byte memberlist SecretKey
+	// (from cluster.gossip_encryption_key). Empty leaves gossip unencrypted.
+	GossipEncryptionKey []byte
 	// SpawnDefaultAgent controls whether Start spawns the default greeter
 	// agent. Tests set this to false to avoid spawning real subprocesses.
 	SpawnDefaultAgent bool
@@ -402,6 +408,7 @@ func (s *Server) Start(ctx context.Context) error {
 			BindAddr:      s.cfg.GossipBindAddr,
 			AdvertiseAddr: s.cfg.GossipAdvertiseAddr,
 			Seeds:         s.cfg.GossipSeeds,
+			SecretKey:     s.cfg.GossipEncryptionKey,
 		})
 		if err != nil {
 			return fmt.Errorf("start gossip: %w", err)
@@ -427,7 +434,7 @@ func (s *Server) Start(ctx context.Context) error {
 		case err != nil:
 			return fmt.Errorf("configure discovery: %w", err)
 		default:
-			s.leader = newLeaderClient(disco, s.cfg.NodeID, s.localAddr())
+			s.leader = newLeaderClient(disco, s.cfg.NodeID, s.localAddr(), s.cfg.AuthToken)
 			go s.connectLeader(ctx)
 			go s.forwardEvents(ctx)
 		}
@@ -858,6 +865,19 @@ func (s *Server) Port() int { return s.cfg.Port }
 
 // NodeID returns the node's cluster identifier.
 func (s *Server) NodeID() string { return s.cfg.NodeID }
+
+// ClusterAuthToken returns the shared secret required on node→node cluster
+// calls, or empty when cluster request auth is disabled.
+func (s *Server) ClusterAuthToken() string { return s.cfg.AuthToken }
+
+// SetClusterAuth adds the shared cluster bearer token to a request header when
+// the token is non-empty. Applied to every node→node call so the receiver's
+// requireClusterAuth middleware accepts it.
+func SetClusterAuth(h http.Header, token string) {
+	if token != "" {
+		h.Set("Authorization", "Bearer "+token)
+	}
+}
 
 // publishEvent publishes a cluster-activity event onto the node's bus, tagged
 // with this node's id as the origin.

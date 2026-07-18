@@ -53,6 +53,38 @@ func TestGossipNode_SlaveDiscoversMaster(t *testing.T) {
 	assert.Equal(t, "master:13420", addr)
 }
 
+// TestGossipNode_EncryptedConverges confirms two nodes sharing a SecretKey
+// still form a ring and discover the master (encryption is transparent to
+// discovery).
+func TestGossipNode_EncryptedConverges(t *testing.T) {
+	key := make([]byte, 16) // AES-128; all-zero is fine for the test
+	master, err := newGossipNode(gossipConfig{
+		NodeID:    "master",
+		Role:      roleMaster,
+		APIAddr:   "master:13420",
+		BindAddr:  "127.0.0.1:0",
+		SecretKey: key,
+	})
+	require.NoError(t, err)
+	defer master.shutdown()
+
+	slave, err := newGossipNode(gossipConfig{
+		NodeID:    "slave-1",
+		Role:      roleSlave,
+		APIAddr:   "slave1:13420",
+		BindAddr:  "127.0.0.1:0",
+		Seeds:     []string{master.ml.LocalNode().Address()},
+		SecretKey: key,
+	})
+	require.NoError(t, err)
+	defer slave.shutdown()
+
+	require.Eventually(t, func() bool {
+		_, e := slave.leaderAPIAddr()
+		return e == nil
+	}, 5*time.Second, 50*time.Millisecond)
+}
+
 func TestSplitHostPortDefault(t *testing.T) {
 	host, port, err := splitHostPortDefault("0.0.0.0:7946", defaultGossipPort)
 	require.NoError(t, err)

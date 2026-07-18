@@ -20,6 +20,7 @@ type leaderClient struct {
 	disco  Discoverer
 	nodeID string
 	addr   string
+	token  string // shared cluster auth token (empty = disabled)
 	client *http.Client
 
 	mu     sync.Mutex
@@ -35,11 +36,12 @@ const leaderClientTimeout = 5 * time.Second
 // cached address immediately so leaderAddr() is available before the first
 // register; a dns discoverer resolves lazily in the background (no network in
 // the constructor).
-func newLeaderClient(disco Discoverer, nodeID, addr string) *leaderClient {
+func newLeaderClient(disco Discoverer, nodeID, addr, token string) *leaderClient {
 	c := &leaderClient{
 		disco:  disco,
 		nodeID: nodeID,
 		addr:   addr,
+		token:  token,
 		client: &http.Client{Timeout: leaderClientTimeout},
 	}
 	if sd, ok := disco.(*staticDiscoverer); ok {
@@ -85,6 +87,7 @@ func (c *leaderClient) register(ctx context.Context) (string, error) {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	SetClusterAuth(req.Header, c.token)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -126,6 +129,7 @@ func (c *leaderClient) heartbeat(ctx context.Context, agents []string, digests [
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	SetClusterAuth(req.Header, c.token)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -165,6 +169,7 @@ func (c *leaderClient) forwardRequest(ctx context.Context, method, path string, 
 		return 0, nil, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	SetClusterAuth(req.Header, c.token)
 
 	resp, err := c.client.Do(req)
 	if err != nil {

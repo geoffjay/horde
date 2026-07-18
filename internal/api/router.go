@@ -35,6 +35,7 @@ func Router(srv *server.Server) http.Handler {
 		// Agents
 		r.Get("/agents", listAgents(srv))
 		r.Post("/agents", createAgent(srv))
+		r.Get("/agents/available", listAvailableAgents(srv))
 		r.Get("/agents/context", listAgentContexts(srv))
 		r.Get("/agents/{id}", getAgent(srv))
 		r.Delete("/agents/{id}", deleteAgent(srv))
@@ -43,10 +44,12 @@ func Router(srv *server.Server) http.Handler {
 		r.Get("/agents/{id}/context/stream", streamAgentContext(srv))
 		r.Post("/agents/{id}/approvals/{requestID}", respondApproval(srv))
 
-		// Cluster (slave ↔ master)
-		r.Post("/cluster/register", registerSlave(srv))
-		r.Post("/cluster/heartbeat", heartbeat(srv))
-		r.Post("/cluster/events", receiveClusterEvent(srv))
+		// Cluster (slave ↔ master). The node→node ingest endpoints require the
+		// shared cluster auth token (when configured); the read endpoints below
+		// are also used by local clients (the TUI) and stay open.
+		r.With(requireClusterAuth(srv)).Post("/cluster/register", registerSlave(srv))
+		r.With(requireClusterAuth(srv)).Post("/cluster/heartbeat", heartbeat(srv))
+		r.With(requireClusterAuth(srv)).Post("/cluster/events", receiveClusterEvent(srv))
 		r.Get("/cluster/nodes", listNodes(srv))
 		r.Get("/cluster/agents/context", listRemoteAgentContexts(srv))
 

@@ -14,6 +14,8 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/geoffjay/horde/internal/server"
 )
 
 // invokeRequestBody is the body the node forwards to the agent subprocess.
@@ -66,8 +68,18 @@ func invokeAgent(srv invokeView) http.HandlerFunc {
 		// Not local: route to the node that hosts the agent, if known
 		// (master → owning slave). Otherwise it's genuinely unknown.
 		if addr, ok := srv.RemoteAgentNode(id); ok {
-			invokeRemoteAgent(w, r, addr)
+			invokeRemoteAgent(w, r, addr, srv.ClusterAuthToken())
 			return
+		}
+		// On a non-master node, an agent this node does not host may live on the
+		// master or a peer the master knows. Forward to the leader, which routes
+		// it (locally or to the owning slave via cross-node invoke). This makes
+		// any node a valid invoke entry point.
+		if srv.Mode() == server.ModeSlave {
+			if leader := srv.LeaderAddr(); leader != "" {
+				invokeRemoteAgent(w, r, leader, srv.ClusterAuthToken())
+				return
+			}
 		}
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: errAgentNotFound})
 	}
@@ -77,11 +89,12 @@ func invokeAgent(srv invokeView) http.HandlerFunc {
 // streaming the SSE response back. The path (/api/v1/agents/{id}/invoke) and
 // body are preserved; Last-Event-ID and other headers pass through, so resume
 // works across the hop. FlushInterval -1 streams each write immediately.
-func invokeRemoteAgent(w http.ResponseWriter, r *http.Request, addr string) {
+func invokeRemoteAgent(w http.ResponseWriter, r *http.Request, addr, token string) {
 	target := &url.URL{Scheme: "http", Host: addr}
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(req *httputil.ProxyRequest) {
 			req.SetURL(target) // host+scheme only; preserves the incoming path + query
+			server.SetClusterAuth(req.Out.Header, token)
 		},
 		FlushInterval: -1,
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {

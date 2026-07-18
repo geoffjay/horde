@@ -23,6 +23,7 @@ type nodeView interface {
 // agentView is the subset of *server.Server that agent handlers need.
 type agentView interface {
 	Agents() []server.AgentInfo
+	AvailableAgents() []server.AvailableAgentInfo
 	SpawnAgent(ctx context.Context, name string) (string, error)
 	StopAgent(id string) error
 	AgentSocket(id string) string
@@ -61,6 +62,7 @@ type projectView interface {
 	ResumeProject(id string) (*server.Project, error)
 	FinishProject(id string) (*server.Project, error)
 	AssignAgent(ctx context.Context, projectID, agentName string) (*server.Project, error)
+	AttachAgent(projectID, agentID string) (*server.Project, error)
 	RemoveAgentFromProject(projectID, agentID string) (*server.Project, error)
 	AgentActiveProject(agentID string) string
 	SessionKey(agentID string) string
@@ -97,6 +99,14 @@ type invokeView interface {
 	// for a local/unknown/stale/ambiguous id. Consulted only when the agent
 	// is not local.
 	RemoteAgentNode(agentID string) (string, bool)
+	// Mode reports whether this node is a master or slave. On a slave, an
+	// invoke for an agent it does not host is forwarded to the leader.
+	Mode() server.Mode
+	// LeaderAddr is the master's address on a slave with a leader, else empty.
+	LeaderAddr() string
+	// ClusterAuthToken is the shared secret attached to forwarded cross-node
+	// requests (empty when cluster auth is disabled).
+	ClusterAuthToken() string
 }
 
 // eventView is the subset of *server.Server the cluster event stream needs.

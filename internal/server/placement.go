@@ -117,6 +117,7 @@ func (s *Server) ForwardSpawn(ctx context.Context, addr, name string) (int, http
 		return 0, nil, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	SetClusterAuth(req.Header, s.cfg.AuthToken)
 
 	client := &http.Client{Timeout: slaveSpawnTimeout}
 	resp, err := client.Do(req)

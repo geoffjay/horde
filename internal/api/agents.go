@@ -48,6 +48,26 @@ func listAgents(srv agentView) http.HandlerFunc {
 	}
 }
 
+// availableAgentDTO is the JSON shape for a spawnable agent type.
+type availableAgentDTO struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+// listAvailableAgents returns the agent types this node can spawn (built-in
+// ADK agents plus configured AAP definitions), so clients can offer a choice
+// instead of a free-text name.
+func listAvailableAgents(srv agentView) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		avail := srv.AvailableAgents()
+		out := make([]availableAgentDTO, 0, len(avail))
+		for _, a := range avail {
+			out = append(out, availableAgentDTO{Name: a.Name, Kind: string(a.Kind)})
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
+}
+
 // createAgent spawns a new agent subprocess from the request body's name.
 func createAgent(srv agentView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

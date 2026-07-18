@@ -47,6 +47,7 @@ type gossipConfig struct {
 	BindAddr      string   // host:port to bind the gossip listeners; empty → LAN default
 	AdvertiseAddr string   // host:port peers use to reach this node; empty → derived
 	Seeds         []string // gossip addresses to Join (host or host:port)
+	SecretKey     []byte   // memberlist encryption key (16/24/32 bytes); nil → unencrypted
 }
 
 // gossipNode wraps a memberlist so the cluster can discover the leader's HTTP
@@ -95,6 +96,9 @@ func newGossipNode(cfg gossipConfig) (*gossipNode, error) {
 	// memberlist logs verbosely to stderr by default; silence it and rely on
 	// this package's own join/leader logging.
 	mlCfg.LogOutput = io.Discard
+	if len(cfg.SecretKey) > 0 {
+		mlCfg.SecretKey = cfg.SecretKey
+	}
 
 	if cfg.BindAddr != "" {
 		host, port, err := splitHostPortDefault(cfg.BindAddr, defaultGossipPort)

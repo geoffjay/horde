@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
@@ -210,6 +211,22 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("gossip master needs no seeds", func(t *testing.T) {
 		c := valid() // master
 		c.Cluster.DiscoveryMechanism = "gossip"
+		assert.NoError(t, c.Validate())
+	})
+
+	t.Run("gossip encryption key must be valid base64 of a valid length", func(t *testing.T) {
+		c := valid()
+		c.Cluster.GossipEncryptionKey = "not!base64!"
+		require.Error(t, c.Validate())
+
+		// 10 bytes base64 → wrong length.
+		c.Cluster.GossipEncryptionKey = base64.StdEncoding.EncodeToString(make([]byte, 10))
+		err := c.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "16, 24, or 32")
+
+		// 32 bytes → valid (AES-256).
+		c.Cluster.GossipEncryptionKey = base64.StdEncoding.EncodeToString(make([]byte, 32))
 		assert.NoError(t, c.Validate())
 	})
 }

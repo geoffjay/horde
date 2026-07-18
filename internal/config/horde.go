@@ -4,6 +4,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"sync"
 
@@ -53,6 +54,15 @@ type ClusterConfig struct {
 	// bootstrap ring membership (e.g. "master:7946"). A scalar (not a list) so
 	// it also works via HORDE_CLUSTER_GOSSIP_SEEDS. A slave needs at least one.
 	GossipSeeds string `mapstructure:"gossip_seeds"`
+	// AuthToken is a shared secret required on node→node cluster calls
+	// (register/heartbeat/events). When set, outbound cluster calls send it as
+	// a bearer token and the master rejects unauthenticated ones. Empty
+	// disables cluster request auth (backward compatible).
+	AuthToken string `mapstructure:"auth_token"`
+	// GossipEncryptionKey is a base64-encoded 16/24/32-byte key that encrypts
+	// gossip traffic (memberlist SecretKey, AES-128/192/256). All nodes must
+	// share it. Empty leaves gossip unencrypted.
+	GossipEncryptionKey string `mapstructure:"gossip_encryption_key"`
 }
 
 // AgentConfig represents agent subprocess configuration.
@@ -246,6 +256,8 @@ var defaults = map[string]any{
 	"cluster.gossip_advertise_addr": "",
 	"cluster.gossip_seeds":          "",
 	"cluster.advertise_addr":        "",
+	"cluster.auth_token":            "",
+	"cluster.gossip_encryption_key": "",
 
 	// Agent defaults
 	"agent.socket_dir":           "/tmp",
@@ -360,6 +372,18 @@ func (c *Config) Validate() error {
 		}
 	default:
 		return fmt.Errorf("invalid cluster.discovery_mechanism %q: want static, dns, or gossip", c.Cluster.DiscoveryMechanism)
+	}
+
+	if c.Cluster.GossipEncryptionKey != "" {
+		key, err := base64.StdEncoding.DecodeString(c.Cluster.GossipEncryptionKey)
+		if err != nil {
+			return fmt.Errorf("cluster.gossip_encryption_key must be base64: %w", err)
+		}
+		switch len(key) {
+		case 16, 24, 32: //nolint:mnd // AES-128/192/256 key sizes
+		default:
+			return fmt.Errorf("cluster.gossip_encryption_key must decode to 16, 24, or 32 bytes, got %d", len(key))
+		}
 	}
 
 	return nil

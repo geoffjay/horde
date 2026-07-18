@@ -46,9 +46,12 @@ type projectDTO struct {
 	Team      teamDTO `json:"team"`
 }
 
-// assignAgentRequest is the body of POST /api/v1/projects/{id}/agents.
+// assignAgentRequest is the body of POST /api/v1/projects/{id}/agents. Exactly
+// one of agent_id (attach an existing agent) or name (spawn a new agent by
+// name) is used; agent_id takes precedence.
 type assignAgentRequest struct {
-	Name string `json:"name"`
+	Name    string `json:"name"`
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 func toProjectDTO(p *server.Project) projectDTO {
@@ -191,15 +194,24 @@ func assignAgentToProject(srv projectView) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: errInvalidBody})
 			return
 		}
-		if req.Name == "" {
-			writeJSON(w, http.StatusBadRequest, errorResponse{Error: errNameRequired})
+		if req.AgentID == "" && req.Name == "" {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "agent_id or name is required"})
 			return
 		}
 
-		p, err := srv.AssignAgent(r.Context(), id, req.Name)
+		// agent_id attaches an existing agent; name spawns a new one.
+		var (
+			p   *server.Project
+			err error
+		)
+		if req.AgentID != "" {
+			p, err = srv.AttachAgent(id, req.AgentID)
+		} else {
+			p, err = srv.AssignAgent(r.Context(), id, req.Name)
+		}
 		if err != nil {
-			if errors.Is(err, server.ErrProjectNotFound) {
-				writeJSON(w, http.StatusNotFound, errorResponse{Error: errProjectNotFound})
+			if errors.Is(err, server.ErrProjectNotFound) || errors.Is(err, server.ErrAgentNotFound) {
+				writeJSON(w, http.StatusNotFound, errorResponse{Error: err.Error()})
 				return
 			}
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})

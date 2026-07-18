@@ -149,7 +149,7 @@ func TestLeaderClient_ResolvesViaDNSThenRegisters(t *testing.T) {
 			return "", []*net.SRV{{Target: host + ".", Port: srvPort}}, nil
 		},
 	}
-	c := newLeaderClient(disco, "slave-1", "slave1:13420")
+	c := newLeaderClient(disco, "slave-1", "slave1:13420", "")
 	assert.Empty(t, c.leaderAddr(), "dns discoverer does not seed the cached address")
 
 	leaderID, err := c.register(context.Background())
@@ -162,6 +162,6 @@ func TestLeaderClient_ResolvesViaDNSThenRegisters(t *testing.T) {
 func TestLeaderClient_StaticSeedsCachedAddr(t *testing.T) {
 	disco, err := newDiscoverer(DiscoveryConfig{Leader: "master:13420"}, nil)
 	require.NoError(t, err)
-	c := newLeaderClient(disco, "slave-1", "")
+	c := newLeaderClient(disco, "slave-1", "", "")
 	assert.Equal(t, "master:13420", c.leaderAddr(), "static discoverer seeds leaderAddr before the first register")
 }

@@ -152,6 +152,36 @@ func (s *Server) AssignAgent(_ context.Context, projectID, agentName string) (*P
 	return updated, nil
 }
 
+// AttachAgent adds an already-running agent to a project's team by id — the
+// "create a standalone agent, then add it to a project" path, as opposed to
+// AssignAgent, which spawns a new agent by name. It errors if the project or
+// the agent id is unknown, and propagates ErrProjectNotActive for a
+// paused/finished project. Attaching an agent that is active on another project
+// re-parents it (assignAgentToProject removes it from the old team).
+func (s *Server) AttachAgent(projectID, agentID string) (*Project, error) {
+	if _, err := s.projects.Get(projectID); err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	proc, ok := s.procs[agentID]
+	var name string
+	if ok {
+		name = proc.name
+	}
+	s.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("attach agent %q: %w", agentID, ErrAgentNotFound)
+	}
+
+	updated, err := s.projects.AssignAgent(projectID, agentID, name)
+	if err != nil {
+		return nil, err
+	}
+	s.assignAgentToProject(agentID, projectID)
+	return updated, nil
+}
+
 // RemoveAgentFromProject removes an agent from a project's team and clears
 // its active-project binding if it was the active project.
 func (s *Server) RemoveAgentFromProject(projectID, agentID string) (*Project, error) {

@@ -107,6 +107,25 @@ func TestListAgents_Empty(t *testing.T) {
 	assert.Empty(t, agents)
 }
 
+func TestListAvailableAgents(t *testing.T) {
+	srv := newTestServer(t)
+	h := Router(srv)
+
+	w := do(t, h, http.MethodGet, "/api/v1/agents/available", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	var out []availableAgentDTO
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&out))
+
+	found := false
+	for _, a := range out {
+		if a.Name == "greeter" {
+			found = true
+			assert.Equal(t, "adk", a.Kind)
+		}
+	}
+	assert.True(t, found, "built-in greeter is listed as available")
+}
+
 func TestCreateAgent_RequiresName(t *testing.T) {
 	srv := newTestServer(t)
 	h := Router(srv)

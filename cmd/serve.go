@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os/signal"
@@ -65,6 +66,11 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	gossipKey, err := decodeGossipKey(cfg.Cluster.GossipEncryptionKey)
+	if err != nil {
+		return fmt.Errorf("cluster.gossip_encryption_key: %w", err)
+	}
+
 	srv, err := server.New(server.Config{
 		Mode:                server.Mode(cfg.Mode),
 		AgentCommand:        cfg.Server.AgentCommand,
@@ -74,6 +80,8 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		GossipBindAddr:      cfg.Cluster.GossipBindAddr,
 		GossipAdvertiseAddr: cfg.Cluster.GossipAdvertiseAddr,
 		GossipSeeds:         splitSeeds(cfg.Cluster.GossipSeeds),
+		AuthToken:           cfg.Cluster.AuthToken,
+		GossipEncryptionKey: gossipKey,
 		SpawnDefaultAgent:   true,
 		Port:                cfg.Server.Port,
 		ReadTimeout:         time.Duration(cfg.Server.ReadTimeout) * time.Second,
@@ -147,6 +155,16 @@ func buildServerAgentDefs(cfgs map[string]config.AgentDef) map[string]server.Age
 		out[name] = def
 	}
 	return out
+}
+
+// decodeGossipKey base64-decodes the gossip encryption key into the raw bytes
+// memberlist expects (16/24/32 for AES-128/192/256). Empty yields a nil key
+// (gossip unencrypted). Config validation already checks the length.
+func decodeGossipKey(key string) ([]byte, error) {
+	if key == "" {
+		return nil, nil
+	}
+	return base64.StdEncoding.DecodeString(key)
 }
 
 // splitSeeds parses the comma-separated cluster.gossip_seeds value into a slice

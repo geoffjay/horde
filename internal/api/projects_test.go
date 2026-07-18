@@ -89,6 +89,17 @@ func TestAssignAgent_RequiresName(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestAssignAgent_AttachByIDRoutesToAttach(t *testing.T) {
+	srv := newTestServer(t)
+	h := Router(srv)
+
+	// A body with agent_id routes to AttachAgent (not spawn-by-name): an
+	// unknown target is a 404, and notably not the 400 "name is required".
+	w := do(t, h, http.MethodPost, "/api/v1/projects/ghost/agents",
+		assignAgentRequest{AgentID: "a1"})
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
 func TestRemoveAgentFromProject_NotFound(t *testing.T) {
 	srv := newTestServer(t)
 	h := Router(srv)
