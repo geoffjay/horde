@@ -24,6 +24,14 @@ func streamEvents(srv eventView) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 		w.WriteHeader(http.StatusOK)
+		// Flush the headers immediately so the client's connection is
+		// established as soon as it subscribes, rather than blocking until the
+		// first event happens to arrive. Without this, a client that opens the
+		// stream and then triggers activity would deadlock (the trigger waits
+		// on the open, the open waits on an event).
+		if flusher != nil {
+			flusher.Flush()
+		}
 
 		var id int
 		for {
