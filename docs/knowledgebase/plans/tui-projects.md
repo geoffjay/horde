@@ -266,6 +266,43 @@ Delivered as a follow-up after the AAP host landed:
   selects a pending approval (`↑↓`) and decides with `a`/`d` against
   `POST /api/v1/agents/{id}/approvals/{requestID}`.
 
+Delivered as Phase 4 surfacing follow-ups:
+
+* **New-agent form** (`agent_form.go`). A palette command "New Agent" opens a
+  modal (same overlay mechanism as the new-project form) with two selectors
+  (`←→` to change, `↑↓` to switch field): an **agent-type** selector over the
+  node's available types and a **node placement** selector (`local` / `auto` /
+  each known node id), submitting to `client.SpawnAgent(name, node)`. The type
+  selector is fed by `GET /api/v1/agents/available` (`Server.AvailableAgents` =
+  built-in ADK registry agents + configured AAP definitions) — so only valid,
+  node-known agents can be chosen, and configured agents are discoverable. This
+  replaced the original free-text name field, which silently failed when the
+  typed name was not a registered/configured agent. Spawn errors now surface in
+  the body (`actionErr`) instead of being swallowed. It is the TUI's first
+  standalone agent-creation flow (previously agents were created only via
+  projects).
+* **Cluster-activity view** (`events_view.go`, `viewEvents`). A palette command
+  "Cluster Activity" opens a live feed streaming `GET /api/v1/events/stream`
+  (client `StreamEvents`), rendering the most recent agent lifecycle events
+  (`agent.spawned`/`exiting`/`exited`) newest-first with a node/agent/name row
+  and a status dot. Reuses the invoke SSE bridge pattern (subscribe → pump
+  one-per-Cmd → re-arm), a bounded in-model ring, and stream teardown on
+  navigating away.
+* **Agents list view** (`agents_view.go`, `viewAgents`) + **attach-to-project**.
+  A palette command "Agents" lists the node's running agents with a status dot,
+  id, name, and active project (or *unassigned*), so a freshly-created agent is
+  visible. `enter` invokes the selected agent directly (a `selectedAgentID` pin
+  lets the invoke view resolve a standalone agent that is not on any project
+  team); `ctrl+a` opens a project picker to **attach** the agent. Attaching uses
+  a new by-id path — `POST /projects/{id}/agents {agent_id}` →
+  `Server.AttachAgent` → `client.AttachAgent` — distinct from the spawn-by-name
+  `AssignAgent` used at project creation. Project-detail `ctrl+a` now opens an
+  **agent picker** over unassigned agents (attach-by-id) instead of the old
+  blind "first unassigned" spawn, which created duplicate agents. The
+  project-only `projectPicker` was generalized into a reusable `listPicker`
+  (title + items + `onSelect`) serving Switch Project, assign-to-project, and
+  attach-agent.
+
 These remain deferred:
 
 * Per-user identity in the UI (whose project, who is invoking) is 3.5b.

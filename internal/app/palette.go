@@ -84,10 +84,30 @@ func (m *Model) baseCommands() []command {
 			},
 		},
 		{
+			label: "Agents",
+			run: func(m *Model) tea.Cmd {
+				m.goAgents()
+				return nil
+			},
+		},
+		{
+			label: "New Agent",
+			run: func(m *Model) tea.Cmd {
+				m.openAgentForm()
+				return nil
+			},
+		},
+		{
+			label: "Cluster Activity",
+			run: func(m *Model) tea.Cmd {
+				return m.goEvents()
+			},
+		},
+		{
 			label: "Switch Project",
 			key:   keyCtrlP,
 			run: func(m *Model) tea.Cmd {
-				m.openPicker()
+				m.openSwitchProjectPicker()
 				return nil
 			},
 		},

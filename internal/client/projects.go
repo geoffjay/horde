@@ -85,9 +85,21 @@ func (c *Client) FinishProject(ctx context.Context, id string) (Project, error) 
 	return c.postAction(ctx, "/api/v1/projects/"+id+"/finish")
 }
 
-// AssignAgent assigns an agent (by name) to a project's team.
+// AssignAgent assigns an agent to a project's team by name, spawning a new
+// agent of that name.
 func (c *Client) AssignAgent(ctx context.Context, projectID, agentName string) (Project, error) {
 	body, _ := json.Marshal(map[string]string{"name": agentName})
+	var p Project
+	if err := c.postJSON(ctx, "/api/v1/projects/"+projectID+"/agents", body, &p); err != nil {
+		return p, err
+	}
+	return p, nil
+}
+
+// AttachAgent adds an already-running agent to a project's team by id (the
+// "create then add" path), rather than spawning a new one.
+func (c *Client) AttachAgent(ctx context.Context, projectID, agentID string) (Project, error) {
+	body, _ := json.Marshal(map[string]string{"agent_id": agentID})
 	var p Project
 	if err := c.postJSON(ctx, "/api/v1/projects/"+projectID+"/agents", body, &p); err != nil {
 		return p, err

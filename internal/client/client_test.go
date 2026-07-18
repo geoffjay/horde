@@ -18,6 +18,8 @@ func newFakeNode(t *testing.T) (*httptest.Server, *nodeStub) {
 	mux.HandleFunc("/api/v1/health", stub.health)
 	mux.HandleFunc("/api/v1/node", stub.node)
 	mux.HandleFunc("/api/v1/agents/", stub.agents) // subtree: covers /agents and /agents/{id}
+	mux.HandleFunc("/api/v1/agents/available", stub.available)
+	mux.HandleFunc("/api/v1/events/stream", stub.eventsStream)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, stub
@@ -25,6 +27,7 @@ func newFakeNode(t *testing.T) (*httptest.Server, *nodeStub) {
 
 type nodeStub struct {
 	agentList []Agent
+	lastSpawn map[string]string // the last POST /agents body
 }
 
 func (s *nodeStub) health(w http.ResponseWriter, _ *http.Request) {
@@ -42,12 +45,36 @@ func (s *nodeStub) agents(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var req map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		s.lastSpawn = req
 		a := Agent{ID: "agent-1", Name: req["name"], Status: "running"}
 		s.agentList = append(s.agentList, a)
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(a)
 	case http.MethodDelete:
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// available serves the spawnable agent types.
+func (s *nodeStub) available(w http.ResponseWriter, _ *http.Request) {
+	_ = json.NewEncoder(w).Encode([]AvailableAgent{
+		{Name: "greeter", Kind: "adk"},
+		{Name: "pi", Kind: "aap"},
+	})
+}
+
+// eventsStream serves two SSE cluster-activity frames then ends.
+func (s *nodeStub) eventsStream(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.WriteHeader(http.StatusOK)
+	fl, _ := w.(http.Flusher)
+	_, _ = w.Write([]byte("id: 1\nevent: agent.spawned\ndata: {\"type\":\"agent.spawned\",\"node\":\"slave-1\",\"agent_id\":\"a1\",\"name\":\"greeter\"}\n\n"))
+	if fl != nil {
+		fl.Flush()
+	}
+	_, _ = w.Write([]byte("id: 2\nevent: agent.exited\ndata: {\"type\":\"agent.exited\",\"node\":\"slave-1\",\"agent_id\":\"a1\"}\n\n"))
+	if fl != nil {
+		fl.Flush()
 	}
 }
 
@@ -95,11 +122,57 @@ func TestSpawnAndStopAgent(t *testing.T) {
 	srv, _ := newFakeNode(t)
 	c := New(srv.Listener.Addr().String())
 
-	a, err := c.SpawnAgent(context.Background(), "greeter")
+	a, err := c.SpawnAgent(context.Background(), "greeter", "")
 	require.NoError(t, err)
 	assert.Equal(t, "greeter", a.Name)
 
 	require.NoError(t, c.StopAgent(context.Background(), a.ID))
+}
+
+func TestSpawnAgent_SendsNodePlacement(t *testing.T) {
+	srv, stub := newFakeNode(t)
+	c := New(srv.Listener.Addr().String())
+
+	// A placement node is sent in the body.
+	_, err := c.SpawnAgent(context.Background(), "greeter", "slave-1")
+	require.NoError(t, err)
+	assert.Equal(t, "slave-1", stub.lastSpawn["node"])
+
+	// An empty node is omitted (local placement).
+	_, err = c.SpawnAgent(context.Background(), "greeter", "")
+	require.NoError(t, err)
+	_, ok := stub.lastSpawn["node"]
+	assert.False(t, ok, "empty node is omitted from the request")
+}
+
+func TestListAvailableAgents(t *testing.T) {
+	srv, _ := newFakeNode(t)
+	c := New(srv.Listener.Addr().String())
+
+	avail, err := c.ListAvailableAgents(context.Background())
+	require.NoError(t, err)
+	require.Len(t, avail, 2)
+	assert.Equal(t, "greeter", avail[0].Name)
+	assert.Equal(t, "aap", avail[1].Kind)
+}
+
+func TestStreamEvents_ParsesFrames(t *testing.T) {
+	srv, _ := newFakeNode(t)
+	c := New(srv.Listener.Addr().String())
+
+	ch, err := c.StreamEvents(context.Background())
+	require.NoError(t, err)
+
+	first, ok := <-ch
+	require.True(t, ok)
+	assert.Equal(t, EventAgentSpawned, first.Type)
+	assert.Equal(t, "slave-1", first.Node)
+	assert.Equal(t, "a1", first.AgentID)
+	assert.Equal(t, "greeter", first.Name)
+
+	second, ok := <-ch
+	require.True(t, ok)
+	assert.Equal(t, EventAgentExited, second.Type)
 }
 
 func TestRespondApproval(t *testing.T) {

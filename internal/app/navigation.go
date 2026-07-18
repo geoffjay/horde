@@ -11,6 +11,9 @@ import (
 // restore the cursor when returning (e.g. highlighting the project that
 // was opened).
 func (m *Model) pushView(v view, id, _ string) {
+	m.actionErr = ""
+	// Leaving a top-level activity feed tears down its stream.
+	m.unsubscribeEvents()
 	m.crumbs = append(m.crumbs, breadcrumbEntry{view: m.view, id: m.crumbID(), label: m.crumbLabel()})
 	m.view = v
 	switch v {
@@ -32,6 +35,7 @@ func (m *Model) popView() {
 	if len(m.crumbs) == 0 {
 		return
 	}
+	m.actionErr = ""
 	if m.view == viewAgent {
 		m.unsubscribeAgentContext()
 	}
@@ -39,6 +43,9 @@ func (m *Model) popView() {
 		m.unsubscribeAgentContext()
 		m.unsubscribeInvoke()
 	}
+	// A standalone-agent pin only applies while drilled in from the Agents
+	// view; clear it when popping back so cursor selection resumes.
+	m.selectedAgentID = ""
 	last := m.crumbs[len(m.crumbs)-1]
 	m.crumbs = m.crumbs[:len(m.crumbs)-1]
 	m.view = last.view
@@ -89,6 +96,10 @@ func (m *Model) crumbLabel() string {
 		return "projects"
 	case viewCluster:
 		return "cluster"
+	case viewEvents:
+		return "activity"
+	case viewAgents:
+		return "agents"
 	case viewProjectDetail:
 		if i := m.selectedProjectIndex(); i >= 0 && i < len(m.projects) {
 			return m.projects[i].Name
@@ -109,20 +120,26 @@ func (m *Model) crumbLabel() string {
 func (m *Model) goHome() {
 	m.unsubscribeAgentContext()
 	m.unsubscribeInvoke()
+	m.unsubscribeEvents()
 	m.view = viewProjects
 	m.crumbs = nil
 	m.cursor = 0
 	m.selectedProjectID = ""
+	m.selectedAgentID = ""
+	m.actionErr = ""
 }
 
 // goCluster navigates to the cluster view, clearing the breadcrumb stack.
 func (m *Model) goCluster() {
 	m.unsubscribeAgentContext()
 	m.unsubscribeInvoke()
+	m.unsubscribeEvents()
 	m.view = viewCluster
 	m.crumbs = nil
 	m.cursor = 0
 	m.selectedProjectID = ""
+	m.selectedAgentID = ""
+	m.actionErr = ""
 }
 
 // selectedProjectIndex returns the index into m.projects of the project
@@ -163,6 +180,15 @@ func (m *Model) setProjectCursor(id string) {
 // agents; the returned Agent is synthesized from the TeamAgent's id and
 // name. In the agent view, it comes from the agent list.
 func (m *Model) selectedAgent() (client.Agent, bool) {
+	// A standalone agent drilled in from the Agents view is resolved by id,
+	// since it is not a member of any project team.
+	if m.selectedAgentID != "" {
+		for _, a := range m.agents {
+			if a.ID == m.selectedAgentID {
+				return a, true
+			}
+		}
+	}
 	agents := m.visibleAgents()
 	if m.cursor >= 0 && m.cursor < len(agents) {
 		return agents[m.cursor], true
@@ -209,6 +235,15 @@ func (m *Model) drillIn() (tea.Model, tea.Cmd) {
 		}
 	case viewAgent:
 		if a, ok := m.selectedAgent(); ok {
+			m.pushView(viewInvoke, a.ID, a.Name)
+			m.resetInvokeState()
+			return m, nil
+		}
+	case viewAgents:
+		// Drill from the standalone-agents list straight into invoke; pin the
+		// agent by id since it is not a project-team member.
+		if a, ok := m.selectedAgent(); ok {
+			m.selectedAgentID = a.ID
 			m.pushView(viewInvoke, a.ID, a.Name)
 			m.resetInvokeState()
 			return m, nil

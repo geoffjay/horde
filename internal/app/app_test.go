@@ -140,7 +140,7 @@ func TestPalette_SearchFiltersAndTypesIntoQuery(t *testing.T) {
 	// Backspace clears the query and restores the full list.
 	m.Update(namedKey(tea.KeyBackspace))
 	assert.Equal(t, "", m.pal.query)
-	assert.Len(t, m.filteredCommands(), 5)
+	assert.Len(t, m.filteredCommands(), len(m.baseCommands()))
 }
 
 func TestPalette_CursorNavigationClamps(t *testing.T) {
@@ -154,16 +154,11 @@ func TestPalette_CursorNavigationClamps(t *testing.T) {
 	assert.Equal(t, 0, m.pal.cursor)
 
 	// Down moves through the list and clamps at the last command.
-	m.Update(namedKey(tea.KeyDown))
-	assert.Equal(t, 1, m.pal.cursor)
-	m.Update(namedKey(tea.KeyDown))
-	assert.Equal(t, 2, m.pal.cursor)
-	m.Update(namedKey(tea.KeyDown))
-	assert.Equal(t, 3, m.pal.cursor)
-	m.Update(namedKey(tea.KeyDown))
-	assert.Equal(t, 4, m.pal.cursor)
-	m.Update(namedKey(tea.KeyDown))
-	assert.Equal(t, 4, m.pal.cursor)
+	last := len(m.commands()) - 1
+	for i := 0; i < last+3; i++ {
+		m.Update(namedKey(tea.KeyDown))
+	}
+	assert.Equal(t, last, m.pal.cursor, "cursor clamps at the last command")
 }
 
 func TestPalette_EnterRunsSelectedCommand(t *testing.T) {

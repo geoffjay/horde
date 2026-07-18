@@ -197,26 +197,6 @@ func (m *Model) finishProjectCmd() tea.Cmd {
 	}
 }
 
-// assignAgentCmd returns a tea.Cmd that assigns the first unassigned running
-// agent to the selected project. Returns nil if no project is selected or
-// no unassigned agent is available.
-func (m *Model) assignAgentCmd() tea.Cmd {
-	id := m.selectedProjectIDForAction()
-	if id == "" {
-		return nil
-	}
-	agentName := m.firstUnassignedAgentName(id)
-	if agentName == "" {
-		return nil
-	}
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(m.ctx, nodeFetchTimeout)
-		defer cancel()
-		p, err := m.c.AssignAgent(ctx, id, agentName)
-		return projectActionMsg{project: p, err: err}
-	}
-}
-
 // selectedProjectIDForAction returns the ID of the project to act on: the
 // drill-down selectedProjectID if set, otherwise the cursor-indexed project
 // in the projects list. Returns "" if neither is available.
@@ -236,26 +216,6 @@ func (m *Model) actionProjectState(id string) string {
 	for _, p := range m.projects {
 		if p.ID == id {
 			return p.State
-		}
-	}
-	return ""
-}
-
-// firstUnassignedAgentName returns the name of the first running agent that
-// is not already on the given project's team, or "" if none is available.
-func (m *Model) firstUnassignedAgentName(projectID string) string {
-	assigned := make(map[string]bool)
-	for _, p := range m.projects {
-		if p.ID == projectID {
-			for _, a := range p.Team.Agents {
-				assigned[a.AgentID] = true
-			}
-			break
-		}
-	}
-	for _, a := range m.agents {
-		if !assigned[a.ID] {
-			return a.Name
 		}
 	}
 	return ""
@@ -312,9 +272,11 @@ func (m *Model) renderForm() string {
 // project if it exists, appending if new) and refreshes from the server.
 func (m *Model) handleProjectAction(msg *projectActionMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
+		m.actionErr = "project action: " + msg.err.Error()
 		logrus.WithError(msg.err).Debug("tui: project action failed")
 		return m, m.loadNode
 	}
+	m.actionErr = ""
 	if msg.project.ID != "" {
 		found := false
 		for i := range m.projects {

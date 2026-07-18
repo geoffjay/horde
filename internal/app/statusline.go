@@ -205,6 +205,10 @@ func viewHints(m *Model) string {
 		return "enter send · esc back"
 	case viewCluster:
 		return "enter node · esc back"
+	case viewEvents:
+		return "live tail · ctrl+p palette"
+	case viewAgents:
+		return "↑↓ select · enter invoke · ctrl+a assign · esc back"
 	}
 	return ""
 }

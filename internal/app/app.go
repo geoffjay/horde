@@ -45,6 +45,10 @@ const (
 	viewInvoke
 	// viewCluster is the cluster topology (nodes + remote agents).
 	viewCluster
+	// viewEvents is the live cluster-activity feed (agent lifecycle events).
+	viewEvents
+	// viewAgents is the top-level list of the node's running agents.
+	viewAgents
 )
 
 // breadcrumbEntry is one level of the drill-down stack. The view identifies
@@ -70,6 +74,12 @@ type Model struct {
 	// node + agents
 	node   client.NodeInfo
 	agents []client.Agent
+	// availableAgents are the spawnable agent types (built-in + configured),
+	// offered as choices in the new-agent form.
+	availableAgents []client.AvailableAgent
+	// actionErr holds the last failed action's message (e.g. a spawn error),
+	// shown in the body until the next successful action or navigation.
+	actionErr string
 
 	// navigation: the current view and the breadcrumb stack of entries
 	// pushed to reach it. The stack is empty for top-level screens
@@ -91,6 +101,11 @@ type Model struct {
 	// look up the project independently of the cursor (which indexes team
 	// agents in projectDetail).
 	selectedProjectID string
+
+	// selectedAgentID is set when drilling into invoke from the Agents view,
+	// where the agent is a standalone node agent (not a project-team member).
+	// selectedAgent() prefers it so the invoke view resolves the right agent.
+	selectedAgentID string
 
 	// cached domain state
 	projects       []client.Project
@@ -119,10 +134,19 @@ type Model struct {
 	invokeErr        string // non-empty when the invoke failed (e.g. 409)
 
 	// status line + command palette overlay
-	status *StatusLine
-	pal    palette
-	picker projectPicker
-	form   projectForm
+	status    *StatusLine
+	pal       palette
+	picker    listPicker
+	form      projectForm
+	agentForm agentForm
+
+	// cluster-activity event stream (viewEvents): a bounded ring of recent
+	// events fed by the SSE stream. eventsConnected drives the "live ●"
+	// indicator; eventsCancel/eventsCh manage the subscription.
+	events          []client.Event
+	eventsCancel    context.CancelFunc
+	eventsCh        <-chan client.Event
+	eventsConnected bool
 
 	width    int
 	height   int
@@ -156,6 +180,7 @@ type connectResultMsg struct {
 type nodeInfoMsg struct {
 	node           client.NodeInfo
 	agents         []client.Agent
+	available      []client.AvailableAgent
 	projects       []client.Project
 	contexts       map[string]client.ExecutionContext
 	clusterNodes   client.ClusterView
@@ -233,6 +258,12 @@ func (m *Model) loadNode() tea.Msg {
 		return nodeInfoMsg{err: nErr}
 	}
 
+	// Available agent types (best-effort): populates the new-agent form.
+	available, avErr := m.c.ListAvailableAgents(ctx)
+	if avErr != nil {
+		logrus.WithError(avErr).Debug("tui: fetch available agents failed")
+	}
+
 	// Projects and contexts are best-effort: a node that doesn't expose them
 	// (e.g. an older version) should not prevent the TUI from rendering.
 	// Errors are logged via logrus so forwarding issues are diagnosable.
@@ -263,6 +294,7 @@ func (m *Model) loadNode() tea.Msg {
 	return nodeInfoMsg{
 		node:           node,
 		agents:         agents,
+		available:      available,
 		projects:       projects,
 		contexts:       ctxMap,
 		clusterNodes:   clusterNodes,
@@ -310,6 +342,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case invokeStartedMsg, invokeEventMsg, invokeDoneMsg, invokeErrorMsg:
 		return m.handleInvokeMsg(msg)
+
+	case eventMsg, eventStreamEndMsg, agentActionMsg:
+		return m.handleActivityMsg(msg)
 
 	case projectActionMsg:
 		return m.handleProjectAction(&msg)
@@ -361,6 +396,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	if m.form.open {
 		return m.handleFormKey(msg)
+	}
+
+	if m.agentForm.open {
+		return m.handleAgentFormKey(msg)
 	}
 
 	switch msg.String() {
@@ -440,7 +479,16 @@ func (m *Model) handleViewActionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "ctrl+a":
 		if m.view == viewProjectDetail {
-			return m, m.assignAgentCmd() //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
+			if id := m.selectedProjectIDForAction(); id != "" {
+				m.openAgentPicker(id)
+			}
+			return m, nil
+		}
+		if m.view == viewAgents {
+			if a, ok := m.selectedAgent(); ok {
+				m.openAssignProjectPicker(a.ID)
+			}
+			return m, nil
 		}
 	}
 	return m, nil
@@ -553,6 +601,8 @@ func (m *Model) listLength() int {
 		return len(m.visibleAgents())
 	case viewCluster:
 		return len(m.nodes.Nodes)
+	case viewAgents:
+		return len(m.agents)
 	}
 	return 0
 }
@@ -577,6 +627,7 @@ func (m *Model) handleNodeInfo(msg *nodeInfoMsg) (tea.Model, tea.Cmd) {
 	}
 	m.node = msg.node
 	m.agents = msg.agents
+	m.availableAgents = msg.available
 	if msg.projects != nil {
 		m.projects = msg.projects
 	}
@@ -719,6 +770,21 @@ func (m *Model) sendInvoke(agentID string) tea.Cmd {
 	}
 }
 
+// handleActivityMsg routes the cluster-activity stream messages and the
+// new-agent spawn result. Grouped into one Update case to keep Update's
+// cyclomatic complexity in check.
+func (m *Model) handleActivityMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case eventMsg:
+		return m.handleEventMsg(msg)
+	case eventStreamEndMsg:
+		return m.handleEventStreamEnd(msg)
+	case agentActionMsg:
+		return m.handleAgentAction(&msg)
+	}
+	return m, nil
+}
+
 // handleInvokeMsg routes the invoke-stream lifecycle messages (open result,
 // each event, and stream end).
 func (m *Model) handleInvokeMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -800,7 +866,7 @@ func (m *Model) View() tea.View {
 	}
 
 	background := m.fill(m.renderBody(), m.status.Render(m, m.innerWidth()))
-	if !m.pal.open && !m.picker.open && !m.form.open {
+	if !m.overlayOpen() {
 		return altView(background)
 	}
 
@@ -829,7 +895,17 @@ func (m *Model) renderOverlay() string {
 	if m.form.open {
 		return m.renderForm()
 	}
+	if m.agentForm.open {
+		return m.renderAgentForm()
+	}
 	return ""
+}
+
+// overlayOpen reports whether any modal overlay (palette, picker, project
+// form, or agent form) is open, so the background is dimmed and key input is
+// routed to that overlay.
+func (m *Model) overlayOpen() bool {
+	return m.pal.open || m.picker.open || m.form.open || m.agentForm.open
 }
 
 // altView wraps content in a full-window (alternate-screen) view. The TUI
@@ -854,7 +930,7 @@ var dimColor = lipgloss.Color("240")
 // style's bound Render method (e.g. someStyle.Render) so the heavy Style struct
 // is not copied by value.
 func (m *Model) paint(render func(...string) string, s string) string {
-	if m.pal.open || m.picker.open || m.form.open {
+	if m.overlayOpen() {
 		return s
 	}
 	return render(s)
@@ -907,6 +983,9 @@ func (m *Model) renderBody() string {
 	}
 
 	b.WriteString(m.renderBreadcrumb() + "\n\n")
+	if m.actionErr != "" {
+		b.WriteString(m.paint(lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render, "  "+m.actionErr) + "\n\n")
+	}
 	b.WriteString(m.renderView())
 	return b.String()
 }
@@ -943,6 +1022,10 @@ func (m *Model) currentViewLabel() string {
 		return "agent"
 	case viewInvoke:
 		return "invoke"
+	case viewEvents:
+		return "activity"
+	case viewAgents:
+		return "agents"
 	}
 	return ""
 }
@@ -960,6 +1043,10 @@ func (m *Model) renderView() string {
 		return m.renderInvokeView()
 	case viewCluster:
 		return m.renderClusterView()
+	case viewEvents:
+		return m.renderEventsView()
+	case viewAgents:
+		return m.renderAgentsView()
 	}
 	return ""
 }

@@ -91,10 +91,33 @@ func (c *Client) ListAgents(ctx context.Context) ([]Agent, error) {
 	return a, nil
 }
 
-// SpawnAgent starts a new agent subprocess of the given name.
-func (c *Client) SpawnAgent(ctx context.Context, name string) (Agent, error) {
+// AvailableAgent is a spawnable agent type: a built-in ADK agent or a
+// configured AAP agent definition.
+type AvailableAgent struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+// ListAvailableAgents fetches the agent types this node can spawn.
+func (c *Client) ListAvailableAgents(ctx context.Context) ([]AvailableAgent, error) {
+	var a []AvailableAgent
+	if err := c.getJSON(ctx, "/api/v1/agents/available", &a); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// SpawnAgent starts a new agent subprocess of the given name. node selects
+// placement: "" or "local" spawns on the target node, "auto" lets the master
+// pick the least-loaded node, and a node id places it on that node (master
+// only). node is omitted from the request when empty.
+func (c *Client) SpawnAgent(ctx context.Context, name, node string) (Agent, error) {
 	var a Agent
-	body, _ := json.Marshal(map[string]string{"name": name})
+	payload := map[string]string{"name": name}
+	if node != "" {
+		payload["node"] = node
+	}
+	body, _ := json.Marshal(payload)
 	if err := c.postJSON(ctx, "/api/v1/agents", body, &a); err != nil {
 		return a, err
 	}

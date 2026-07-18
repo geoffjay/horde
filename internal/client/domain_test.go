@@ -139,7 +139,11 @@ func lifecycleHandler(t *testing.T, projects *[]Project) http.Handler {
 				var req map[string]string
 				_ = json.NewDecoder(r.Body).Decode(&req)
 				p := &(*projects)[0]
-				p.Team.Agents = append(p.Team.Agents, TeamAgent{AgentID: "a1", Name: req["name"]})
+				if req["agent_id"] != "" {
+					p.Team.Agents = append(p.Team.Agents, TeamAgent{AgentID: req["agent_id"], Name: "attached"})
+				} else {
+					p.Team.Agents = append(p.Team.Agents, TeamAgent{AgentID: "a1", Name: req["name"]})
+				}
 				_ = json.NewEncoder(w).Encode(*p)
 				return
 			}
@@ -179,6 +183,18 @@ func TestAssignAndRemoveAgent(t *testing.T) {
 	assert.Equal(t, "coder", p.Team.Agents[0].Name)
 
 	require.NoError(t, c.RemoveAgent(context.Background(), "p1", "a1"))
+}
+
+func TestAttachAgent(t *testing.T) {
+	stub := &projectsStub{projects: []Project{{ID: "p1", Name: "auth", State: "active"}}}
+	srv := httptest.NewServer(lifecycleHandler(t, &stub.projects))
+	defer srv.Close()
+
+	c := New(srv.Listener.Addr().String())
+	p, err := c.AttachAgent(context.Background(), "p1", "a7")
+	require.NoError(t, err)
+	require.Len(t, p.Team.Agents, 1)
+	assert.Equal(t, "a7", p.Team.Agents[0].AgentID, "attach posts agent_id")
 }
 
 // --- execution context ---

@@ -356,31 +356,43 @@ func TestHandleKey_AssignInProjectDetail(t *testing.T) {
 	m.connected = true
 	m.view = viewProjectDetail
 	m.selectedProjectID = "p1"
-	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active", Team: client.ProjectTeam{Agents: []client.TeamAgent{{AgentID: "a1", Name: "greeter"}}}}}
+	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active"}}
 	m.agents = []client.Agent{
 		{ID: "a1", Name: "greeter", Status: "running"},
 		{ID: "a2", Name: "coder", Status: "running"},
 	}
+	// a1 is already assigned; a2 is the only unassigned candidate.
+	m.contexts = map[string]client.ExecutionContext{"a1": {AgentID: "a1", Project: "auth"}}
 
+	// ctrl+a opens the agent picker over unassigned agents (no cmd yet).
 	_, cmd := m.handleKey(ctrlKey('a'))
-	require.NotNil(t, cmd)
+	assert.Nil(t, cmd)
+	require.True(t, m.picker.open)
+	require.Len(t, m.picker.items, 1)
+	assert.Equal(t, "a2", m.picker.items[0].id)
 
+	// Selecting the agent runs the attach command.
+	_, cmd = m.runSelectedItem()
+	require.NotNil(t, cmd)
 	msg := cmd()
 	pa, ok := msg.(projectActionMsg)
 	require.True(t, ok)
 	require.NoError(t, pa.err)
 }
 
-func TestHandleKey_AssignNoUnassignedAgentReturnsNil(t *testing.T) {
+func TestHandleKey_AssignWithNoUnassignedAgentsOpensEmptyPicker(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjectDetail
 	m.selectedProjectID = "p1"
-	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active", Team: client.ProjectTeam{Agents: []client.TeamAgent{{AgentID: "a1", Name: "greeter"}}}}}
+	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active"}}
 	m.agents = []client.Agent{{ID: "a1", Name: "greeter", Status: "running"}}
+	m.contexts = map[string]client.ExecutionContext{"a1": {AgentID: "a1", Project: "auth"}}
 
 	_, cmd := m.handleKey(ctrlKey('a'))
-	assert.Nil(t, cmd, "assign should return nil when no unassigned agent")
+	assert.Nil(t, cmd)
+	assert.True(t, m.picker.open)
+	assert.Empty(t, m.picker.items, "no unassigned agents to attach")
 }
 
 func TestHandleProjectAction_SuccessUpdatesProject(t *testing.T) {
@@ -516,33 +528,35 @@ func TestSelectedProjectIDForAction_EmptyWhenNoProject(t *testing.T) {
 	assert.Empty(t, m.selectedProjectIDForAction())
 }
 
-func TestFirstUnassignedAgentName(t *testing.T) {
+func TestOpenAgentPicker_ListsOnlyUnassignedAgents(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
-	m.projects = []client.Project{{
-		ID: "p1", Name: "auth", State: "active",
-		Team: client.ProjectTeam{Agents: []client.TeamAgent{
-			{AgentID: "a1", Name: "greeter"},
-		}},
-	}}
 	m.agents = []client.Agent{
 		{ID: "a1", Name: "greeter", Status: "running"},
 		{ID: "a2", Name: "coder", Status: "running"},
 	}
+	// a1 is already on a project; a2 is unassigned.
+	m.contexts = map[string]client.ExecutionContext{
+		"a1": {AgentID: "a1", Project: "auth"},
+	}
 
-	assert.Equal(t, "coder", m.firstUnassignedAgentName("p1"))
+	m.openAgentPicker("p1")
+	require.True(t, m.picker.open)
+	require.Len(t, m.picker.items, 1)
+	assert.Equal(t, "a2", m.picker.items[0].id)
+	assert.Equal(t, "coder", m.picker.items[0].label)
 }
 
-func TestFirstUnassignedAgentName_NoneAvailable(t *testing.T) {
+func TestOpenAssignProjectPicker_ListsActiveProjects(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
-	m.projects = []client.Project{{
-		ID: "p1", Name: "auth", State: "active",
-		Team: client.ProjectTeam{Agents: []client.TeamAgent{
-			{AgentID: "a1", Name: "greeter"},
-		}},
-	}}
-	m.agents = []client.Agent{{ID: "a1", Name: "greeter", Status: "running"}}
+	m.projects = []client.Project{
+		{ID: "p1", Name: "auth", State: "active"},
+		{ID: "p2", Name: "billing", State: "finished"},
+	}
 
-	assert.Empty(t, m.firstUnassignedAgentName("p1"))
+	m.openAssignProjectPicker("a1")
+	require.True(t, m.picker.open)
+	require.Len(t, m.picker.items, 1, "only active projects are assignable")
+	assert.Equal(t, "p1", m.picker.items[0].id)
 }
 
 func TestActionProjectState(t *testing.T) {
