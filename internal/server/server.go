@@ -380,9 +380,11 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 		projects = newProjectStore()
 	}
 
-	// AAP resume tokens persist alongside projects under the state dir.
+	// AAP resume tokens persist alongside projects under the state dir. Under
+	// raft failover they are replicated through the log instead (no per-node
+	// file), so the path is left empty and apply/isLeader are wired below.
 	resumePath := ""
-	if cfg.StateDir != "" {
+	if cfg.StateDir != "" && cfg.Failover != FailoverRaft {
 		resumePath = filepath.Join(cfg.StateDir, "aap-resume.json")
 	}
 
@@ -399,10 +401,12 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 		aapInvokes:     newAAPInvocationRegistry(),
 		now:            time.Now,
 	}
-	// Wire the raft-backed store's replication path to this server's raft node
-	// (created later in Start). The closure reads s.raft at apply time.
-	if raftProjects != nil {
+	// Wire the raft-backed stores' replication paths to this server's raft node
+	// (created later in Start). The closures read s.raft at apply time.
+	if cfg.Failover == FailoverRaft {
 		raftProjects.apply = s.raftApply
+		s.resume.apply = s.raftApply
+		s.resume.isLeader = s.isMaster
 	}
 	return s, nil
 }

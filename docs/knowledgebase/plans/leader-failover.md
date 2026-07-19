@@ -132,11 +132,31 @@ Verify: mutate projects on the leader; kill it; the new leader serves the same
 projects/teams/assignments. A mutation sent to a follower is forwarded and
 applied. `failover: off` still uses `projects.json` unchanged.
 
-## Slice 3 — Replicate AAP resume tokens
+## Slice 3 — Replicate AAP resume tokens — complete
 
-Bring the per-node `resumeStore` (`aap-resume.json`, keyed by agent name) into
+Brought the per-node `resumeStore` (`aap-resume.json`, keyed by agent name) into
 the replicated state so a respawn on a *new* leader still resumes the adapter
 session.
+
+Delivered: `resumeStore.set` replicates a `resumeCommand` through the raft log
+(`raftKindResume`) when this node leads; the FSM applies it to every replica's
+in-memory map. Under `failover: raft` the per-node `aap-resume.json` is bypassed
+(the log/snapshots are the source of truth) and `New` wires
+`resume.apply`/`resume.isLeader`. Snapshot/restore include the token map.
+
+**Scope decision (documented):** resume state is replicated **cluster-global,
+keyed by agent name** — node-agnostic on purpose, so a respawn on a *different*
+newly-elected leader finds the token (keying by owning node would defeat failover
+resume). A name collision across nodes shares the token, i.e. "same logical
+agent". A resume-set that happens on a **follower** (an AAP agent placed off the
+leader) falls back to a node-local write, matching pre-failover per-node
+behavior — that is the boundary: leader-hosted agents' resume survives master
+failover; follower-hosted agents keep node-local resume. Verified:
+`TestRaftResume_ReplicatesAndSurvivesFailover` (white-box, 3 real raft nodes: a
+token set on the leader replicates to followers and survives a leader crash) plus
+unit tests (leader-replicates, non-leader-local-fallback, snapshot/restore).
+
+The original slice plan (unchanged) follows.
 
 * Fold resume-token capture (`turn_complete`) into the FSM as its own command
   type (or a second FSM under the same raft), replacing the per-node file write

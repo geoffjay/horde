@@ -12,6 +12,7 @@ type raftKind string
 
 const (
 	raftKindProject raftKind = "project"
+	raftKindResume  raftKind = "resume"
 )
 
 // raftCommand is the envelope replicated through the raft log. Data is the
@@ -33,6 +34,7 @@ func encodeRaftCommand(kind raftKind, payload any) ([]byte, error) {
 // raftSnapshotState is the full replicated state captured in a raft snapshot.
 type raftSnapshotState struct {
 	Projects projectStoreState `json:"projects"`
+	Resume   map[string]string `json:"resume,omitempty"`
 }
 
 // raftHandler returns the FSM handler for replicated state, or nil when failover
@@ -58,6 +60,8 @@ func (s *Server) applyCommand(data []byte) (any, error) {
 			return nil, fmt.Errorf("raft: project command with no project store")
 		}
 		return s.raftProjects.applyCommand(cmd.Data)
+	case raftKindResume:
+		return nil, s.resume.applyCommand(cmd.Data)
 	default:
 		return nil, fmt.Errorf("raft: unknown command kind %q", cmd.Kind)
 	}
@@ -68,6 +72,9 @@ func (s *Server) snapshotState() ([]byte, error) {
 	st := raftSnapshotState{}
 	if s.raftProjects != nil {
 		st.Projects = s.raftProjects.mem.snapshot()
+	}
+	if s.resume != nil {
+		st.Resume = s.resume.snapshot()
 	}
 	return json.Marshal(st)
 }
@@ -80,6 +87,9 @@ func (s *Server) restoreState(data []byte) error {
 	}
 	if s.raftProjects != nil {
 		s.raftProjects.mem.restore(st.Projects)
+	}
+	if s.resume != nil {
+		s.resume.restore(st.Resume)
 	}
 	return nil
 }

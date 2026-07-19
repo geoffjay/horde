@@ -181,7 +181,9 @@ elected leader comes up current. Default (static-master) behaviour is unchanged.
 * Slice 2 — replicate the project store through the raft log (an FSM).
   **Done**: `raftProjectStore` routes project mutations through `raft.Apply`
   (deterministic replay), so a newly-elected leader has current project state.
-* Slice 3 — replicate AAP resume tokens.
+* Slice 3 — replicate AAP resume tokens. **Done**: resume tokens replicate
+  through the raft log (cluster-global by agent name), so a respawn on a new
+  leader resumes; follower-hosted agents keep node-local resume (the boundary).
 * Slice 4 — a stable client/TUI entry point that follows the leader across a
   failover.
 
