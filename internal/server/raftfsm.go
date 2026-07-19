@@ -22,10 +22,11 @@ func (f *raftFSM) Apply(l *raft.Log) any {
 	if f.handler == nil {
 		return nil
 	}
-	if err := f.handler.applyCommand(l.Data); err != nil {
+	res, err := f.handler.applyCommand(l.Data)
+	if err != nil {
 		return err
 	}
-	return nil
+	return res
 }
 
 // Snapshot captures the current replicated state so raft can compact the log.

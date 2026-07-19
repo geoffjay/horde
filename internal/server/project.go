@@ -188,19 +188,38 @@ func (ps *memProjectStore) flush() {
 // Create creates a new project in the active state with the supplied team of
 // agents. At least one agent name is required (a team is never empty).
 func (ps *memProjectStore) Create(in CreateProjectInput) (*Project, error) {
-	if in.Name == "" {
-		return nil, errors.New("project name is required")
+	if err := validateCreateInput(in); err != nil {
+		return nil, err
 	}
-	if len(in.AgentNames) == 0 {
-		return nil, errors.New("at least one agent is required")
-	}
-
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
+	return ps.createLocked(in, ps.now().UTC())
+}
 
+// validateCreateInput checks the create input independent of the store, so both
+// the direct path and the raft-replicated path fail fast on bad input before
+// mutating (or replicating) anything.
+func validateCreateInput(in CreateProjectInput) error {
+	if in.Name == "" {
+		return errors.New("project name is required")
+	}
+	if len(in.AgentNames) == 0 {
+		return errors.New("at least one agent is required")
+	}
+	return nil
+}
+
+// createLocked performs the create with an explicit timestamp so a raft FSM can
+// apply it deterministically across replicas. The caller must hold ps.mu. It
+// returns a copy (never the stored pointer) so the result is safe to hand across
+// goroutines (raft surfaces it as the Apply response). The error return is
+// always nil today but kept for signature parity with the other *Locked
+// mutators the FSM dispatches uniformly.
+//
+//nolint:unparam // signature parity with the other *Locked mutators
+func (ps *memProjectStore) createLocked(in CreateProjectInput, now time.Time) (*Project, error) {
 	ps.nextID++
 	id := fmt.Sprintf("proj-%d", ps.nextID)
-	now := ps.now().UTC()
 
 	team := Team{Agents: make([]TeamAgent, 0, len(in.AgentNames))}
 	for _, name := range in.AgentNames {
@@ -222,7 +241,8 @@ func (ps *memProjectStore) Create(in CreateProjectInput) (*Project, error) {
 	}
 	ps.projects[id] = p
 	ps.flush()
-	return p, nil
+	cp := *p
+	return &cp, nil
 }
 
 // Get returns a copy of the project by id, or ErrProjectNotFound.
@@ -255,12 +275,18 @@ func (ps *memProjectStore) List(stateFilter ProjectState) []Project {
 func (ps *memProjectStore) UpdateState(id string, state ProjectState) (*Project, error) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
+	return ps.updateStateLocked(id, state, ps.now().UTC())
+}
+
+// updateStateLocked is UpdateState with an explicit timestamp for deterministic
+// raft replay. The caller must hold ps.mu.
+func (ps *memProjectStore) updateStateLocked(id string, state ProjectState, now time.Time) (*Project, error) {
 	p, ok := ps.projects[id]
 	if !ok {
 		return nil, ErrProjectNotFound
 	}
 	p.State = state
-	p.UpdatedAt = ps.now().UTC()
+	p.UpdatedAt = now
 	ps.flush()
 	cp := *p
 	return &cp, nil
@@ -271,6 +297,12 @@ func (ps *memProjectStore) UpdateState(id string, state ProjectState) (*Project,
 func (ps *memProjectStore) AssignAgent(id, agentID, agentName string) (*Project, error) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
+	return ps.assignAgentLocked(id, agentID, agentName, ps.now().UTC())
+}
+
+// assignAgentLocked is AssignAgent with an explicit timestamp for deterministic
+// raft replay. The caller must hold ps.mu.
+func (ps *memProjectStore) assignAgentLocked(id, agentID, agentName string, now time.Time) (*Project, error) {
 	p, ok := ps.projects[id]
 	if !ok {
 		return nil, ErrProjectNotFound
@@ -289,9 +321,9 @@ func (ps *memProjectStore) AssignAgent(id, agentID, agentName string) (*Project,
 	p.Team.Agents = append(p.Team.Agents, TeamAgent{
 		AgentID:    agentID,
 		Name:       agentName,
-		AssignedAt: ps.now().UTC(),
+		AssignedAt: now,
 	})
-	p.UpdatedAt = ps.now().UTC()
+	p.UpdatedAt = now
 	ps.flush()
 	cp := *p
 	return &cp, nil
@@ -301,6 +333,12 @@ func (ps *memProjectStore) AssignAgent(id, agentID, agentName string) (*Project,
 func (ps *memProjectStore) RemoveAgent(id, agentID string) (*Project, error) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
+	return ps.removeAgentLocked(id, agentID, ps.now().UTC())
+}
+
+// removeAgentLocked is RemoveAgent with an explicit timestamp for deterministic
+// raft replay. The caller must hold ps.mu.
+func (ps *memProjectStore) removeAgentLocked(id, agentID string, now time.Time) (*Project, error) {
 	p, ok := ps.projects[id]
 	if !ok {
 		return nil, ErrProjectNotFound
@@ -309,7 +347,7 @@ func (ps *memProjectStore) RemoveAgent(id, agentID string) (*Project, error) {
 	for i, a := range p.Team.Agents {
 		if a.AgentID == agentID {
 			p.Team.Agents = append(p.Team.Agents[:i], p.Team.Agents[i+1:]...)
-			p.UpdatedAt = ps.now().UTC()
+			p.UpdatedAt = now
 			ps.flush()
 			break
 		}
@@ -322,10 +360,42 @@ func (ps *memProjectStore) RemoveAgent(id, agentID string) (*Project, error) {
 func (ps *memProjectStore) Delete(id string) error {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
+	return ps.deleteLocked(id)
+}
+
+// deleteLocked is Delete without the public lock. The caller must hold ps.mu.
+func (ps *memProjectStore) deleteLocked(id string) error {
 	if _, ok := ps.projects[id]; !ok {
 		return ErrProjectNotFound
 	}
 	delete(ps.projects, id)
 	ps.flush()
 	return nil
+}
+
+// snapshot returns a serializable copy of the full store state, for a raft
+// snapshot.
+func (ps *memProjectStore) snapshot() projectStoreState {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	state := projectStoreState{
+		Projects: make([]Project, 0, len(ps.projects)),
+		NextID:   ps.nextID,
+	}
+	for _, p := range ps.projects {
+		state.Projects = append(state.Projects, *p)
+	}
+	return state
+}
+
+// restore replaces the full store state from a raft snapshot.
+func (ps *memProjectStore) restore(state projectStoreState) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.projects = make(map[string]*Project, len(state.Projects))
+	for i := range state.Projects {
+		p := state.Projects[i]
+		ps.projects[p.ID] = &p
+	}
+	ps.nextID = state.NextID
 }

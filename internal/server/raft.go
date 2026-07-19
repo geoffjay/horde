@@ -40,8 +40,9 @@ var errNoRaftLeader = errors.New("raft: no leader elected yet")
 // applied until the state stores are wired through raft.
 type raftFSMHandler interface {
 	// applyCommand applies one replicated command (the bytes passed to
-	// raft.Apply) to the local state machine.
-	applyCommand(data []byte) error
+	// raft.Apply) to the local state machine and returns the value surfaced to
+	// the leader's Apply caller (e.g. the created project).
+	applyCommand(data []byte) (any, error)
 	// snapshotState returns a point-in-time serialization of the replicated
 	// state for a raft snapshot.
 	snapshotState() ([]byte, error)
@@ -193,6 +194,22 @@ func (n *raftNode) addVoter(nodeID, addr string) error {
 // removeServer removes a peer from the configuration. Leader-only.
 func (n *raftNode) removeServer(nodeID string) error {
 	return n.raft.RemoveServer(raft.ServerID(nodeID), 0, raftApplyTimeout).Error()
+}
+
+// apply replicates a command through the raft log, blocks until it is applied by
+// the FSM (or the timeout elapses), and returns the FSM response. Leader-only —
+// a follower returns raft.ErrNotLeader, which the API avoids by forwarding
+// mutations to the leader.
+func (n *raftNode) apply(data []byte) (any, error) {
+	f := n.raft.Apply(data, raftApplyTimeout)
+	if err := f.Error(); err != nil {
+		return nil, err
+	}
+	resp := f.Response()
+	if err, ok := resp.(error); ok && err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // shutdown stops raft and closes the transport and store. Safe to call once on

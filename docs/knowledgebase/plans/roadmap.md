@@ -179,6 +179,8 @@ elected leader comes up current. Default (static-master) behaviour is unchanged.
   the leader, role is dynamic (`Server.isMaster()`), and a follower re-targets
   the new leader after an election.
 * Slice 2 — replicate the project store through the raft log (an FSM).
+  **Done**: `raftProjectStore` routes project mutations through `raft.Apply`
+  (deterministic replay), so a newly-elected leader has current project state.
 * Slice 3 — replicate AAP resume tokens.
 * Slice 4 — a stable client/TUI entry point that follows the leader across a
   failover.

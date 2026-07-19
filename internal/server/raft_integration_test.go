@@ -51,6 +51,7 @@ func startRaftNode(t *testing.T, nodeID string, master bool, seeds []string) raf
 	cfg := server.Config{
 		Mode:                mode,
 		NodeID:              nodeID,
+		AgentCommand:        findHordeBinary(t),
 		SpawnDefaultAgent:   false,
 		Port:                ln.Addr().(*net.TCPAddr).Port,
 		AdvertiseAddr:       apiAddr,
@@ -79,6 +80,12 @@ func startRaftNode(t *testing.T, nodeID string, master bool, seeds []string) raf
 			return
 		}
 		stopped = true
+		// Stop the node's agent subprocesses so a crashed node leaves no leaked
+		// children holding the test's I/O pipe (a real crash would orphan them;
+		// the test cleans them up explicitly).
+		for _, a := range srv.Agents() {
+			_ = srv.StopAgent(a.ID)
+		}
 		cancel()
 		_ = httpSrv.Close()
 	}
@@ -185,4 +192,54 @@ func TestRaftFailover_ReElectsOnLeaderCrash(t *testing.T) {
 		}
 		return false
 	}, 30*time.Second, 250*time.Millisecond, "the surviving follower should register with the new leader")
+}
+
+// TestRaftFailover_ProjectStateSurvivesFailover: a project created (and paused)
+// on the leader is replicated through the raft log, so after the leader crashes
+// the new leader serves the same project with the same state (slice 2).
+func TestRaftFailover_ProjectStateSurvivesFailover(t *testing.T) {
+	m := startRaftNode(t, "node-a", true, nil)
+	f1 := startRaftNode(t, "node-b", false, []string{m.addr})
+	f2 := startRaftNode(t, "node-c", false, []string{m.addr})
+
+	leader := awaitLeader(t, m.srv, f1.srv, f2.srv)
+	require.Equal(t, "node-a", leader.NodeID())
+
+	// Create a project on the leader (spawns the greeter locally) and pause it.
+	proj, err := m.client.CreateProject(context.Background(), client.CreateProjectRequest{
+		Name: "failover-proj", AgentNames: []string{"greeter"},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, proj.ID)
+
+	paused, err := m.client.PauseProject(context.Background(), proj.ID)
+	require.NoError(t, err)
+	require.Equal(t, "paused", paused.State)
+
+	// Ensure both followers are voters so the survivors keep quorum after the crash.
+	require.Eventually(t, func() bool {
+		v, err := m.client.ListNodes(context.Background())
+		if err != nil {
+			return false
+		}
+		fresh := 0
+		for _, n := range v.Nodes {
+			if !n.Stale {
+				fresh++
+			}
+		}
+		return fresh == 2
+	}, 30*time.Second, 250*time.Millisecond, "both followers registered before crash")
+
+	// Crash the leader.
+	m.stop()
+	newLeader := awaitLeader(t, f1.srv, f2.srv)
+	require.NotEqual(t, "node-a", newLeader.NodeID())
+
+	// Query the new leader directly (its applied FSM state), avoiding any
+	// forwarding: the project survived with its paused state.
+	require.Eventually(t, func() bool {
+		p, gerr := newLeader.GetProject(proj.ID)
+		return gerr == nil && p != nil && p.State == server.ProjectPaused && p.Name == "failover-proj"
+	}, 20*time.Second, 250*time.Millisecond, "the project should survive failover with its state")
 }

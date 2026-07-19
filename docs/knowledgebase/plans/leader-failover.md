@@ -88,10 +88,31 @@ Verify (`task test:integration`): a 3-node raft cluster elects one leader;
 killing the leader elects a new one within the election timeout; a slave's
 `raftDiscoverer` returns the new leader's HTTP addr and it re-registers there.
 
-## Slice 2 — Replicate the project store through the log
+## Slice 2 — Replicate the project store through the log — complete
 
-Make the project store (`ProjectStore` — projects, teams, assignments) a raft
-FSM so a newly-elected leader has it. This is the bulk of the work.
+Made the project store (`ProjectStore` — projects, teams, assignments) a raft
+FSM so a newly-elected leader has it.
+
+Delivered: `raftProjectStore` (`internal/server/raftproject.go`) implements
+`ProjectStore` — mutations encode a `projectCommand` and go through `raft.Apply`
+(committed on a quorum, replayed by every replica's FSM); reads serve the locally
+applied in-memory state. Determinism: the leader resolves the timestamp before
+replicating and the FSM assigns the project id from the replicated `nextID`, so
+every replica applies identically (verified). `memProjectStore` mutators were
+split into `*Locked(…, now)` helpers reused by both the direct path and the FSM,
+plus `snapshot()`/`restore()`. A top-level `raftCommand` envelope
+(`raftstate.go`) dispatches by kind; the Server is the `raftFSMHandler`
+(`applyCommand`/`snapshotState`/`restoreState`). Under `failover: raft`, `New`
+builds the `raftProjectStore` (no `projects.json` — the log/snapshots are the
+source of truth) and wires its apply to `Server.raftApply`. Follower forwarding
+is unchanged: `projectForwardMiddleware` already routes mutations to the leader
+(the raft leader under failover), so a follower never mutates locally. Verified:
+`TestRaftFailover_ProjectStateSurvivesFailover` (create + pause on the leader,
+crash it, new leader serves the same paused project) plus unit tests for the
+CRUD-through-log path, deterministic cross-replica apply, invalid-input
+short-circuit, and snapshot/restore.
+
+The original slice plan (unchanged) follows.
 
 * **FSM.** A `projectFSM` applies serialized mutations (create / update-state /
   assign / attach / remove / delete) to the in-memory project state; `Apply`

@@ -223,6 +223,10 @@ type Server struct {
 	router   http.Handler
 	ctxStore *contextStore
 	projects ProjectStore
+	// raftProjects is the raft-backed project store when failover is enabled
+	// (also the ProjectStore in `projects`); nil otherwise. The FSM applies
+	// replicated project commands to it.
+	raftProjects *raftProjectStore
 
 	// resume persists the latest AAP resume_token per agent so a respawned
 	// adapter can resume its prior conversation.
@@ -355,17 +359,24 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 	if cfg.HealthPollInterval == 0 {
 		cfg.HealthPollInterval = defaultHealthPollInterval
 	}
-	// Build the project store. When a state dir is configured, persist
-	// projects to <stateDir>/projects.json and load any existing state.
+	// Build the project store. Under raft failover the store is replicated
+	// through the raft log (the log/snapshots are the source of truth, so no
+	// projects.json). Otherwise, when a state dir is configured, persist projects
+	// to <stateDir>/projects.json and load any existing state.
 	var projects ProjectStore
-	if cfg.StateDir != "" {
+	var raftProjects *raftProjectStore
+	switch {
+	case cfg.Failover == FailoverRaft:
+		raftProjects = newRaftProjectStore()
+		projects = raftProjects
+	case cfg.StateDir != "":
 		projects = newPersistentProjectStore(filepath.Join(cfg.StateDir, "projects.json"))
 		if mem, ok := projects.(*memProjectStore); ok {
 			if err := mem.loadProjects(); err != nil {
 				logrus.WithError(err).Warn("failed to load persisted projects; starting fresh")
 			}
 		}
-	} else {
+	default:
 		projects = newProjectStore()
 	}
 
@@ -375,18 +386,35 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 		resumePath = filepath.Join(cfg.StateDir, "aap-resume.json")
 	}
 
-	return &Server{
+	s := &Server{
 		cfg:            cfg,
 		procs:          make(map[string]*agentProc),
 		slaves:         make(map[string]knownSlave),
 		bus:            NewEventBus(),
 		ctxStore:       newContextStore(cfg.ContextRetention),
 		projects:       projects,
+		raftProjects:   raftProjects,
 		resume:         newResumeStore(resumePath),
 		remoteContexts: make(map[string]ExecutionContext),
 		aapInvokes:     newAAPInvocationRegistry(),
 		now:            time.Now,
-	}, nil
+	}
+	// Wire the raft-backed store's replication path to this server's raft node
+	// (created later in Start). The closure reads s.raft at apply time.
+	if raftProjects != nil {
+		raftProjects.apply = s.raftApply
+	}
+	return s, nil
+}
+
+// raftApply replicates a command through this node's raft log and returns the
+// FSM response. It errors if raft is not running (failover off or not yet
+// started) — mutations only reach here on the leader via the API.
+func (s *Server) raftApply(data []byte) (any, error) {
+	if s.raft == nil {
+		return nil, fmt.Errorf("raft: not running")
+	}
+	return s.raft.apply(data)
 }
 
 // Start prepares the server and spawns the initial set of agents. It returns
@@ -673,12 +701,6 @@ func (s *Server) raftDataDir() string {
 	}
 	return filepath.Join(os.TempDir(), "horde-raft", s.cfg.NodeID)
 }
-
-// raftHandler returns the FSM handler for replicated state. It is nil until the
-// state stores (project store, resume tokens) are wired through the raft log; a
-// nil handler makes the FSM a safe no-op, which is correct while only leader
-// election is replicated.
-func (s *Server) raftHandler() raftFSMHandler { return nil }
 
 // raftReconcileLoop keeps the raft configuration in sync with the gossip ring:
 // on the leader, every visible failover peer becomes a raft voter and every raft
