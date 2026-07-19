@@ -1,0 +1,46 @@
+# Raft leader-failover overlay for the integration cluster.
+#
+# Layers on top of docker-compose.yml (and requires gossip) to enable automatic
+# leader failover: every node joins the gossip ring for membership and runs a
+# hashicorp/raft peer. The raft leader IS the horde master; if it dies, the two
+# survivors elect a new leader (a 3-node quorum) and master-only state (the
+# project store, AAP resume tokens) — replicated through the raft log — comes up
+# on the new leader. The node started as `--mode master` bootstraps the raft
+# cluster; the others join as voters when the leader's reconcile sees them in the
+# ring.
+#
+# Run:
+#   docker compose -f docker/docker-compose.yml \
+#                  -f docker/docker-compose.gossip.yml \
+#                  -f docker/docker-compose.raft.yml up --build -d
+#
+# Then kill the master (`docker compose ... stop master`) and watch a slave take
+# over: `curl slaveN/api/v1/cluster/nodes` shows a new leader_id, and a project
+# created before the crash is still served.
+#
+# Raft uses TCP 13421 between containers on the shared `horde` network; the
+# advertise address must be routable (the container name resolves on the network).
+
+services:
+  master:
+    environment:
+      HORDE_CLUSTER_FAILOVER: "raft"
+      HORDE_CLUSTER_RAFT_BIND_ADDR: "0.0.0.0:13421"
+      HORDE_CLUSTER_RAFT_ADVERTISE_ADDR: "master:13421"
+      HORDE_CLUSTER_RAFT_DIR: "/var/lib/horde/raft"
+
+  slave1:
+    environment:
+      HORDE_CLUSTER_FAILOVER: "raft"
+      HORDE_CLUSTER_ADVERTISE_ADDR: "slave1:13420"
+      HORDE_CLUSTER_RAFT_BIND_ADDR: "0.0.0.0:13421"
+      HORDE_CLUSTER_RAFT_ADVERTISE_ADDR: "slave1:13421"
+      HORDE_CLUSTER_RAFT_DIR: "/var/lib/horde/raft"
+
+  slave2:
+    environment:
+      HORDE_CLUSTER_FAILOVER: "raft"
+      HORDE_CLUSTER_ADVERTISE_ADDR: "slave2:13420"
+      HORDE_CLUSTER_RAFT_BIND_ADDR: "0.0.0.0:13421"
+      HORDE_CLUSTER_RAFT_ADVERTISE_ADDR: "slave2:13421"
+      HORDE_CLUSTER_RAFT_DIR: "/var/lib/horde/raft"

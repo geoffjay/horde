@@ -45,6 +45,12 @@ cluster.
 5. **Gossip.** memberlist has its own transport; its `SecretKey` symmetric
    encryption stays the mechanism there (mTLS covers the HTTP API, not the
    gossip UDP/TCP). The two are complementary.
+6. **Raft transport.** Under [leader failover](../plans/leader-failover.md) the
+   raft peers speak over their own TCP transport (`cluster.raft_advertise_addr`),
+   which the interim `cluster.auth_token` does **not** cover — it is a bearer
+   token on the HTTP cluster calls only. Securing the raft transport (mTLS, or
+   raft's transport-level options) is a gap tracked here alongside node→node
+   auth; deploy raft failover on a trusted network until it is closed.
 
 # Migration shape (when planned)
 
