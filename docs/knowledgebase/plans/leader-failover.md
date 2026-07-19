@@ -30,12 +30,32 @@ Topology it extends: [master/slave cluster model](../decisions/master-slave-mode
   `//go:build integration` per the
   [unit/integration split](../patterns/unit-integration-test-split.md).
 
-## Slice 1 — Raft membership + election (leader lookup only)
+## Slice 1 — Raft membership + election (leader lookup only) — complete
 
-Stand up a raft cluster whose leader *is* the horde master, and expose the
-current leader through the existing discovery seam — **no state replication
-yet** (the FSM is a no-op). This proves election + re-targeting end to end before
-touching the stores.
+Stood up a raft cluster whose leader *is* the horde master, exposed through the
+existing discovery seam — **no state replication yet** (the FSM is a no-op).
+This proves election + re-targeting end to end before touching the stores.
+
+Delivered: `internal/server/raft.go` (`raftNode` — `hashicorp/raft` +
+`raft-boltdb/v2` log/stable store + file snapshots, TCP transport, gossip-driven
+`addVoter`/`removeServer`, `bootstrapIfNeeded`) and `raftfsm.go` (a
+handler-delegating FSM that no-ops until the stores are wired in). Config keys
+`cluster.failover` / `raft_bind_addr` / `raft_advertise_addr` / `raft_dir`
+(validated: `raft` needs `gossip` + a routable advertise addr). Role is dynamic
+via `Server.isMaster()` (raft leader ⇒ master), threaded through the
+master-gated methods, `Mode()`, `LeaderAddr()`, `LeaderConnected()`, and a new
+`IsLeader()`. Gossip `nodeMeta` gained `raft_addr`; the `raftDiscoverer` maps the
+raft leader id → its HTTP address via the ring. `startCluster` brings up raft
+before gossip (so gossip advertises the raft addr); every failover node runs
+`connectLeader` (which skips self-registration on the leader and re-registers on
+demotion) and the leader runs `raftReconcileLoop` (AddVoter/RemoveServer from the
+ring). Verified: `TestRaftFailover_ElectsSingleLeader` and
+`TestRaftFailover_ReElectsOnLeaderCrash` (3-node in-process cluster: single
+leader elected, followers register; kill the leader → survivors re-elect and the
+remaining follower re-targets), plus `raftDiscoverer` unit tests and config
+validation cases.
+
+The original slice plan (unchanged) follows.
 
 * **Config.** `cluster.failover` (`off` default | `raft`); `cluster.raft_bind_addr`
   / `cluster.raft_advertise_addr` (the raft transport addr, distinct from the

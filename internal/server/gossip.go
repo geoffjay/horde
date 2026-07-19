@@ -37,6 +37,10 @@ const (
 type nodeMeta struct {
 	Role    string `json:"role"`
 	APIAddr string `json:"api_addr"`
+	// RaftAddr is this node's raft transport address, gossiped so the leader's
+	// membership reconcile can AddVoter peers and the raftDiscoverer can map a
+	// raft leader id back to its HTTP address. Empty when failover is off.
+	RaftAddr string `json:"raft_addr,omitempty"`
 }
 
 // gossipConfig parameterizes a gossip node.
@@ -44,6 +48,7 @@ type gossipConfig struct {
 	NodeID        string
 	Role          string
 	APIAddr       string   // this node's HTTP address, advertised to peers
+	RaftAddr      string   // this node's raft transport address (failover only); empty otherwise
 	BindAddr      string   // host:port to bind the gossip listeners; empty → LAN default
 	AdvertiseAddr string   // host:port peers use to reach this node; empty → derived
 	Seeds         []string // gossip addresses to Join (host or host:port)
@@ -85,7 +90,7 @@ func (d *gossipDelegate) MergeRemoteState([]byte, bool)   {}
 //
 //nolint:gocritic // hugeParam: gossipConfig is a one-shot construction argument
 func newGossipNode(cfg gossipConfig) (*gossipNode, error) {
-	meta, err := json.Marshal(nodeMeta{Role: cfg.Role, APIAddr: cfg.APIAddr})
+	meta, err := json.Marshal(nodeMeta{Role: cfg.Role, APIAddr: cfg.APIAddr, RaftAddr: cfg.RaftAddr})
 	if err != nil {
 		return nil, fmt.Errorf("gossip: encode meta: %w", err)
 	}
@@ -173,6 +178,50 @@ func (n *gossipNode) leaderAPIAddr() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("gossip: no master visible in the cluster yet (%d members)", n.ml.NumMembers())
+}
+
+// apiAddrForNode returns the advertised HTTP address of the gossip member with
+// the given node id (memberlist member name), used by the raftDiscoverer to map
+// a raft leader id back to its HTTP address.
+func (n *gossipNode) apiAddrForNode(nodeID string) (string, bool) {
+	for _, m := range n.ml.Members() {
+		if m.Name != nodeID {
+			continue
+		}
+		var meta nodeMeta
+		if err := json.Unmarshal(m.Meta, &meta); err != nil {
+			return "", false
+		}
+		if meta.APIAddr == "" {
+			return "", false
+		}
+		return meta.APIAddr, true
+	}
+	return "", false
+}
+
+// raftPeer is a gossip member's raft identity: its node id and raft transport
+// address, used by the leader's membership reconcile.
+type raftPeer struct {
+	NodeID   string
+	RaftAddr string
+}
+
+// raftPeers returns every visible gossip member that advertises a raft address
+// (i.e. every failover node in the ring, including this one).
+func (n *gossipNode) raftPeers() []raftPeer {
+	var out []raftPeer
+	for _, m := range n.ml.Members() {
+		var meta nodeMeta
+		if err := json.Unmarshal(m.Meta, &meta); err != nil {
+			continue
+		}
+		if meta.RaftAddr == "" {
+			continue
+		}
+		out = append(out, raftPeer{NodeID: m.Name, RaftAddr: meta.RaftAddr})
+	}
+	return out
 }
 
 // describe returns a short human-readable description for logs.

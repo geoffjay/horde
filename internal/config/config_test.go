@@ -244,4 +244,38 @@ func TestConfig_Validate(t *testing.T) {
 		c.Cluster.GossipEncryptionKey = base64.StdEncoding.EncodeToString(make([]byte, 32))
 		assert.NoError(t, c.Validate())
 	})
+
+	t.Run("raft failover requires gossip discovery", func(t *testing.T) {
+		c := valid() // static discovery
+		c.Cluster.Failover = "raft"
+		c.Cluster.RaftAdvertiseAddr = "127.0.0.1:13421"
+		err := c.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "gossip")
+	})
+
+	t.Run("raft failover requires a raft advertise addr", func(t *testing.T) {
+		c := valid()
+		c.Cluster.DiscoveryMechanism = "gossip"
+		c.Cluster.Failover = "raft"
+		err := c.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "raft_advertise_addr")
+	})
+
+	t.Run("raft failover with gossip + advertise addr is valid", func(t *testing.T) {
+		c := valid()
+		c.Cluster.DiscoveryMechanism = "gossip"
+		c.Cluster.Failover = "raft"
+		c.Cluster.RaftAdvertiseAddr = "127.0.0.1:13421"
+		assert.NoError(t, c.Validate())
+	})
+
+	t.Run("unknown failover mode", func(t *testing.T) {
+		c := valid()
+		c.Cluster.Failover = "paxos"
+		err := c.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failover")
+	})
 }

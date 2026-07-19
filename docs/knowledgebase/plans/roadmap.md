@@ -175,7 +175,9 @@ makes leadership *survive* the loss of a node: opt-in **raft** election
 elected leader comes up current. Default (static-master) behaviour is unchanged.
 
 * Slice 1 — raft membership + election (leader lookup via a `raftDiscoverer`;
-  no state replication yet).
+  no state replication yet). **Done**: a raft quorum over the gossip ring elects
+  the leader, role is dynamic (`Server.isMaster()`), and a follower re-targets
+  the new leader after an election.
 * Slice 2 — replicate the project store through the raft log (an FSM).
 * Slice 3 — replicate AAP resume tokens.
 * Slice 4 — a stable client/TUI entry point that follows the leader across a

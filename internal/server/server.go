@@ -47,6 +47,15 @@ const (
 	ModeSlave Mode = "slave"
 )
 
+const (
+	// FailoverOff is the default: the master is statically designated by Mode.
+	FailoverOff = "off"
+	// FailoverRaft elects the leader via a raft quorum and replicates
+	// master-only state through the raft log. The elected leader acts as the
+	// master; every other node acts as a slave (dynamic role).
+	FailoverRaft = "raft"
+)
+
 // Config configures a Server.
 type Config struct {
 	// Mode is the node role: master (default) or slave.
@@ -82,6 +91,19 @@ type Config struct {
 	// GossipEncryptionKey is the decoded 16/24/32-byte memberlist SecretKey
 	// (from cluster.gossip_encryption_key). Empty leaves gossip unencrypted.
 	GossipEncryptionKey []byte
+	// Failover selects automatic leader failover (from cluster.failover):
+	// FailoverOff (default, static master) or FailoverRaft (a raft quorum elects
+	// the leader and replicates master-only state). Raft failover requires the
+	// gossip discovery mechanism.
+	Failover string
+	// RaftBindAddr / RaftAdvertiseAddr are the host:port the raft transport binds
+	// and advertises (from cluster.raft_bind_addr / cluster.raft_advertise_addr).
+	// Only used when Failover is FailoverRaft.
+	RaftBindAddr      string
+	RaftAdvertiseAddr string
+	// RaftDir is the directory for the raft log, stable store, and snapshots
+	// (from cluster.raft_dir; defaults to <state_dir>/raft). Failover only.
+	RaftDir string
 	// SpawnDefaultAgent controls whether Start spawns the default greeter
 	// agent. Tests set this to false to avoid spawning real subprocesses.
 	SpawnDefaultAgent bool
@@ -197,6 +219,7 @@ type Server struct {
 	slaves   map[string]knownSlave
 	bus      *EventBus
 	gossip   *gossipNode
+	raft     *raftNode
 	router   http.Handler
 	ctxStore *contextStore
 	projects ProjectStore
@@ -276,6 +299,9 @@ const (
 	// leaderReconnectInterval is how often a slave retries the leader
 	// connection (background, never blocks local work).
 	leaderReconnectInterval = 5 * time.Second
+	// raftReconcileInterval is how often the raft leader reconciles its voter
+	// set with the gossip ring (add joined peers, remove departed ones).
+	raftReconcileInterval = 3 * time.Second
 	// agentShutdownGrace is how long we wait for an agent subprocess to exit
 	// after signaling it before force-killing.
 	agentShutdownGrace = 5 * time.Second
@@ -386,48 +412,124 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 
-	// In slave mode, establish the leader connection in the background so it
-	// never blocks local operation. The leader client is created here (not
-	// in connectLeader) so LeaderAddr() returns the master address as soon
-	// as Start returns, even before the first register attempt completes.
-	// Gossip discovery requires every node to join the ring so the master is
-	// discoverable: the master advertises Role=master, a slave Role=slave.
-	// Create it synchronously (a bind failure surfaces from Start) and tear it
-	// down on ctx cancel (there is no Stop() method — teardown is ctx-driven,
-	// matching connectLeader/forwardEvents).
-	var gossip gossipMembers
-	if s.cfg.DiscoveryMechanism == discoveryGossip {
-		role := roleSlave
-		if s.cfg.Mode == ModeMaster {
-			role = roleMaster
-		}
-		node, err := newGossipNode(gossipConfig{
-			NodeID:        s.cfg.NodeID,
-			Role:          role,
-			APIAddr:       s.localAddr(),
-			BindAddr:      s.cfg.GossipBindAddr,
-			AdvertiseAddr: s.cfg.GossipAdvertiseAddr,
-			Seeds:         s.cfg.GossipSeeds,
-			SecretKey:     s.cfg.GossipEncryptionKey,
-		})
-		if err != nil {
-			return fmt.Errorf("start gossip: %w", err)
-		}
-		s.gossip = node
-		gossip = node
-		logrus.WithFields(logrus.Fields{"role": role, "seeds": s.cfg.GossipSeeds}).Info("gossip discovery started")
-		go func() {
-			<-ctx.Done()
-			node.shutdown()
-		}()
+	// Bring up cluster membership (raft failover, gossip) and the background
+	// leader-connection loops. Extracted so Start stays focused on lifecycle.
+	if err := s.startCluster(ctx); err != nil {
+		return err
 	}
 
-	if s.cfg.Mode == ModeSlave {
+	// Start background health polling for agent subprocesses.
+	s.startHealthPolling(ctx)
+
+	return nil
+}
+
+// startCluster brings up cluster membership and the background leader-connection
+// loops. Raft failover starts before gossip so gossip can advertise the raft
+// transport address in its node metadata (the leader's membership reconcile and
+// the raftDiscoverer both read it from the ring). The node started with
+// --mode master bootstraps the raft cluster; the rest join as voters when the
+// leader's reconcile sees them in the ring. Everything is torn down on ctx
+// cancel (there is no Stop() — teardown is ctx-driven).
+func (s *Server) startCluster(ctx context.Context) error {
+	raftAddrMeta, err := s.startRaft(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := s.startGossip(ctx, raftAddrMeta); err != nil {
+		return err
+	}
+
+	return s.startLeaderLoops(ctx)
+}
+
+// startRaft starts the raft node when failover is enabled, returning the raft
+// transport address to advertise in gossip (empty when failover is off).
+func (s *Server) startRaft(ctx context.Context) (string, error) {
+	if s.cfg.Failover != FailoverRaft {
+		return "", nil
+	}
+	rn, err := newRaftNode(raftConfig{
+		NodeID:        s.cfg.NodeID,
+		BindAddr:      s.cfg.RaftBindAddr,
+		AdvertiseAddr: s.cfg.RaftAdvertiseAddr,
+		DataDir:       s.raftDataDir(),
+		Bootstrap:     s.cfg.Mode == ModeMaster,
+		Handler:       s.raftHandler(),
+	})
+	if err != nil {
+		return "", fmt.Errorf("start raft: %w", err)
+	}
+	s.raft = rn
+	logrus.WithFields(logrus.Fields{"raft_addr": rn.localAddr, "bootstrap": s.cfg.Mode == ModeMaster}).Info("raft failover started")
+	go func() {
+		<-ctx.Done()
+		rn.shutdown()
+	}()
+	return rn.localAddr, nil
+}
+
+// startGossip starts the gossip node (into s.gossip) when the discovery
+// mechanism is gossip. raftAddr is advertised in node metadata for failover
+// (empty otherwise).
+func (s *Server) startGossip(ctx context.Context, raftAddr string) error {
+	if s.cfg.DiscoveryMechanism != discoveryGossip {
+		return nil
+	}
+	role := roleSlave
+	if s.cfg.Mode == ModeMaster {
+		role = roleMaster
+	}
+	node, err := newGossipNode(gossipConfig{
+		NodeID:        s.cfg.NodeID,
+		Role:          role,
+		APIAddr:       s.localAddr(),
+		RaftAddr:      raftAddr,
+		BindAddr:      s.cfg.GossipBindAddr,
+		AdvertiseAddr: s.cfg.GossipAdvertiseAddr,
+		Seeds:         s.cfg.GossipSeeds,
+		SecretKey:     s.cfg.GossipEncryptionKey,
+	})
+	if err != nil {
+		return fmt.Errorf("start gossip: %w", err)
+	}
+	s.gossip = node
+	logrus.WithFields(logrus.Fields{"role": role, "seeds": s.cfg.GossipSeeds}).Info("gossip discovery started")
+	go func() {
+		<-ctx.Done()
+		node.shutdown()
+	}()
+	return nil
+}
+
+// startLeaderLoops starts the background register/heartbeat (and, under
+// failover, membership-reconcile) goroutines. The leader client is created here
+// so LeaderAddr() is available as soon as Start returns.
+func (s *Server) startLeaderLoops(ctx context.Context) error {
+	switch {
+	case s.cfg.Failover == FailoverRaft:
+		// Dynamic role: every node runs the leader-connection and event-forward
+		// loops. The raftDiscoverer resolves whichever node currently leads, and
+		// connectLeader skips registration on whichever node is itself the
+		// leader. The leader also runs the membership reconcile loop.
+		disco := &raftDiscoverer{raft: s.raft, gossip: s.gossip}
+		s.leader = newLeaderClient(disco, s.cfg.NodeID, s.localAddr(), s.cfg.AuthToken)
+		go s.connectLeader(ctx)
+		go s.forwardEvents(ctx)
+		go s.raftReconcileLoop(ctx)
+	case s.cfg.Mode == ModeSlave:
+		// Pass a properly-nil interface when gossip is not running (a nil
+		// *gossipNode wrapped in the interface would be non-nil).
+		var gm gossipMembers
+		if s.gossip != nil {
+			gm = s.gossip
+		}
 		disco, err := newDiscoverer(DiscoveryConfig{
 			Mechanism: s.cfg.DiscoveryMechanism,
 			Leader:    s.cfg.Leader,
 			DNSName:   s.cfg.DiscoveryDNSName,
-		}, gossip)
+		}, gm)
 		switch {
 		case errors.Is(err, errStandaloneSlave):
 			logrus.Warn("slave mode without a leader source; running standalone")
@@ -439,10 +541,6 @@ func (s *Server) Start(ctx context.Context) error {
 			go s.forwardEvents(ctx)
 		}
 	}
-
-	// Start background health polling for agent subprocesses.
-	s.startHealthPolling(ctx)
-
 	return nil
 }
 
@@ -460,15 +558,50 @@ func (s *Server) connectLeader(ctx context.Context) {
 	}
 	discovery := client.disco.Describe()
 
-	// First registration: try immediately, then loop on the ticker.
-	if leaderID, err := client.register(ctx); err != nil {
-		logrus.WithError(err).WithField("discovery", discovery).Warn("leader register failed")
-	} else {
-		s.mu.Lock()
-		s.leaderOK = true
-		s.mu.Unlock()
-		logrus.WithFields(logrus.Fields{"leader": client.leaderAddr(), "leader_id": leaderID}).Info("registered with leader")
+	// wasSelfLeader tracks whether the previous tick found this node to be the
+	// raft leader (failover). On demotion (leader → follower) we clear leaderOK
+	// so the node re-registers with the new leader — heartbeat alone would not
+	// re-send this node's advertised address.
+	wasSelfLeader := false
+
+	// registerHeartbeat runs one register/heartbeat cycle against the current
+	// leader. On the raft leader itself it is a no-op (nothing to register with).
+	registerHeartbeat := func() {
+		if s.failoverEnabled() && s.isMaster() {
+			s.mu.Lock()
+			s.leaderOK = true
+			s.mu.Unlock()
+			wasSelfLeader = true
+			return
+		}
+		if wasSelfLeader {
+			// Just demoted: force a fresh registration with the new leader.
+			s.mu.Lock()
+			s.leaderOK = false
+			s.mu.Unlock()
+			wasSelfLeader = false
+		}
+		if !s.leaderOK {
+			leaderID, err := client.register(ctx)
+			if err != nil {
+				logrus.WithError(err).WithField("discovery", discovery).Debug("leader register failed")
+				return
+			}
+			s.mu.Lock()
+			s.leaderOK = true
+			s.mu.Unlock()
+			logrus.WithFields(logrus.Fields{"leader": client.leaderAddr(), "leader_id": leaderID}).Info("registered with leader")
+		}
+		if err := client.heartbeat(ctx, s.agentNames(), s.localContextDigests()); err != nil {
+			logrus.WithError(err).WithField("discovery", discovery).Debug("heartbeat failed")
+			s.mu.Lock()
+			s.leaderOK = false
+			s.mu.Unlock()
+		}
 	}
+
+	// Try immediately, then loop on the ticker.
+	registerHeartbeat()
 
 	ticker := time.NewTicker(leaderReconnectInterval)
 	defer ticker.Stop()
@@ -478,22 +611,7 @@ func (s *Server) connectLeader(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !s.leaderOK {
-				if _, err := client.register(ctx); err != nil {
-					logrus.WithError(err).WithField("discovery", discovery).Debug("leader register retry failed")
-					continue
-				}
-				s.mu.Lock()
-				s.leaderOK = true
-				s.mu.Unlock()
-				logrus.WithField("leader", client.leaderAddr()).Info("registered with leader")
-			}
-			if err := client.heartbeat(ctx, s.agentNames(), s.localContextDigests()); err != nil {
-				logrus.WithError(err).WithField("discovery", discovery).Debug("heartbeat failed")
-				s.mu.Lock()
-				s.leaderOK = false
-				s.mu.Unlock()
-			}
+			registerHeartbeat()
 		}
 	}
 }
@@ -542,6 +660,80 @@ func (s *Server) localAddr() string {
 	}
 	logrus.Warn("cluster.advertise_addr is not set; advertising \":<port>\" which is not routable across hosts — master→slave routing will not reach this node")
 	return fmt.Sprintf(":%d", s.cfg.Port)
+}
+
+// raftDataDir resolves the directory for the raft log/stable/snapshot stores:
+// cluster.raft_dir when set, else <state_dir>/raft, else a per-node temp dir.
+func (s *Server) raftDataDir() string {
+	if s.cfg.RaftDir != "" {
+		return s.cfg.RaftDir
+	}
+	if s.cfg.StateDir != "" {
+		return filepath.Join(s.cfg.StateDir, "raft")
+	}
+	return filepath.Join(os.TempDir(), "horde-raft", s.cfg.NodeID)
+}
+
+// raftHandler returns the FSM handler for replicated state. It is nil until the
+// state stores (project store, resume tokens) are wired through the raft log; a
+// nil handler makes the FSM a safe no-op, which is correct while only leader
+// election is replicated.
+func (s *Server) raftHandler() raftFSMHandler { return nil }
+
+// raftReconcileLoop keeps the raft configuration in sync with the gossip ring:
+// on the leader, every visible failover peer becomes a raft voter and every raft
+// server no longer in the ring is removed. Followers idle (reconcile is
+// leader-only). It exits on ctx cancel.
+func (s *Server) raftReconcileLoop(ctx context.Context) {
+	ticker := time.NewTicker(raftReconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if s.raft == nil || !s.raft.isLeader() || s.gossip == nil {
+				continue
+			}
+			s.reconcileRaftMembership()
+		}
+	}
+}
+
+// reconcileRaftMembership adds gossip peers missing from the raft configuration
+// as voters and removes raft servers that have left the ring. Leader-only.
+func (s *Server) reconcileRaftMembership() {
+	current, err := s.raft.servers()
+	if err != nil {
+		logrus.WithError(err).Debug("raft: read configuration for reconcile")
+		return
+	}
+	peers := s.gossip.raftPeers()
+	inRing := make(map[string]bool, len(peers))
+	for _, p := range peers {
+		inRing[p.NodeID] = true
+		if p.NodeID == s.cfg.NodeID {
+			continue
+		}
+		if _, ok := current[p.NodeID]; ok || p.RaftAddr == "" {
+			continue
+		}
+		if err := s.raft.addVoter(p.NodeID, p.RaftAddr); err != nil {
+			logrus.WithError(err).WithField("peer", p.NodeID).Debug("raft: add voter failed")
+			continue
+		}
+		logrus.WithFields(logrus.Fields{"peer": p.NodeID, "addr": p.RaftAddr}).Info("raft: added voter")
+	}
+	for id := range current {
+		if id == s.cfg.NodeID || inRing[id] {
+			continue
+		}
+		if err := s.raft.removeServer(id); err != nil {
+			logrus.WithError(err).WithField("peer", id).Debug("raft: remove server failed")
+			continue
+		}
+		logrus.WithField("peer", id).Info("raft: removed departed server")
+	}
 }
 
 // SpawnAgent starts a subprocess for the named agent and registers it. The
@@ -827,7 +1019,7 @@ func (s *Server) StopAgent(id string) error {
 // LeaderConnected reports whether the slave's leader connection is currently
 // established. Always true for master mode.
 func (s *Server) LeaderConnected() bool {
-	if s.cfg.Mode == ModeMaster {
+	if s.isMaster() {
 		return true
 	}
 	s.mu.Lock()
@@ -835,14 +1027,45 @@ func (s *Server) LeaderConnected() bool {
 	return s.leaderOK
 }
 
-// Mode returns the node's configured role.
-func (s *Server) Mode() Mode { return s.cfg.Mode }
+// failoverEnabled reports whether raft failover is configured and running.
+func (s *Server) failoverEnabled() bool {
+	return s.cfg.Failover == FailoverRaft && s.raft != nil
+}
+
+// isMaster reports whether this node currently acts as the cluster master.
+// Without failover the role is static (Mode). With raft failover the role is
+// dynamic: the current raft leader is the master. Every master-gated method
+// (registration, heartbeat, placement, cross-node routing) consults this rather
+// than the static Mode so leadership can move between nodes.
+func (s *Server) isMaster() bool {
+	if s.cfg.Failover == FailoverRaft {
+		return s.raft != nil && s.raft.isLeader()
+	}
+	return s.cfg.Mode == ModeMaster
+}
+
+// Mode returns the node's effective role. Under raft failover this reflects the
+// live raft leadership (master on the leader, slave elsewhere); otherwise it is
+// the configured Mode.
+func (s *Server) Mode() Mode {
+	if s.cfg.Failover == FailoverRaft {
+		if s.isMaster() {
+			return ModeMaster
+		}
+		return ModeSlave
+	}
+	return s.cfg.Mode
+}
+
+// IsLeader reports whether this node currently holds cluster leadership. Under
+// failover this tracks raft; otherwise a master is always the leader.
+func (s *Server) IsLeader() bool { return s.isMaster() }
 
 // LeaderAddr returns the master node's address (host:port) when this node is
 // a slave with a configured leader, or "" otherwise. Used by the API layer to
 // decide whether to forward project requests to the master.
 func (s *Server) LeaderAddr() string {
-	if s.cfg.Mode != ModeSlave || s.leader == nil {
+	if s.isMaster() || s.leader == nil {
 		return ""
 	}
 	return s.leader.leaderAddr()
@@ -927,7 +1150,7 @@ type SlaveInfo struct {
 // RegisterSlave records a slave's registration with this master. Only
 // meaningful in master mode; in slave mode it is a no-op.
 func (s *Server) RegisterSlave(nodeID, addr string) {
-	if s.cfg.Mode != ModeMaster {
+	if !s.isMaster() {
 		return
 	}
 	s.mu.Lock()
@@ -945,7 +1168,7 @@ func (s *Server) RegisterSlave(nodeID, addr string) {
 // slave's redacted execution context digests, stored in the aggregated
 // remote view.
 func (s *Server) Heartbeat(nodeID string, agentList []string, digests []ExecutionContextDigest) (string, bool) {
-	if s.cfg.Mode != ModeMaster {
+	if !s.isMaster() {
 		return "", false
 	}
 	s.mu.Lock()
@@ -1018,7 +1241,7 @@ func (s *Server) evictStaleSlavesLocked(now time.Time) {
 // misrouted). Local agents are handled before this is consulted, so a local id
 // does not reach here.
 func (s *Server) RemoteAgentNode(agentID string) (string, bool) {
-	if s.cfg.Mode != ModeMaster {
+	if !s.isMaster() {
 		return "", false
 	}
 	s.mu.Lock()
@@ -1149,7 +1372,7 @@ func (s *Server) SubscribeAgentContext(id string) (<-chan ExecutionContext, func
 // agents' execution contexts to the master. The master stores them in the
 // aggregated remote view. Only meaningful in master mode.
 func (s *Server) ReportContexts(nodeID string, contexts []ExecutionContext) {
-	if s.cfg.Mode != ModeMaster {
+	if !s.isMaster() {
 		return
 	}
 	s.mu.Lock()

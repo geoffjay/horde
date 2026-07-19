@@ -63,6 +63,21 @@ type ClusterConfig struct {
 	// gossip traffic (memberlist SecretKey, AES-128/192/256). All nodes must
 	// share it. Empty leaves gossip unencrypted.
 	GossipEncryptionKey string `mapstructure:"gossip_encryption_key"`
+	// Failover selects automatic leader failover: "off" (default, the master is
+	// statically designated) or "raft" (a hashicorp/raft quorum elects the
+	// leader and master-only state is replicated through the raft log). "raft"
+	// builds on gossip discovery — it uses the ring for membership + failure
+	// detection — so it requires cluster.discovery_mechanism "gossip".
+	Failover string `mapstructure:"failover"`
+	// RaftBindAddr / RaftAdvertiseAddr are the host:port the raft transport
+	// binds and advertises when Failover is "raft" (distinct from the gossip and
+	// HTTP addresses). Empty binds 0.0.0.0:defaultRaftPort; the advertise
+	// address must be routable across nodes.
+	RaftBindAddr      string `mapstructure:"raft_bind_addr"`
+	RaftAdvertiseAddr string `mapstructure:"raft_advertise_addr"`
+	// RaftDir is the directory for the raft log, stable store, and snapshots.
+	// Empty resolves to <state_dir>/raft.
+	RaftDir string `mapstructure:"raft_dir"`
 }
 
 // AgentConfig represents agent subprocess configuration.
@@ -258,6 +273,10 @@ var defaults = map[string]any{
 	"cluster.advertise_addr":        "",
 	"cluster.auth_token":            "",
 	"cluster.gossip_encryption_key": "",
+	"cluster.failover":              "off",
+	"cluster.raft_bind_addr":        "",
+	"cluster.raft_advertise_addr":   "",
+	"cluster.raft_dir":              "",
 
 	// Agent defaults
 	"agent.socket_dir":           "/tmp",
@@ -358,6 +377,13 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	return c.validateCluster()
+}
+
+// validateCluster validates the cluster discovery, gossip encryption, and
+// failover settings. Split from Validate to keep each function's cyclomatic
+// complexity within lint bounds.
+func (c *Config) validateCluster() error {
 	switch c.Cluster.DiscoveryMechanism {
 	case "", "static":
 	case "dns":
@@ -384,6 +410,24 @@ func (c *Config) Validate() error {
 		default:
 			return fmt.Errorf("cluster.gossip_encryption_key must decode to 16, 24, or 32 bytes, got %d", len(key))
 		}
+	}
+
+	switch c.Cluster.Failover {
+	case "", "off":
+	case "raft":
+		// Failover layers raft on the gossip ring: it reads each peer's raft +
+		// HTTP address from gossip metadata and follows the elected leader
+		// through the ring, so gossip discovery is required.
+		if c.Cluster.DiscoveryMechanism != "gossip" {
+			return fmt.Errorf("cluster.failover \"raft\" requires cluster.discovery_mechanism \"gossip\"")
+		}
+		// The raft transport advertise address must be routable so peers can
+		// reach this node; ":<port>" is not (mirrors advertise_addr under gossip).
+		if c.Cluster.RaftAdvertiseAddr == "" {
+			return fmt.Errorf("cluster.failover \"raft\" requires cluster.raft_advertise_addr")
+		}
+	default:
+		return fmt.Errorf("invalid cluster.failover %q: want off or raft", c.Cluster.Failover)
 	}
 
 	return nil

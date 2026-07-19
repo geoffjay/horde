@@ -51,6 +51,43 @@ type gossipMembers interface {
 	describe() string
 }
 
+// raftLeaderSource is the subset of a raft node the raftDiscoverer needs: the
+// current leader's node id. A seam for unit tests.
+type raftLeaderSource interface {
+	leaderID() string
+}
+
+// apiAddrResolver maps a node id to its advertised HTTP address (the gossip
+// ring). A seam for unit tests.
+type apiAddrResolver interface {
+	apiAddrForNode(nodeID string) (string, bool)
+}
+
+// raftDiscoverer resolves the leader from raft: the current raft leader's node
+// id, mapped to its HTTP address via the gossip ring. Under failover the raft
+// leader *is* the horde master, so this returns whoever currently leads — and
+// because the leaderClient re-resolves each reconnect, a follower re-targets the
+// new master automatically after an election, with no change to the register
+// path.
+type raftDiscoverer struct {
+	raft   raftLeaderSource
+	gossip apiAddrResolver
+}
+
+func (d *raftDiscoverer) Leader(context.Context) (string, error) {
+	id := d.raft.leaderID()
+	if id == "" {
+		return "", errNoRaftLeader
+	}
+	addr, ok := d.gossip.apiAddrForNode(id)
+	if !ok {
+		return "", fmt.Errorf("raft: leader %q has no HTTP address in the gossip ring yet", id)
+	}
+	return addr, nil
+}
+
+func (d *raftDiscoverer) Describe() string { return "raft" }
+
 // newDiscoverer builds the Discoverer for a slave. It returns errStandaloneSlave
 // for the static mechanism with no leader configured — the caller runs without
 // a leader connection. It returns another error for an unknown mechanism, a dns
