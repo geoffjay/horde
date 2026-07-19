@@ -29,6 +29,15 @@ func (c *Client) ListNodes(ctx context.Context) (ClusterView, error) {
 	if err := c.getJSON(ctx, "/api/v1/cluster/nodes", &v); err != nil {
 		return v, err
 	}
+	// Learn the topology: add every registered node's address so a later
+	// transport failure can rotate to a surviving member (leader failover).
+	addrs := make([]string, 0, len(v.Nodes))
+	for i := range v.Nodes {
+		if v.Nodes[i].Addr != "" {
+			addrs = append(addrs, v.Nodes[i].Addr)
+		}
+	}
+	c.mergeMembers(addrs)
 	return v, nil
 }
 

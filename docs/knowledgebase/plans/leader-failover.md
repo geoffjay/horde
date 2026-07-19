@@ -10,6 +10,12 @@ single-point-of-failure master**: if it dies, the cluster has no leader until an
 operator starts a new one, and its in-memory/on-disk state is lost. This is the
 next body of work — make leadership *survive* the loss of a node.
 
+> **Status: complete.** All four slices have landed — raft election over the
+> gossip ring (1), the project store replicated through the raft log (2), AAP
+> resume tokens replicated (3), and a client that follows the leader across a
+> failover (4). Failover is opt-in (`cluster.failover: raft`, needs a ≥3-node
+> quorum); the default static-master path is unchanged.
+
 Decision: [Raft for leader election and master-state replication](../decisions/raft-leader-election.md).
 Requirements background: [cluster leader failover](../concepts/cluster-failover.md) concept.
 Topology it extends: [master/slave cluster model](../decisions/master-slave-model.md).
@@ -170,10 +176,28 @@ The original slice plan (unchanged) follows.
 Verify: capture a resume token on the leader; fail over; a respawn resumes from
 the replicated token.
 
-## Slice 4 — Stable entry point + client retry
+## Slice 4 — Stable entry point + client retry — complete
 
 Clients and the TUI enter at the master; after failover the address changes.
-Give them a stable way in.
+Gave them a stable way in.
+
+Delivered: the `client.Client` now holds a set of member addresses
+(`NewCluster`), and a unary request rotates to the next known member and retries
+on a *transport* failure (an unreachable node — a crashed leader), so it follows
+leadership across a failover with no external infrastructure. The member set is
+seeded at construction and **learned** from `ListNodes` (every registered node's
+address is merged), so a client that starts pointed at one node discovers the
+rest and can fail over. HTTP status errors are not retried (only transport
+failures). The TUI benefits automatically — it polls `ListNodes`, so its client
+learns members and gains failover retry with no code change, and its cluster view
+already surfaces the current leader. VIP/DNS remains the ops-managed alternative
+(a single address in front of the current leader; the elected leader advertises a
+reachable `cluster.advertise_addr`, already required under gossip). Verified:
+`TestRaftFailover_ClientFollowsLeader` (a multi-member client keeps serving a
+project across a leader crash) plus client unit tests (rotate-on-transport-error,
+all-members-down, member learning/dedup from `ListNodes`).
+
+The original slice plan (unchanged) follows.
 
 * **Client-side retry across members.** The client learns the member set (from
   the gossip ring / a `GET /api/v1/cluster/nodes` seed list) and retries the

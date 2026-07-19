@@ -101,7 +101,7 @@ func (c *Client) RespondApproval(ctx context.Context, agentID, requestID, decisi
 // stream by closing the channel without error.
 func (c *Client) StreamAgentContext(ctx context.Context, id string) (<-chan ExecutionContext, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.baseURL+"/api/v1/agents/"+id+"/context/stream", http.NoBody)
+		c.currentBase()+"/api/v1/agents/"+id+"/context/stream", http.NoBody)
 	if err != nil {
 		return nil, err
 	}

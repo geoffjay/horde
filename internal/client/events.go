@@ -34,7 +34,7 @@ const (
 // without error.
 func (c *Client) StreamEvents(ctx context.Context) (<-chan Event, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.baseURL+"/api/v1/events/stream", http.NoBody)
+		c.currentBase()+"/api/v1/events/stream", http.NoBody)
 	if err != nil {
 		return nil, err
 	}

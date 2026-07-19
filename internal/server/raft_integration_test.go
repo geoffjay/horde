@@ -25,10 +25,11 @@ import (
 // raftNodeHandle is a running failover node the test can stop independently to
 // simulate a leader crash.
 type raftNodeHandle struct {
-	srv    *server.Server
-	addr   string
-	client *client.Client
-	stop   func()
+	srv     *server.Server
+	addr    string // gossip address (a seed for followers)
+	apiAddr string // HTTP API address
+	client  *client.Client
+	stop    func()
 }
 
 // startRaftNode starts an in-process failover node (raft + gossip) on loopback,
@@ -93,7 +94,7 @@ func startRaftNode(t *testing.T, nodeID string, master bool, seeds []string) raf
 
 	c := client.New(apiAddr)
 	// Report the gossip addr so the caller can seed followers off the master.
-	return raftNodeHandle{srv: srv, addr: gossipAddr, client: c, stop: stop}
+	return raftNodeHandle{srv: srv, addr: gossipAddr, apiAddr: apiAddr, client: c, stop: stop}
 }
 
 // awaitLeader blocks until exactly one of the given live nodes reports raft
@@ -242,4 +243,47 @@ func TestRaftFailover_ProjectStateSurvivesFailover(t *testing.T) {
 		p, gerr := newLeader.GetProject(proj.ID)
 		return gerr == nil && p != nil && p.State == server.ProjectPaused && p.Name == "failover-proj"
 	}, 20*time.Second, 250*time.Millisecond, "the project should survive failover with its state")
+}
+
+// TestRaftFailover_ClientFollowsLeader: a client seeded with all member
+// addresses keeps working across a leader crash — it rotates past the dead node
+// to a survivor, which serves (or forwards to the new leader) the request
+// (slice 4).
+func TestRaftFailover_ClientFollowsLeader(t *testing.T) {
+	m := startRaftNode(t, "node-a", true, nil)
+	f1 := startRaftNode(t, "node-b", false, []string{m.addr})
+	f2 := startRaftNode(t, "node-c", false, []string{m.addr})
+
+	leader := awaitLeader(t, m.srv, f1.srv, f2.srv)
+	require.Equal(t, "node-a", leader.NodeID())
+	require.Eventually(t, func() bool {
+		v, err := m.client.ListNodes(context.Background())
+		if err != nil {
+			return false
+		}
+		fresh := 0
+		for _, n := range v.Nodes {
+			if !n.Stale {
+				fresh++
+			}
+		}
+		return fresh == 2
+	}, 30*time.Second, 250*time.Millisecond, "both followers registered before crash")
+
+	// A client seeded with every member address.
+	cluster := client.NewCluster([]string{m.apiAddr, f1.apiAddr, f2.apiAddr})
+	proj, err := cluster.CreateProject(context.Background(), client.CreateProjectRequest{
+		Name: "haproj", AgentNames: []string{"greeter"},
+	})
+	require.NoError(t, err)
+
+	// Crash the leader (node-a). The client should rotate past it to a survivor,
+	// which forwards to (or is) the new leader and returns the project.
+	m.stop()
+	awaitLeader(t, f1.srv, f2.srv)
+
+	require.Eventually(t, func() bool {
+		got, gerr := cluster.GetProject(context.Background(), proj.ID)
+		return gerr == nil && got.Name == "haproj"
+	}, 30*time.Second, 500*time.Millisecond, "the client should follow leadership to a survivor")
 }

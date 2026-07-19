@@ -64,7 +64,7 @@ const invokeChanSize = 8
 func (c *Client) Invoke(ctx context.Context, id string, req InvokeRequest) (<-chan InvokeEvent, error) {
 	body, _ := json.Marshal(req)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/api/v1/agents/"+id+"/invoke", strings.NewReader(string(body)))
+		c.currentBase()+"/api/v1/agents/"+id+"/invoke", strings.NewReader(string(body)))
 	if err != nil {
 		return nil, err
 	}

@@ -109,12 +109,7 @@ func (c *Client) AttachAgent(ctx context.Context, projectID, agentID string) (Pr
 
 // RemoveAgent removes an agent from a project's team.
 func (c *Client) RemoveAgent(ctx context.Context, projectID, agentID string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete,
-		c.baseURL+"/api/v1/projects/"+projectID+"/agents/"+agentID, http.NoBody)
-	if err != nil {
-		return err
-	}
-	resp, err := c.http.Do(req)
+	resp, err := c.send(ctx, http.MethodDelete, "/api/v1/projects/"+projectID+"/agents/"+agentID, "", nil)
 	if err != nil {
 		return err
 	}
@@ -128,12 +123,7 @@ func (c *Client) RemoveAgent(ctx context.Context, projectID, agentID string) err
 // postAction is a helper for the no-body project lifecycle endpoints
 // (pause/resume/finish) that return the updated project.
 func (c *Client) postAction(ctx context.Context, path string) (Project, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, http.NoBody)
-	if err != nil {
-		return Project{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := c.send(ctx, http.MethodPost, path, "application/json", nil)
 	if err != nil {
 		return Project{}, err
 	}

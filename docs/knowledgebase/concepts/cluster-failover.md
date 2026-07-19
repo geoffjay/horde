@@ -13,12 +13,13 @@ talk to. Slaves *discover* the master — via `static`, `dns`, or `gossip`
 failover**: if the master dies, the cluster has no leader until an operator
 starts a new one.
 
-This doc records what automatic failover would require. It is *not yet*
-implemented — gossip discovery (Phase 4 slice 5) deliberately stops at
-membership + leader lookup — but it is now **planned as its own effort**: see the
+This doc records what automatic failover requires. It is now **implemented** as
+an opt-in mode (`cluster.failover: raft`) — see the
 [leader failover plan](../plans/leader-failover.md) and the
-[raft election decision](../decisions/raft-leader-election.md). The requirements
-below are what that plan satisfies.
+[raft election decision](../decisions/raft-leader-election.md). Gossip discovery
+(Phase 4 slice 5) stops at membership + leader lookup; raft failover layers
+election and state replication on top of it. The requirements below are what the
+implementation satisfies; the default (`failover: off`) keeps the static master.
 
 # Why discovery alone is not failover
 

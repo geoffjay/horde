@@ -185,7 +185,10 @@ elected leader comes up current. Default (static-master) behaviour is unchanged.
   through the raft log (cluster-global by agent name), so a respawn on a new
   leader resumes; follower-hosted agents keep node-local resume (the boundary).
 * Slice 4 — a stable client/TUI entry point that follows the leader across a
-  failover.
+  failover. **Done**: the client holds a member set (learned from `ListNodes`)
+  and rotates to a survivor on a transport failure; the TUI benefits
+  automatically and already surfaces the leader. VIP/DNS is the ops alternative.
 
-Requirements background: the [cluster leader failover](../concepts/cluster-failover.md)
-concept doc.
+**Phase 5 complete.** All four slices have landed; automatic raft leader failover
+is available as an opt-in mode. Requirements background: the
+[cluster leader failover](../concepts/cluster-failover.md) concept doc.
