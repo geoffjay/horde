@@ -6,6 +6,7 @@ Records of significant decisions and their rationale.
 * [Vendor plantd config into internal/config](vendor-config.md) - avoid pulling plantd/core as a dependency.
 * [logrus for logging](logrus-for-logging.md) - logging library choice.
 * [Master/slave cluster model](master-slave-model.md) - distributed topology and its trade-offs.
+* [Raft for leader election and master-state replication](raft-leader-election.md) - adopt hashicorp/raft for quorum-based election and replicate master-only state through the raft log; over a gossip lease or manual standby promotion.
 * [HTTP + SSE for the node API transport](http-api-transport.md) - HTTP/JSON + SSE, in-process event bus now, brokerless messaging deferred to Phase 4.
 * [HTTP over unix domain sockets for agent invocation](agent-invocation-transport.md) - agent subprocess serves a local HTTP API on a unix socket; the node reverse-proxies invoke requests.
 * [The TUI consumes the node API](tui-uses-node-api.md) - the TUI always goes over the API, no in-process shortcut.

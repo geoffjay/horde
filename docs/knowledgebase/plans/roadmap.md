@@ -161,3 +161,25 @@ Detailed plan: [Phase 4 — Distributed](phase-4-distributed.md). Built in slice
   surfaces for placement (a new-agent form with a node picker) and the event
   feed (a live cluster-activity view). mTLS is the intended long-term node auth
   (see the [cluster mTLS](../concepts/cluster-mtls.md) concept doc).
+
+# Phase 5 — Leader failover
+
+Detailed plan: [Leader failover](leader-failover.md). Decision:
+[Raft for leader election and master-state replication](/docs/knowledgebase/decisions/raft-leader-election.md).
+Built in slices.
+
+Phase 4 leaves a statically designated, single-point-of-failure master. Phase 5
+makes leadership *survive* the loss of a node: opt-in **raft** election
+(`cluster.failover: raft`) layered on the gossip ring, with master-only state
+(the project store and AAP resume tokens) replicated through the raft log so an
+elected leader comes up current. Default (static-master) behaviour is unchanged.
+
+* Slice 1 — raft membership + election (leader lookup via a `raftDiscoverer`;
+  no state replication yet).
+* Slice 2 — replicate the project store through the raft log (an FSM).
+* Slice 3 — replicate AAP resume tokens.
+* Slice 4 — a stable client/TUI entry point that follows the leader across a
+  failover.
+
+Requirements background: the [cluster leader failover](../concepts/cluster-failover.md)
+concept doc.

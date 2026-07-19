@@ -13,9 +13,12 @@ talk to. Slaves *discover* the master — via `static`, `dns`, or `gossip`
 failover**: if the master dies, the cluster has no leader until an operator
 starts a new one.
 
-This doc records what automatic failover would require so it can be planned as
-its own effort. It is intentionally *not* implemented; gossip discovery (Phase 4
-slice 5) deliberately stops at membership + leader lookup.
+This doc records what automatic failover would require. It is *not yet*
+implemented — gossip discovery (Phase 4 slice 5) deliberately stops at
+membership + leader lookup — but it is now **planned as its own effort**: see the
+[leader failover plan](../plans/leader-failover.md) and the
+[raft election decision](../decisions/raft-leader-election.md). The requirements
+below are what that plan satisfies.
 
 # Why discovery alone is not failover
 
@@ -60,12 +63,20 @@ which discovery touches.
    reachable `cluster.advertise_addr`; a VIP or updated DNS record is the usual
    way to keep one address pointing at whoever currently leads.
 
-# Recommended shape (when planned)
+# Chosen shape
 
-Build on the gossip ring this slice adds: use it for membership + failure
-detection, layer raft (or a lease-based election) for single-leader safety, and
-make the project store and resume tokens replicated or rebuildable. Keep the
-`Discoverer` abstraction — a gossip/raft discoverer returning the *current*
-leader slots into the existing `leaderClient` re-resolve path with no change to
-register/heartbeat. See the [master/slave model](../decisions/master-slave-model.md)
-decision for the topology this extends.
+Build on the gossip ring: use it for membership + failure detection, layer
+**raft** (`hashicorp/raft`) for single-leader safety, and make the project store
+and resume tokens **replicated through the raft log** so an elected leader comes
+up with current state. Keep the `Discoverer` abstraction — a `raftDiscoverer`
+returning the *current* leader slots into the existing `leaderClient` re-resolve
+path with no change to register/heartbeat. Failover is opt-in
+(`cluster.failover: raft`, needs a ≥3-node quorum); the default static-master
+path is unchanged.
+
+This was chosen over a lease-based election over gossip and over warm-standby +
+manual promotion — rationale in the
+[raft election decision](../decisions/raft-leader-election.md); the sliced
+implementation is the [leader failover plan](../plans/leader-failover.md). See
+the [master/slave model](../decisions/master-slave-model.md) decision for the
+topology this extends.
