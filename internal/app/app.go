@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/geoffjay/horde/internal/client"
+	"github.com/geoffjay/horde/internal/clientlog"
 )
 
 // retryInterval is how long the TUI waits between automatic connection
@@ -49,6 +51,9 @@ const (
 	viewEvents
 	// viewAgents is the top-level list of the node's running agents.
 	viewAgents
+	// viewLogs is the client-log page: the TUI's own log output, captured
+	// into an in-memory buffer instead of being written to the terminal.
+	viewLogs
 )
 
 // breadcrumbEntry is one level of the drill-down stack. The view identifies
@@ -148,13 +153,21 @@ type Model struct {
 	eventsCh        <-chan client.Event
 	eventsConnected bool
 
+	// logs is the in-memory buffer of this client's own log output, rendered
+	// on the logs page (viewLogs). logrus writes here instead of stderr so the
+	// TUI display is not corrupted. logScroll offsets the visible window from
+	// the tail (0 = pinned to newest).
+	logs      *clientlog.Buffer
+	logScroll int
+
 	width    int
 	height   int
 	quitting bool
 }
 
 // New constructs the initial Model for the TUI, targeting the node API at
-// addr (host:port).
+// addr (host:port). It creates the in-memory client-log buffer that the logs
+// page renders; Run redirects logrus into it.
 func New(ctx context.Context, addr string) *Model {
 	return &Model{
 		ctx:      ctx,
@@ -163,6 +176,7 @@ func New(ctx context.Context, addr string) *Model {
 		view:     viewProjects,
 		contexts: make(map[string]client.ExecutionContext),
 		status:   DefaultStatusLine(),
+		logs:     clientlog.NewBuffer(clientlog.DefaultCapacity),
 	}
 }
 
@@ -1026,6 +1040,8 @@ func (m *Model) currentViewLabel() string {
 		return "activity"
 	case viewAgents:
 		return "agents"
+	case viewLogs:
+		return "logs"
 	}
 	return ""
 }
@@ -1047,6 +1063,8 @@ func (m *Model) renderView() string {
 		return m.renderEventsView()
 	case viewAgents:
 		return m.renderAgentsView()
+	case viewLogs:
+		return m.renderLogsView()
 	}
 	return ""
 }
@@ -1066,10 +1084,33 @@ func renderRetry(m *Model) string {
 }
 
 // Run launches the horde TUI. It blocks until the user quits.
-func Run(ctx context.Context, addr string) error {
+//
+// The TUI renders to stderr, so logrus is redirected into the model's
+// in-memory buffer (surfaced on the logs page) rather than the terminal. When
+// tee is non-nil (log.output "file") the same lines are also written there.
+// The buffer's notify callback asks the program to redraw as new lines arrive,
+// so the logs page stays live.
+func Run(ctx context.Context, addr string, tee io.Writer) error {
 	m := New(ctx, addr)
+
+	out := io.Writer(m.logs)
+	if tee != nil {
+		out = io.MultiWriter(m.logs, tee)
+	}
+	logrus.SetOutput(out)
+
 	p := tea.NewProgram(m, tea.WithOutput(os.Stderr))
-	if _, err := p.Run(); err != nil {
+	m.logs.SetNotify(func() { p.Send(logsUpdatedMsg{}) })
+	logrus.WithField("addr", addr).Info("launching horde TUI")
+
+	_, err := p.Run()
+
+	// Detach the buffer from the program: once Run returns the program can no
+	// longer receive sends, and logrus should go back to stderr.
+	m.logs.SetNotify(nil)
+	logrus.SetOutput(os.Stderr)
+
+	if err != nil {
 		return fmt.Errorf("tui run: %w", err)
 	}
 	return nil

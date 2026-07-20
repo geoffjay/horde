@@ -297,6 +297,8 @@ var defaults = map[string]any{
 	// Logging defaults
 	"log.formatter": "text",
 	"log.level":     "info",
+	"log.output":    "stderr",
+	"log.file":      "",
 
 	// Service defaults
 	"service.id": "org.horde.Horde",

@@ -21,8 +21,9 @@ const (
 	// centerDivisor halves free space to center the dialog on each axis.
 	centerDivisor = 2
 	// paletteMaxRows caps how many command rows are shown at once; longer
-	// lists scroll to keep the cursor visible.
-	paletteMaxRows = 8
+	// lists scroll to keep the cursor visible. It comfortably fits the full
+	// base command set so no scrolling is needed in the common case.
+	paletteMaxRows = 10
 )
 
 // Color values for the palette dialog.
@@ -101,6 +102,13 @@ func (m *Model) baseCommands() []command {
 			label: "Cluster Activity",
 			run: func(m *Model) tea.Cmd {
 				return m.goEvents()
+			},
+		},
+		{
+			label: "Logs",
+			run: func(m *Model) tea.Cmd {
+				m.goLogs()
+				return nil
 			},
 		},
 		{

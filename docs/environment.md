@@ -65,6 +65,8 @@ environment variable (any extension: `yaml`, `yml`, `json`, `toml`).
 | `project.context_retention`      | `0`                 | `HORDE_PROJECT_CONTEXT_RETENTION`       | Seconds to retain a finished project's agent contexts before eviction. `0` inherits `agent.context_retention`. |
 | `log.formatter`                  | `text`              | `HORDE_LOG_FORMATTER`                  | Log formatter: `text` or `json`.        |
 | `log.level`                      | `info`              | `HORDE_LOG_LEVEL`                      | Log level.                               |
+| `log.output`                     | `stderr`            | `HORDE_LOG_OUTPUT`                     | Log destination for `serve`/`agent`: `stderr`, `stdout`, or `file`. The TUI ignores this for its own display (it always captures logs into an in-memory buffer shown on its logs page), but honors `file` to additionally tee those lines to disk. |
+| `log.file`                       | _(empty)_           | `HORDE_LOG_FILE`                      | File path written to when `log.output` is `file`. Empty falls back to `stderr` (with a warning). |
 | `service.id`                     | `org.horde.Horde`   | `HORDE_SERVICE_ID`                      | Service identifier.                      |
 
 ### AAP agent declarations (`agents.<name>.*`)

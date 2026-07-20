@@ -31,6 +31,12 @@ func (m *Model) moveSelection(delta int) {
 		m.moveApprovalCursor(delta)
 		return
 	}
+	if m.view == viewLogs {
+		// On the logs page up/down scroll the visible window: up (delta<0)
+		// moves back into history, down (delta>0) toward the newest line.
+		m.scrollLogs(-delta)
+		return
+	}
 	m.moveCursor(delta)
 }
 

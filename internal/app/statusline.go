@@ -209,6 +209,8 @@ func viewHints(m *Model) string {
 		return "live tail · ctrl+p palette"
 	case viewAgents:
 		return "↑↓ select · enter invoke · ctrl+a assign · esc back"
+	case viewLogs:
+		return "↑↓ scroll · ctrl+p palette"
 	}
 	return ""
 }

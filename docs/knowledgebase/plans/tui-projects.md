@@ -302,6 +302,18 @@ Delivered as Phase 4 surfacing follow-ups:
   project-only `projectPicker` was generalized into a reusable `listPicker`
   (title + items + `onSelect`) serving Switch Project, assign-to-project, and
   attach-agent.
+* **Client-log page** (`logs_view.go`, `viewLogs`) + **log capture off stderr**.
+  The TUI renders to stderr, so writing logrus output there too corrupts the
+  display. `Run` now redirects logrus into an in-memory ring
+  (`internal/clientlog.Buffer`, an `io.Writer`) instead of stderr; a palette
+  command "Logs" opens a page that renders the buffered lines (oldest→newest,
+  windowed to the terminal height, `↑↓` scrolls). These are the TUI's own
+  *client* logs, not the node's — the TUI never runs a node. The buffer's
+  notify callback `p.Send`s a `logsUpdatedMsg` so the page stays live; the
+  message has no `Update` case because bubbletea redraws after every `Update`.
+  Non-TUI commands (`serve`/`agent`) instead honor a new `log.output`
+  (`stderr`/`stdout`/`file`) + `log.file` config; when the TUI is run with
+  `log.output: file` it tees the same lines to that file via `io.MultiWriter`.
 
 These remain deferred:
 
