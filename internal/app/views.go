@@ -22,7 +22,7 @@ func (m *Model) renderProjectsView() string {
 	for i, p := range m.projects {
 		dot := stateDot(p.State)
 		line := fmt.Sprintf("  %s  %-20s %-10s %-9s  %s", dot, p.Name, p.State, agentCountLabel(len(p.Team.Agents)), p.Goal)
-		if i == m.cursor {
+		if i == m.cursor && m.focus == focusDetail {
 			line = selStyle().Render(line)
 		}
 		b.WriteString(line + "\n")
@@ -61,7 +61,7 @@ func (m *Model) renderProjectDetailView() string {
 		return b.String()
 	}
 	for j, a := range p.Team.Agents {
-		line := m.renderTeamAgentRow(a, j == m.cursor)
+		line := m.renderTeamAgentRow(a, j == m.cursor && m.focus == focusDetail)
 		b.WriteString(line + "\n")
 	}
 	return b.String()
@@ -345,7 +345,7 @@ func (m *Model) renderClusterView() string {
 		return b.String()
 	}
 	for i, line := range rows {
-		if i == m.cursor {
+		if i == m.cursor && m.focus == focusDetail {
 			line = selStyle().Render(line)
 		}
 		b.WriteString(line + "\n")

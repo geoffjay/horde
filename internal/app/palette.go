@@ -69,11 +69,10 @@ func (m *Model) baseCommands() []command {
 			run:   func(m *Model) tea.Cmd { return m.loadNode },
 		},
 		{
-			label: "Select Cluster",
+			label: "Nodes",
 			key:   "ctrl+l",
 			run: func(m *Model) tea.Cmd {
-				m.goCluster()
-				return nil
+				return m.goCluster()
 			},
 		},
 		{
@@ -85,10 +84,9 @@ func (m *Model) baseCommands() []command {
 			},
 		},
 		{
-			label: "Agents",
+			label: labelAgents,
 			run: func(m *Model) tea.Cmd {
-				m.goAgents()
-				return nil
+				return m.goAgents()
 			},
 		},
 		{
@@ -99,7 +97,7 @@ func (m *Model) baseCommands() []command {
 			},
 		},
 		{
-			label: "Cluster Activity",
+			label: "Activity",
 			run: func(m *Model) tea.Cmd {
 				return m.goEvents()
 			},
@@ -107,8 +105,7 @@ func (m *Model) baseCommands() []command {
 		{
 			label: "Logs",
 			run: func(m *Model) tea.Cmd {
-				m.goLogs()
-				return nil
+				return m.goLogs()
 			},
 		},
 		{
@@ -232,7 +229,7 @@ func (m *Model) handlePaletteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case keyEsc, keyCtrlP:
 		m.closePalette()
 		return m, nil
-	case "up", "ctrl+k":
+	case keyUp, "ctrl+k":
 		m.movePaletteCursor(-1)
 		return m, nil
 	case keyDown, "ctrl+j":

@@ -55,17 +55,15 @@ func (m *Model) closePicker() {
 	m.picker = listPicker{}
 }
 
-// openSwitchProjectPicker opens the picker over projects; selecting one drills
-// into its detail view (the palette's "Switch Project" command).
+// openSwitchProjectPicker opens the picker over projects; selecting one opens
+// its detail view via the sidebar (the palette's "Switch Project" command).
 func (m *Model) openSwitchProjectPicker() {
 	items := make([]pickerItem, 0, len(m.projects))
 	for _, p := range m.projects {
 		items = append(items, pickerItem{id: p.ID, label: p.Name, right: p.State, dot: stateDot(p.State)})
 	}
 	m.openPicker("Select Project", items, func(m *Model, it pickerItem) tea.Cmd {
-		m.goHome()
-		m.pushView(viewProjectDetail, it.id, it.label)
-		return nil
+		return m.jumpToChild(groupProjects, it.id)
 	})
 }
 
@@ -143,7 +141,7 @@ func (m *Model) handlePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case keyEsc:
 		m.closePicker()
 		return m, nil
-	case "up", "ctrl+k":
+	case keyUp, "ctrl+k":
 		m.movePickerCursor(-1)
 		return m, nil
 	case keyDown, "ctrl+j":

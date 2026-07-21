@@ -72,8 +72,8 @@ func TestSendInvoke_AppendsUserMessageAndStreams(t *testing.T) {
 	m.Update(m.loadNode())
 	m.connected = true
 
-	// Drill into project → agent → invoke.
-	m.Update(namedKey(tea.KeyEnter)) // projects → projectDetail
+	// Select the project, then drill agent → invoke.
+	selectProjectChild(m, "p1")      // projects → projectDetail
 	m.Update(namedKey(tea.KeyEnter)) // projectDetail → agent
 	m.Update(namedKey(tea.KeyEnter)) // agent → invoke
 	require.Equal(t, viewInvoke, m.view)
@@ -157,7 +157,7 @@ func TestSendInvoke_409SetsError(t *testing.T) {
 	m.Update(m.loadNode())
 	m.connected = true
 
-	m.Update(namedKey(tea.KeyEnter))
+	selectProjectChild(m, "p1")
 	m.Update(namedKey(tea.KeyEnter))
 	m.Update(namedKey(tea.KeyEnter))
 	require.Equal(t, viewInvoke, m.view)
@@ -219,21 +219,21 @@ func TestInvokeKey_EscPopsBack(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
 	m.view = viewInvoke
-	m.crumbs = []breadcrumbEntry{{view: viewAgent, label: "agent"}}
+	m.detailBack = []view{viewAgent}
 
 	m.handleInvokeKey(escKey())
 	assert.Equal(t, viewAgent, m.view)
 }
 
-func TestUnsubscribeInvokeOnPopView(t *testing.T) {
+func TestUnsubscribeInvokeOnDetailPop(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
 	m.view = viewInvoke
 	m.invokeStreaming = true
 	m.invokeCancel = func() {}
 
-	m.crumbs = []breadcrumbEntry{{view: viewAgent}}
-	m.popView()
+	m.detailBack = []view{viewAgent}
+	m.popDetail()
 	assert.False(t, m.invokeStreaming)
 	assert.Nil(t, m.invokeCancel)
 }

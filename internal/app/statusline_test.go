@@ -19,9 +19,21 @@ func TestHintStatusBlock_DisconnectedOmits(t *testing.T) {
 	assert.Empty(t, block.Render(m), "hint block should be empty when disconnected")
 }
 
+func TestHintStatusBlock_Sidebar(t *testing.T) {
+	m := New(context.Background(), "127.0.0.1:1")
+	m.connected = true
+	m.focus = focusSidebar
+
+	block := hintStatusBlock()
+	hint := block.Render(m)
+	assert.Contains(t, hint, "move")
+	assert.Contains(t, hint, "expand")
+}
+
 func TestHintStatusBlock_ProjectsView(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
+	m.focus = focusDetail
 	m.view = viewProjects
 
 	block := hintStatusBlock()
@@ -33,6 +45,7 @@ func TestHintStatusBlock_ProjectsView(t *testing.T) {
 func TestHintStatusBlock_ProjectDetailActive(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
+	m.focus = focusDetail
 	m.view = viewProjectDetail
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active"}}
 	m.cursor = 0
@@ -48,6 +61,7 @@ func TestHintStatusBlock_ProjectDetailActive(t *testing.T) {
 func TestHintStatusBlock_ProjectDetailPaused(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
+	m.focus = focusDetail
 	m.view = viewProjectDetail
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "paused"}}
 	m.cursor = 0
@@ -61,6 +75,7 @@ func TestHintStatusBlock_ProjectDetailPaused(t *testing.T) {
 func TestHintStatusBlock_ProjectDetailFinished(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
+	m.focus = focusDetail
 	m.view = viewProjectDetail
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "finished"}}
 	m.cursor = 0
@@ -76,6 +91,7 @@ func TestHintStatusBlock_AgentView(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
 	m.view = viewAgent
+	m.focus = focusDetail
 
 	block := hintStatusBlock()
 	hint := block.Render(m)
@@ -87,6 +103,7 @@ func TestHintStatusBlock_InvokeView(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
 	m.view = viewInvoke
+	m.focus = focusDetail
 
 	block := hintStatusBlock()
 	hint := block.Render(m)
@@ -98,11 +115,12 @@ func TestHintStatusBlock_ClusterView(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
 	m.view = viewCluster
+	m.focus = focusDetail
 
 	block := hintStatusBlock()
 	hint := block.Render(m)
-	assert.Contains(t, hint, "enter node")
-	assert.Contains(t, hint, "esc back")
+	assert.Contains(t, hint, "select")
+	assert.Contains(t, hint, "esc")
 }
 
 func TestDefaultStatusLine_HasFourBlocks(t *testing.T) {
@@ -121,6 +139,7 @@ func TestDefaultStatusLine_RenderContainsHint(t *testing.T) {
 	m := New(context.Background(), stub.Listener.Addr().String())
 	m.Update(m.loadNode())
 	m.connected = true
+	m.focus = focusDetail
 
 	out := m.status.Render(m, 100)
 	assert.Contains(t, out, "select", "status line should contain the hint text")

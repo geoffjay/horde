@@ -19,6 +19,7 @@ func agentViewModel(addr string, approvals []client.ApprovalRef) *Model {
 	m := New(context.Background(), addr)
 	m.connected = true
 	m.view = viewAgent
+	m.focus = focusDetail
 	m.selectedProjectID = "p1"
 	m.cursor = 0
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active", Team: client.ProjectTeam{

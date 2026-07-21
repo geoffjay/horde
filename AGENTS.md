@@ -18,6 +18,19 @@ Go 1.26 project. Build with `go build .` (binary: `./bin/horde` via Taskfile).
 
 Required order when changing code: fmt → vet → lint → test → build. The lint job in `.github/workflows/lint.yml` enforces gofmt, `go mod tidy` diff, and golangci-lint.
 
+## Running the dev server (overmind + air — prefer the MCP tools)
+
+In development the node runs under **overmind** (Procfile: `horde: air`), and **air** rebuilds/restarts it on every file change — so the running server is always current with your edits. **Do not manually `go build -o bin/horde` + `horde serve` (or `docker`) to exercise a running node, and do not `kill`/`pkill` horde processes.** A hand-started instance fights air's own rebuild, binds a second port, and leaves orphaned subprocess agents — exactly the conflict this note prevents.
+
+Prefer the **`overmind` MCP tools** to inspect and control the dev server instead:
+
+- `overmind_is_running` / `overmind_status` / `overmind_list_processes` — is it up, and what's running (the process is `horde`).
+- `overmind_logs` (process `horde`) — read server logs; air already reflects your latest code.
+- `overmind_restart` (process `horde`) — force a restart if air didn't pick something up (e.g. a config/env change). Let air handle normal code edits.
+- `overmind_start` — only if `overmind_is_running` reports it is **not** already up.
+
+To exercise the running node, query its configured API port (`server.port`, default `13420`) — don't spin up a throwaway instance. Reserve manual `horde serve`/subprocess spawning for cases that genuinely need an isolated node (a specific multi-node topology the dev Procfile doesn't provide); when you do, use a distinct port and clean up after. See also the Gotchas note on this.
+
 ## Architecture
 
 - Entry point is root `main.go` → `cmd.Execute()`. The `cmd/` package has **one file per cobra command** (`cli.go` root + `Execute`, `serve.go`, `tui.go`, `agent.go`, `daemonize.go`). Add new subcommands in their own file, registered via `rootCmd.AddCommand` in that file's `init()`.
@@ -49,6 +62,7 @@ Required order when changing code: fmt → vet → lint → test → build. The 
 - The binary builds its own agent subprocesses via `os.Executable()`; running `go run . agent` won't behave like the real binary path. Build first (`task build`) for subprocess-related testing.
 - `cmd/daemonize.go` re-execs the binary with `setsid`; it's `nolint:noctx` by design (a context would kill the daemon on return). Preserve the nolint comment if you edit it.
 - `server.go`'s `exec.CommandContext` call is `nolint:gosec` (G204) because `AgentCommand` is operator-controlled config, not untrusted input. Don't remove the nolint without replacing the rationale.
+- **Don't hand-start/kill the dev node.** A horde node is already running under overmind+air (see [Running the dev server](#running-the-dev-server-overmind--air--prefer-the-mcp-tools)). Manually `go build -o bin/horde` + `horde serve`, or `kill`/`pkill`ing horde, conflicts with air's rebuild and orphans agent subprocesses. Use the `overmind` MCP tools (`overmind_status`/`overmind_logs`/`overmind_restart`) and query the running node's API port.
 
 ## Releases
 

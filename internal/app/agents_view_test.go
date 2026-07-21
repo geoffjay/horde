@@ -41,7 +41,7 @@ func TestGoAgents_ClearsSelectionAndEntersView(t *testing.T) {
 	m.goAgents()
 
 	assert.Equal(t, viewAgents, m.view)
-	assert.Empty(t, m.crumbs)
+	assert.True(t, m.sidebar.expanded[groupAgents])
 	assert.Empty(t, m.selectedAgentID)
 	assert.Empty(t, m.selectedProjectID)
 }

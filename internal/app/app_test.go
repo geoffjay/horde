@@ -245,7 +245,9 @@ func TestStatusLine_AddRemove(t *testing.T) {
 func TestView_EdgePadding(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
-	m.width, m.height = 40, 10
+	// The two-pane body needs room for the sidebar's group rows plus the title
+	// and footer chrome, so use a realistic terminal size.
+	m.width, m.height = 80, 24
 
 	lines := strings.Split(m.View().Content, "\n")
 

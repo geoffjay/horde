@@ -15,9 +15,9 @@ import (
 // maxEvents bounds the in-model ring of cluster-activity events.
 const maxEvents = 200
 
-// eventsChrome is the number of rows reserved for the title, breadcrumb,
-// footer, and edges when sizing the activity feed to the terminal height.
-const eventsChrome = 8
+// eventsChrome is the number of rows reserved for the title, footer, and edges
+// when sizing the activity feed to fit inside the detail pane's height.
+const eventsChrome = 5
 
 // eventsFallbackRows is how many events to show before the first WindowSizeMsg.
 const eventsFallbackRows = 20
@@ -28,19 +28,9 @@ type eventMsg struct{ ev client.Event }
 // eventStreamEndMsg signals that the activity stream failed to open or ended.
 type eventStreamEndMsg struct{ err error }
 
-// goEvents navigates to the live cluster-activity feed, clearing the breadcrumb
-// stack and opening the event stream.
-func (m *Model) goEvents() tea.Cmd {
-	m.unsubscribeAgentContext()
-	m.unsubscribeInvoke()
-	m.view = viewEvents
-	m.crumbs = nil
-	m.cursor = 0
-	m.selectedProjectID = ""
-	m.selectedAgentID = ""
-	m.actionErr = ""
-	return m.subscribeEvents()
-}
+// goEvents selects the Activity feed from the sidebar (the palette's Activity
+// command), opening the event stream via the selection.
+func (m *Model) goEvents() tea.Cmd { return m.jumpToGroup(leafActivity) }
 
 // subscribeEvents opens the SSE cluster-activity stream. The server flushes the
 // SSE headers immediately, so (like subscribeAgentContext) the open is done

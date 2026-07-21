@@ -54,16 +54,15 @@ const (
 	// viewLogs is the client-log page: the TUI's own log output, captured
 	// into an in-memory buffer instead of being written to the terminal.
 	viewLogs
+	// viewUsers is the (placeholder) users overview — per-user accounts do not
+	// exist yet, so it renders a "not available" notice.
+	viewUsers
+	// viewTeams is the teams overview: one entry per project, since teams are
+	// defined per project (there is no standalone team API).
+	viewTeams
+	// viewTeamDetail is one project's team roster.
+	viewTeamDetail
 )
-
-// breadcrumbEntry is one level of the drill-down stack. The view identifies
-// the screen; id is the project or agent id (empty for top-level screens);
-// label is the display name in the breadcrumb line.
-type breadcrumbEntry struct {
-	view  view
-	id    string
-	label string
-}
 
 // Model is the bubbletea model for the horde TUI.
 type Model struct {
@@ -86,13 +85,18 @@ type Model struct {
 	// shown in the body until the next successful action or navigation.
 	actionErr string
 
-	// navigation: the current view and the breadcrumb stack of entries
-	// pushed to reach it. The stack is empty for top-level screens
-	// (projects, cluster); drill-down screens push entries so esc pops back.
-	view   view
-	crumbs []breadcrumbEntry
+	// navigation: the current view drives the detail pane. The left sidebar
+	// (m.sidebar) selects which entity/feed the detail pane shows; m.focus
+	// says whether keys drive the sidebar or the detail pane. detailBack is a
+	// short transient drill within the detail pane (project → agent → invoke)
+	// that esc pops; it is not a breadcrumb trail and is reset on every
+	// sidebar selection.
+	view       view
+	sidebar    sidebar
+	focus      focus
+	detailBack []view
 
-	// list cursor within the current view (index into the visible list)
+	// list cursor within the current detail view (index into the visible list)
 	cursor int
 
 	// approvalCursor selects among the selected agent's pending approvals on
@@ -169,7 +173,7 @@ type Model struct {
 // addr (host:port). It creates the in-memory client-log buffer that the logs
 // page renders; Run redirects logrus into it.
 func New(ctx context.Context, addr string) *Model {
-	return &Model{
+	m := &Model{
 		ctx:      ctx,
 		c:        client.New(addr),
 		node:     client.NodeInfo{Mode: unknownLabel},
@@ -177,7 +181,13 @@ func New(ctx context.Context, addr string) *Model {
 		contexts: make(map[string]client.ExecutionContext),
 		status:   DefaultStatusLine(),
 		logs:     clientlog.NewBuffer(clientlog.DefaultCapacity),
+		sidebar:  sidebar{expanded: make(map[groupID]bool)},
+		focus:    focusSidebar,
 	}
+	// Start with the sidebar cursor on the Projects group so the initial
+	// highlight matches the default projects overview in the detail pane.
+	m.sidebar.cursor = m.groupRowIndex(groupProjects)
+	return m
 }
 
 // Init implements tea.Model.
@@ -376,7 +386,11 @@ const (
 	keyQuit      = "ctrl+c"
 	keyEsc       = "esc"
 	keyEnter     = "enter"
+	keyUp        = "up"
 	keyDown      = "down"
+	keyLeft      = "left"
+	keyRight     = "right"
+	keyTab       = "tab"
 	keyBackspace = "backspace"
 	keyCtrlP     = "ctrl+p"
 	keyCtrlR     = "ctrl+r"
@@ -430,7 +444,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+l":
 		if m.connected {
-			m.goCluster()
+			return m, m.goCluster() //nolint:gocritic // evalOrder: returning the cmd is the intended pattern
 		}
 		return m, nil
 	}
@@ -445,22 +459,29 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleInvokeKey(msg)
 	}
 
-	return m.handleNavigationKey(msg)
+	// Route by focus zone: the sidebar selects entities/feeds; the detail pane
+	// navigates the selected view's list and fires its action keys.
+	if m.focus == focusSidebar {
+		return m.handleSidebarKey(msg)
+	}
+	return m.handleDetailKey(msg)
 }
 
-// handleNavigationKey handles arrow/list/navigation keys for the connected
-// non-invoke views; view-specific action keys are delegated to
-// handleViewActionKey.
-func (m *Model) handleNavigationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+// handleDetailKey handles arrow/list/navigation keys while the detail pane has
+// focus; view-specific action keys are delegated to handleViewActionKey. esc /
+// tab / left pop the transient detail drill, or return focus to the sidebar
+// when the drill is empty.
+func (m *Model) handleDetailKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case keyEsc:
-		if len(m.crumbs) > 0 {
-			m.popView()
+	case keyEsc, keyTab, keyLeft, "h":
+		if cmd, popped := m.popDetail(); popped {
+			return m, cmd
 		}
+		m.focus = focusSidebar
 		return m, nil
-	case keyEnter:
-		return m.drillIn()
-	case "up", "k":
+	case keyEnter, keyRight, "l":
+		return m.detailEnter()
+	case keyUp, "k":
 		m.moveSelection(-1)
 		return m, nil
 	case keyDown, "j":
@@ -561,9 +582,10 @@ func (m *Model) handleRetryTick() (tea.Model, tea.Cmd) {
 func (m *Model) handleInvokeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case keyEsc:
-		if len(m.crumbs) > 0 {
-			m.popView()
+		if cmd, popped := m.popDetail(); popped {
+			return m, cmd
 		}
+		m.focus = focusSidebar
 		return m, nil
 	case keyEnter:
 		if m.invokeStreaming || m.invokeInput == "" {
@@ -609,9 +631,9 @@ func (m *Model) moveCursor(delta int) {
 // listLength returns the number of items in the current view's list.
 func (m *Model) listLength() int {
 	switch m.view {
-	case viewProjects:
+	case viewProjects, viewTeams:
 		return len(m.projects)
-	case viewProjectDetail, viewAgent:
+	case viewProjectDetail, viewTeamDetail, viewAgent:
 		return len(m.visibleAgents())
 	case viewCluster:
 		return len(m.nodes.Nodes)
@@ -983,9 +1005,8 @@ func (m *Model) fill(body, footer string) string {
 }
 
 // renderBody builds the main content area (everything above the footer): the
-// title plus either the retry panel or the current view's content. For
-// connected views the second line is the breadcrumb (e.g. "projects ›
-// auth-service › reviewer"); node mode/leader live in the status line.
+// "horde" title plus either the retry panel or the two-pane
+// sidebar-and-detail layout. Node mode/leader live in the status line.
 func (m *Model) renderBody() string {
 	var b strings.Builder
 	title := m.paint(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).Render, "horde")
@@ -996,54 +1017,75 @@ func (m *Model) renderBody() string {
 		return b.String()
 	}
 
-	b.WriteString(m.renderBreadcrumb() + "\n\n")
+	b.WriteString(m.renderPanes())
+	return b.String()
+}
+
+// titleRows is the number of rows the title block occupies (the "horde" line
+// plus a blank line below it), reserved when sizing the two panes.
+const titleRows = 2
+
+// dividerCols is the number of columns the pane divider occupies (" │ "): the
+// bar plus a spacer on each side.
+const dividerCols = 3
+
+// sidebarMinDetail is the minimum detail-pane width the sidebar yields to on a
+// narrow terminal before the sidebar itself is shrunk.
+const sidebarMinDetail = 6
+
+// renderPanes lays out the connected body as two full-height columns — the
+// navigation sidebar and the detail pane — separated by a vertical divider.
+// Both columns are padded to a common height H so lipgloss.JoinHorizontal
+// aligns them; H is sized so the footer stays pinned by fill() (H = terminal
+// height − bottom edge − footer − title block).
+func (m *Model) renderPanes() string {
+	footerH := lipgloss.Height(m.status.Render(m, m.innerWidth()))
+	h := m.height - edgePad - footerH - titleRows
+	if h < 1 {
+		h = 1
+	}
+
+	inner := m.innerWidth()
+	sw := sidebarWidth
+	if sw > inner-sidebarMinDetail {
+		sw = max(inner-sidebarMinDetail, 1)
+	}
+	// The divider occupies dividerCols columns (" │ "): a space on each side of
+	// the bar, produced by the JoinHorizontal spacers plus the bar column itself.
+	dw := inner - sw - dividerCols
+	if dw < 1 {
+		dw = 1
+	}
+
+	sidebar := lipgloss.NewStyle().Width(sw).Height(h).Render(m.renderSidebar())
+	divider := m.paint(lipgloss.NewStyle().Faint(true).Render, dividerColumn(h))
+	detail := lipgloss.NewStyle().Width(dw).Height(h).Render(m.renderDetail())
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, sidebar, " ", divider, " ", detail)
+}
+
+// dividerColumn returns a single-column vertical bar h rows tall, joining the
+// sidebar and detail panes.
+func dividerColumn(h int) string {
+	if h < 1 {
+		h = 1
+	}
+	lines := make([]string, h)
+	for i := range lines {
+		lines[i] = "│"
+	}
+	return strings.Join(lines, "\n")
+}
+
+// renderDetail renders the detail-pane content: the last action error (if any)
+// followed by the current view's renderer.
+func (m *Model) renderDetail() string {
+	var b strings.Builder
 	if m.actionErr != "" {
 		b.WriteString(m.paint(lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render, "  "+m.actionErr) + "\n\n")
 	}
 	b.WriteString(m.renderView())
 	return b.String()
-}
-
-// renderBreadcrumb builds the breadcrumb line from the crumb stack and the
-// current view. Top-level screens show just their name ("projects" or
-// "cluster"); drill-down screens show the full path joined by " › ".
-func (m *Model) renderBreadcrumb() string {
-	labels := make([]string, 0, len(m.crumbs)+1)
-	for _, c := range m.crumbs {
-		labels = append(labels, c.label)
-	}
-	labels = append(labels, m.currentViewLabel())
-	bc := strings.Join(labels, " › ")
-	return m.paint(lipgloss.NewStyle().Faint(true).Render, bc)
-}
-
-// currentViewLabel returns the breadcrumb label for the current view.
-func (m *Model) currentViewLabel() string {
-	switch m.view {
-	case viewProjects:
-		return "projects"
-	case viewCluster:
-		return "cluster"
-	case viewProjectDetail:
-		if i := m.selectedProjectIndex(); i >= 0 && i < len(m.projects) {
-			return m.projects[i].Name
-		}
-		return "project"
-	case viewAgent:
-		if a, ok := m.selectedAgent(); ok {
-			return a.Name
-		}
-		return "agent"
-	case viewInvoke:
-		return "invoke"
-	case viewEvents:
-		return "activity"
-	case viewAgents:
-		return "agents"
-	case viewLogs:
-		return "logs"
-	}
-	return ""
 }
 
 // renderView dispatches to the current view's renderer.
@@ -1065,6 +1107,12 @@ func (m *Model) renderView() string {
 		return m.renderAgentsView()
 	case viewLogs:
 		return m.renderLogsView()
+	case viewUsers:
+		return m.renderUsersView()
+	case viewTeams:
+		return m.renderTeamsView()
+	case viewTeamDetail:
+		return m.renderTeamDetailView()
 	}
 	return ""
 }
@@ -1100,8 +1148,21 @@ func Run(ctx context.Context, addr string, tee io.Writer) error {
 	logrus.SetOutput(out)
 
 	p := tea.NewProgram(m, tea.WithOutput(os.Stderr))
-	m.logs.SetNotify(func() { p.Send(logsUpdatedMsg{}) })
+
+	// Emit the startup line before wiring the notify callback. It is captured
+	// into the buffer (SetOutput above) but must not trigger a Send yet: the
+	// program's message channel is unbuffered and has no reader until p.Run()
+	// starts its event loop, so a synchronous Send here would deadlock and the
+	// TUI would never render.
 	logrus.WithField("addr", addr).Info("launching horde TUI")
+
+	// Request a redraw as new log lines arrive, sending from a goroutine.
+	// p.Send blocks until the event loop reads the message, so calling it
+	// inline would deadlock whenever a log write originates from the loop's own
+	// goroutine (e.g. logging inside Update). Redraw requests are idempotent,
+	// so coalesced or reordered sends are harmless; once p.Run() returns its
+	// context is canceled and any in-flight sends unblock and exit.
+	m.logs.SetNotify(func() { go p.Send(logsUpdatedMsg{}) })
 
 	_, err := p.Run()
 

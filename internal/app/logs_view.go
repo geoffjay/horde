@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
-// logsChrome is the number of rows reserved for the title, breadcrumb, header,
-// footer, and edges when sizing the logs page to the terminal height.
-const logsChrome = 9
+// logsChrome is the number of rows reserved for the title, in-pane header,
+// footer, and edges when sizing the logs page to fit inside the detail pane's
+// height.
+const logsChrome = 6
 
 // logsFallbackRows is how many log lines to show before the first
 // WindowSizeMsg sets the terminal height.
@@ -20,20 +22,9 @@ const logsFallbackRows = 20
 // after every Update, so merely delivering it keeps the logs page live.
 type logsUpdatedMsg struct{}
 
-// goLogs navigates to the client-log page, clearing the breadcrumb stack and
-// resetting the scroll offset to the newest line.
-func (m *Model) goLogs() {
-	m.unsubscribeAgentContext()
-	m.unsubscribeInvoke()
-	m.unsubscribeEvents()
-	m.view = viewLogs
-	m.crumbs = nil
-	m.cursor = 0
-	m.logScroll = 0
-	m.selectedProjectID = ""
-	m.selectedAgentID = ""
-	m.actionErr = ""
-}
+// goLogs selects the Logs feed from the sidebar (the palette's Logs command).
+// It returns the command to run, if any.
+func (m *Model) goLogs() tea.Cmd { return m.jumpToGroup(leafLogs) }
 
 // logsVisibleRows returns how many log lines fit the current terminal height.
 func (m *Model) logsVisibleRows() int {

@@ -35,7 +35,7 @@ const (
 const formInner = formWidth - formPadX*2 - 2
 
 // formFieldLabels are the display labels for each form field, in index order.
-var formFieldLabels = [formFieldCount]string{"Name", "Workspace", "Goal", "Agents"}
+var formFieldLabels = [formFieldCount]string{"Name", "Workspace", "Goal", labelAgents}
 
 // projectForm is the state of the new-project modal overlay: whether it is
 // open, which field has focus, and the current value of each field.

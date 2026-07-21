@@ -176,26 +176,24 @@ func liveStatusBlock() StatusBlock {
 	}
 }
 
-// viewHints returns the keyboard hint string for the current view, or
-// empty when the view has no hint. The hints match the plan mockups in
-// docs/knowledgebase/plans/tui-projects.md.
+// viewHints returns the keyboard hint string for the current focus and view,
+// or empty when there is no hint. When the sidebar has focus the hint describes
+// navigating the sidebar; when the detail pane has focus it describes the keys
+// available in the current view.
 func viewHints(m *Model) string {
+	if m.focus == focusSidebar {
+		return "↑↓ move · → expand · enter open"
+	}
+	return detailViewHints(m)
+}
+
+// detailViewHints returns the key-hint string for the current detail view.
+func detailViewHints(m *Model) string {
 	switch m.view {
 	case viewProjects:
-		return "↑↓ select · enter open · ctrl+n new"
+		return "↑↓ select · enter open · ctrl+n new · esc nav"
 	case viewProjectDetail:
-		hints := "enter invoke · esc back"
-		if i := m.selectedProjectIndex(); i >= 0 && i < len(m.projects) {
-			switch m.projects[i].State {
-			case stateActive:
-				hints = "enter invoke · ctrl+a assign · ctrl+s pause · ctrl+f finish · esc back"
-			case statePaused:
-				hints = "enter invoke · ctrl+a assign · ctrl+r resume · ctrl+f finish · esc back"
-			default:
-				hints = "ctrl+a assign · esc back"
-			}
-		}
-		return hints
+		return projectDetailHints(m)
 	case viewAgent:
 		if m.hasPendingApprovals() {
 			return "↑↓ select · a allow · d deny · enter invoke · esc back"
@@ -204,13 +202,36 @@ func viewHints(m *Model) string {
 	case viewInvoke:
 		return "enter send · esc back"
 	case viewCluster:
-		return "enter node · esc back"
+		return "↑↓ select · esc nav"
 	case viewEvents:
-		return "live tail · ctrl+p palette"
+		return "live tail · esc nav"
 	case viewAgents:
-		return "↑↓ select · enter invoke · ctrl+a assign · esc back"
+		return "↑↓ select · enter invoke · ctrl+a assign · esc nav"
 	case viewLogs:
-		return "↑↓ scroll · ctrl+p palette"
+		return "↑↓ scroll · esc nav"
+	case viewTeams:
+		return "↑↓ select · enter open · esc nav"
+	case viewTeamDetail:
+		return "↑↓ select · enter invoke · esc back"
+	case viewUsers:
+		return "esc nav"
 	}
 	return ""
+}
+
+// projectDetailHints returns the state-dependent key hints for the project
+// detail view (pause vs resume, and whether lifecycle actions apply).
+func projectDetailHints(m *Model) string {
+	i := m.selectedProjectIndex()
+	if i < 0 || i >= len(m.projects) {
+		return "enter invoke · esc back"
+	}
+	switch m.projects[i].State {
+	case stateActive:
+		return "enter invoke · ctrl+a assign · ctrl+s pause · ctrl+f finish · esc back"
+	case statePaused:
+		return "enter invoke · ctrl+a assign · ctrl+r resume · ctrl+f finish · esc back"
+	default:
+		return "ctrl+a assign · esc back"
+	}
 }

@@ -193,6 +193,7 @@ func TestHandleKey_CtrlNOpensFormInAnyView(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjectDetail
+	m.focus = focusDetail
 
 	m.handleKey(ctrlKey('n'))
 	assert.True(t, m.form.open, "ctrl+n opens the form from any connected view")
@@ -251,9 +252,9 @@ func TestPalette_NoLifecycleCommands(t *testing.T) {
 	assert.NotContains(t, labels, "Resume project")
 	assert.NotContains(t, labels, "Finish project")
 	assert.NotContains(t, labels, "Assign agent to project…")
-	// The five base commands are present.
+	// The base navigation/action commands are present.
 	assert.Contains(t, labels, "Refresh")
-	assert.Contains(t, labels, "Select Cluster")
+	assert.Contains(t, labels, "Nodes")
 	assert.Contains(t, labels, "New Project")
 	assert.Contains(t, labels, "Switch Project")
 	assert.Contains(t, labels, "Quit")
@@ -263,6 +264,7 @@ func TestPalette_NoLifecycleCommandsOnProjectDetail(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjectDetail
+	m.focus = focusDetail
 	m.selectedProjectID = "p1"
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active"}}
 
@@ -294,6 +296,7 @@ func TestHandleKey_PauseInProjectDetail(t *testing.T) {
 	m := New(context.Background(), stub.Listener.Addr().String())
 	m.connected = true
 	m.view = viewProjectDetail
+	m.focus = focusDetail
 	m.selectedProjectID = "p1"
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active"}}
 
@@ -314,6 +317,7 @@ func TestHandleKey_ResumeInProjectDetail(t *testing.T) {
 	m := New(context.Background(), stub.Listener.Addr().String())
 	m.connected = true
 	m.view = viewProjectDetail
+	m.focus = focusDetail
 	m.selectedProjectID = "p1"
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "paused"}}
 
@@ -335,6 +339,7 @@ func TestHandleKey_FinishInProjectDetail(t *testing.T) {
 	m := New(context.Background(), stub.Listener.Addr().String())
 	m.connected = true
 	m.view = viewProjectDetail
+	m.focus = focusDetail
 	m.selectedProjectID = "p1"
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active"}}
 
@@ -355,6 +360,7 @@ func TestHandleKey_AssignInProjectDetail(t *testing.T) {
 	m := New(context.Background(), stub.Listener.Addr().String())
 	m.connected = true
 	m.view = viewProjectDetail
+	m.focus = focusDetail
 	m.selectedProjectID = "p1"
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active"}}
 	m.agents = []client.Agent{
@@ -384,6 +390,7 @@ func TestHandleKey_AssignWithNoUnassignedAgentsOpensEmptyPicker(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjectDetail
+	m.focus = focusDetail
 	m.selectedProjectID = "p1"
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active"}}
 	m.agents = []client.Agent{{ID: "a1", Name: "greeter", Status: "running"}}
@@ -510,6 +517,7 @@ func TestSelectedProjectIDForAction_DetailViewUsesSelectedID(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjectDetail
+	m.focus = focusDetail
 	m.selectedProjectID = "p2"
 	m.projects = []client.Project{
 		{ID: "p1", Name: "auth", State: "active"},

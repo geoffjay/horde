@@ -232,11 +232,11 @@ func TestProjectDetailView_CursorOnTeamAgents(t *testing.T) {
 func TestProjectDetailView_DrillInUsesTeamAgent(t *testing.T) {
 	stub := setupNavTestModel(t)
 
-	// Drill into first project
-	stub.model.Update(namedKey(tea.KeyEnter))
+	// Select the first project from the sidebar.
+	stub.model.jumpToChild(groupProjects, "p1")
 	require.Equal(t, viewProjectDetail, stub.model.view)
 
-	// Cursor on first team agent; drill into agent view
+	// Cursor on first team agent; drill into agent view.
 	stub.model.Update(namedKey(tea.KeyEnter))
 	assert.Equal(t, viewAgent, stub.model.view)
 

@@ -48,10 +48,33 @@ func navTestHandler() http.Handler {
 	return mux
 }
 
+// connectedNavModel returns a model backed by navTestHandler, loaded and marked
+// connected, ready for navigation tests. The caller must close the returned
+// server.
+func connectedNavModel(t *testing.T) (*Model, *httptest.Server) {
+	t.Helper()
+	stub := httptest.NewServer(navTestHandler())
+	m := New(context.Background(), stub.Listener.Addr().String())
+	m.Update(m.loadNode())
+	m.connected = true
+	return m, stub
+}
+
+// selectProjectChild expands the Projects group, moves the sidebar cursor to the
+// child with the given id, and selects it (as pressing enter on that row would).
+func selectProjectChild(m *Model, id string) {
+	m.jumpToChild(groupProjects, id)
+}
+
 func TestNew_DefaultsToProjectsView(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	assert.Equal(t, viewProjects, m.view)
-	assert.Empty(t, m.crumbs)
+	assert.Equal(t, focusSidebar, m.focus)
+	// The sidebar cursor starts on the Projects group header.
+	row, ok := m.currentSidebarRow()
+	require.True(t, ok)
+	assert.Equal(t, rowGroup, row.kind)
+	assert.Equal(t, groupProjects, row.group)
 }
 
 func TestLoadNode_PopulatesProjects(t *testing.T) {
@@ -70,208 +93,130 @@ func TestLoadNode_PopulatesProjects(t *testing.T) {
 	assert.Len(t, m.projects, 2)
 }
 
-func TestDrillIn_ProjectsToProjectDetail(t *testing.T) {
-	stub := httptest.NewServer(navTestHandler())
+func TestSidebarSelect_ProjectOpensDetail(t *testing.T) {
+	m, stub := connectedNavModel(t)
 	defer stub.Close()
 
-	m := New(context.Background(), stub.Listener.Addr().String())
-	m.Update(m.loadNode())
-	m.connected = true
+	// Enter on the Projects group header expands it and shows the overview,
+	// keeping focus on the sidebar.
+	require.Equal(t, groupProjects, mustRow(t, m).group)
+	m.Update(namedKey(tea.KeyEnter))
+	assert.Equal(t, viewProjects, m.view)
+	assert.Equal(t, focusSidebar, m.focus)
+	assert.True(t, m.sidebar.expanded[groupProjects])
 
-	require.Equal(t, viewProjects, m.view)
-	require.Len(t, m.projects, 2)
-
-	// Cursor starts at 0 (auth-service). Enter drills in.
+	// Down to the first project child, enter selects it and hands focus to the
+	// detail pane.
+	m.Update(namedKey(tea.KeyDown))
 	m.Update(namedKey(tea.KeyEnter))
 	assert.Equal(t, viewProjectDetail, m.view)
-	require.Len(t, m.crumbs, 1)
-	assert.Equal(t, viewProjects, m.crumbs[0].view)
-	assert.Equal(t, "projects", m.crumbs[0].label)
+	assert.Equal(t, focusDetail, m.focus)
+	assert.Equal(t, "p1", m.selectedProjectID)
 }
 
-func TestDrillIn_EmptyProjectsDoesNothing(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
-	m.connected = true
-	m.projects = nil
-
-	m.Update(namedKey(tea.KeyEnter))
-	assert.Equal(t, viewProjects, m.view)
-	assert.Empty(t, m.crumbs)
-}
-
-func TestEsc_PopsBackToPreviousView(t *testing.T) {
-	stub := httptest.NewServer(navTestHandler())
+func TestDetailEsc_ReturnsToSidebar(t *testing.T) {
+	m, stub := connectedNavModel(t)
 	defer stub.Close()
 
-	m := New(context.Background(), stub.Listener.Addr().String())
-	m.Update(m.loadNode())
-	m.connected = true
-
-	// Drill into project detail.
-	m.Update(namedKey(tea.KeyEnter))
-	require.Equal(t, viewProjectDetail, m.view)
-	require.Len(t, m.crumbs, 1)
-
-	// Esc pops back to projects.
-	m.Update(escKey())
-	assert.Equal(t, viewProjects, m.view)
-	assert.Empty(t, m.crumbs)
-}
-
-func TestEsc_RestoresCursorOnPop(t *testing.T) {
-	stub := httptest.NewServer(navTestHandler())
-	defer stub.Close()
-
-	m := New(context.Background(), stub.Listener.Addr().String())
-	m.Update(m.loadNode())
-	m.connected = true
-
-	// Move cursor to the second project (billing), then drill in.
-	m.Update(namedKey(tea.KeyDown))
-	require.Equal(t, 1, m.cursor)
-	require.Equal(t, "p2", m.projects[m.cursor].ID)
-	m.Update(namedKey(tea.KeyEnter))
+	selectProjectChild(m, "p1")
+	require.Equal(t, focusDetail, m.focus)
 	require.Equal(t, viewProjectDetail, m.view)
 
-	// Pop back — cursor should still be on "billing" (p2).
+	// esc with an empty detail drill returns focus to the sidebar; the view
+	// stays put (the sidebar still points at this project).
 	m.Update(escKey())
-	assert.Equal(t, viewProjects, m.view)
-	assert.Equal(t, 1, m.cursor, "cursor should be restored to the project that was opened")
-	assert.Equal(t, "p2", m.projects[m.cursor].ID)
+	assert.Equal(t, focusSidebar, m.focus)
+	assert.Equal(t, viewProjectDetail, m.view)
 }
 
-func TestEsc_TopLevelDoesNothing(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
-	m.connected = true
-	require.Equal(t, viewProjects, m.view)
-
-	m.Update(escKey())
-	assert.Equal(t, viewProjects, m.view)
-	assert.Empty(t, m.crumbs)
-}
-
-func TestCursorMovement_ClampsToProjects(t *testing.T) {
-	stub := httptest.NewServer(navTestHandler())
+func TestDetailDrill_ProjectToAgentAndBack(t *testing.T) {
+	m, stub := connectedNavModel(t)
 	defer stub.Close()
 
-	m := New(context.Background(), stub.Listener.Addr().String())
-	m.Update(m.loadNode())
-	m.connected = true
+	// Give the project a team agent so the roster has something to drill into.
+	m.projects[0].Team.Agents = []client.TeamAgent{{AgentID: "a1", Name: "greeter"}}
+	selectProjectChild(m, "p1")
+	require.Equal(t, viewProjectDetail, m.view)
 
+	// enter drills into the team agent's detail.
+	m.Update(namedKey(tea.KeyEnter))
+	assert.Equal(t, viewAgent, m.view)
+	assert.Equal(t, "a1", m.selectedAgentID)
+	require.Len(t, m.detailBack, 1)
+
+	// esc pops back to the project roster.
+	m.Update(escKey())
+	assert.Equal(t, viewProjectDetail, m.view)
+	assert.Empty(t, m.detailBack)
+	assert.Equal(t, focusDetail, m.focus)
+}
+
+func TestDetailCursor_ClampsToProjects(t *testing.T) {
+	m, stub := connectedNavModel(t)
+	defer stub.Close()
+
+	// Focus the detail pane on the projects overview so up/down drive the
+	// detail list cursor.
+	m.view = viewProjects
+	m.focus = focusDetail
 	require.Len(t, m.projects, 2)
 	assert.Equal(t, 0, m.cursor)
 
-	// Down moves to the second project.
 	m.Update(namedKey(tea.KeyDown))
 	assert.Equal(t, 1, m.cursor)
-
-	// Down again clamps to the last item.
 	m.Update(namedKey(tea.KeyDown))
-	assert.Equal(t, 1, m.cursor)
-
-	// Up moves back to the first.
+	assert.Equal(t, 1, m.cursor, "cursor clamps to the last project")
 	m.Update(namedKey(tea.KeyUp))
 	assert.Equal(t, 0, m.cursor)
-
-	// Up at the top stays at 0.
 	m.Update(namedKey(tea.KeyUp))
-	assert.Equal(t, 0, m.cursor)
+	assert.Equal(t, 0, m.cursor, "cursor clamps at the top")
 }
 
-func TestGoHome_ResetsToProjectsView(t *testing.T) {
+func TestGoCluster_SelectsNodesGroup(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
-	m.view = viewAgent
-	m.crumbs = []breadcrumbEntry{{view: viewProjects, label: "projects"}}
-	m.cursor = 5
-
-	m.goHome()
-	assert.Equal(t, viewProjects, m.view)
-	assert.Empty(t, m.crumbs)
-	assert.Equal(t, 0, m.cursor)
-}
-
-func TestGoCluster_SetsClusterView(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
-	m.view = viewProjects
-	m.cursor = 3
-
 	m.goCluster()
 	assert.Equal(t, viewCluster, m.view)
-	assert.Empty(t, m.crumbs)
-	assert.Equal(t, 0, m.cursor)
-}
-
-func TestBreadcrumb_RendersFullPath(t *testing.T) {
-	stub := httptest.NewServer(navTestHandler())
-	defer stub.Close()
-
-	m := New(context.Background(), stub.Listener.Addr().String())
-	m.Update(m.loadNode())
-	m.connected = true
-
-	// Top level: "projects"
-	bc := m.renderBreadcrumb()
-	assert.Contains(t, bc, "projects")
-
-	// After drilling into a project: "projects › auth-service"
-	m.Update(namedKey(tea.KeyEnter))
-	bc = m.renderBreadcrumb()
-	assert.Contains(t, bc, "projects")
-	assert.Contains(t, bc, "auth-service")
+	assert.True(t, m.sidebar.expanded[groupNodes])
+	assert.Equal(t, focusSidebar, m.focus)
 }
 
 func TestRenderView_DispatchesByView(t *testing.T) {
-	stub := httptest.NewServer(navTestHandler())
+	m, stub := connectedNavModel(t)
 	defer stub.Close()
-
-	m := New(context.Background(), stub.Listener.Addr().String())
-	m.Update(m.loadNode())
-	m.connected = true
 	m.width, m.height = 80, 24
 
 	// Projects view renders project names.
 	out := m.renderView()
 	assert.Contains(t, out, "auth-service")
 
-	// Cluster view renders node info (empty in test).
+	// Cluster view renders node info.
 	m.goCluster()
 	out = m.renderView()
 	assert.Contains(t, out, "leader")
 }
 
 func TestListLength_ByView(t *testing.T) {
-	stub := httptest.NewServer(navTestHandler())
+	m, stub := connectedNavModel(t)
 	defer stub.Close()
-
-	m := New(context.Background(), stub.Listener.Addr().String())
-	m.Update(m.loadNode())
-	m.connected = true
 
 	// Projects view: 2 projects.
 	assert.Equal(t, 2, m.listLength())
 
-	// Cluster view: 0 nodes.
+	// Cluster view: 0 registered slaves.
 	m.goCluster()
 	assert.Equal(t, 0, m.listLength())
 }
 
 func TestPaletteStillWorks_NavigationKeysAreIgnored(t *testing.T) {
-	stub := httptest.NewServer(navTestHandler())
+	m, stub := connectedNavModel(t)
 	defer stub.Close()
 
-	m := New(context.Background(), stub.Listener.Addr().String())
-	m.Update(m.loadNode())
-	m.connected = true
-
-	// Open palette — navigation keys should go to the palette, not drill in.
 	m.openPalette()
 	require.True(t, m.pal.open)
 
 	m.Update(namedKey(tea.KeyEnter))
-	// Palette is closed after running a command; the view should not have
-	// changed to projectDetail unless the selected command was a navigation
-	// one (it's Refresh or Quit by default).
-	// The key point: the palette consumed the enter, not the drill-in.
+	// The palette consumed the enter; if it stayed open the view must not have
+	// drilled in.
 	if m.pal.open {
 		assert.Equal(t, viewProjects, m.view, "drill-in should not fire while palette is open")
 	}
@@ -280,11 +225,18 @@ func TestPaletteStillWorks_NavigationKeysAreIgnored(t *testing.T) {
 func TestHandleKey_DisconnectedIgnoresNavigation(t *testing.T) {
 	m := New(context.Background(), "127.0.0.1:1")
 	m.connected = false
+	startCursor := m.sidebar.cursor
 
-	// Navigation keys should be ignored when disconnected.
 	m.Update(namedKey(tea.KeyDown))
-	assert.Equal(t, 0, m.cursor)
+	assert.Equal(t, startCursor, m.sidebar.cursor, "sidebar cursor should not move while disconnected")
 	m.Update(namedKey(tea.KeyEnter))
 	assert.Equal(t, viewProjects, m.view)
-	assert.Empty(t, m.crumbs)
+}
+
+// mustRow returns the current sidebar row, failing the test if there is none.
+func mustRow(t *testing.T, m *Model) sidebarRow {
+	t.Helper()
+	row, ok := m.currentSidebarRow()
+	require.True(t, ok)
+	return row
 }

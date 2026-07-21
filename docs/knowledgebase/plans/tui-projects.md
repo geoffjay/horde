@@ -6,6 +6,15 @@ tags: [plan, tui, bubbletea, lipgloss, projects, teams, execution-context, phase
 timestamp: 2026-07-13T00:00:00Z
 ---
 
+> **Navigation superseded (2026-07-20).** The breadcrumb drill-down described
+> below (the `projects › auth-service › reviewer` crumb line, `pushView`/
+> `popView`, and the per-view status hints) has been replaced by a full-height
+> left sidebar of expandable groups (Nodes, Users, Agents, Teams, Projects) plus
+> Activity/Logs feed leaves, with a right-hand detail pane. The domain screens
+> (project detail, agent context, invoke, cluster) survive as detail-pane
+> renderers. See [TUI sidebar navigation](../patterns/tui-sidebar-navigation.md).
+> The sections below are retained as the original design record.
+
 This plan proposed how the TUI (`internal/app`) surfaces the domain that
 [Phase 3.5 Slice B](projects-teams.md) opened up — projects, teams, and
 multi-turn context — plus the [Slice A execution

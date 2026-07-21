@@ -11,19 +11,9 @@ import (
 	"github.com/geoffjay/horde/internal/client"
 )
 
-// goAgents navigates to the top-level Agents list, clearing the breadcrumb
-// stack and any drill-down selection.
-func (m *Model) goAgents() {
-	m.unsubscribeAgentContext()
-	m.unsubscribeInvoke()
-	m.unsubscribeEvents()
-	m.view = viewAgents
-	m.crumbs = nil
-	m.cursor = 0
-	m.selectedProjectID = ""
-	m.selectedAgentID = ""
-	m.actionErr = ""
-}
+// goAgents selects the Agents group from the sidebar (the palette's Agents
+// command). It returns the command to run, if any.
+func (m *Model) goAgents() tea.Cmd { return m.jumpToGroup(groupAgents) }
 
 // renderAgentsView lists the node's running agents with their status and active
 // project (or "unassigned"), so a freshly-created agent is visible and can be
@@ -50,7 +40,7 @@ func (m *Model) renderAgentsView() string {
 			dot = redDot()
 		}
 		line := fmt.Sprintf("  %s %-14s %-12s %s", dot, a.ID, a.Name, placement)
-		if i == m.cursor {
+		if i == m.cursor && m.focus == focusDetail {
 			line = selStyle().Render(line)
 		}
 		b.WriteString(line + "\n")

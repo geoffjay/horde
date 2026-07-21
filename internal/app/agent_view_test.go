@@ -70,9 +70,9 @@ func TestSubscribeAgentContext_OpensStream(t *testing.T) {
 	m.Update(m.loadNode())
 	m.connected = true
 
-	// Drill into the project, then into the agent — this triggers the SSE
-	// subscription via drillIn.
-	m.Update(namedKey(tea.KeyEnter)) // projects → projectDetail
+	// Select the project from the sidebar, then drill into the agent — this
+	// triggers the SSE subscription via detailEnter.
+	selectProjectChild(m, "p1")
 	require.Equal(t, viewProjectDetail, m.view)
 
 	_, cmd := m.Update(namedKey(tea.KeyEnter)) // projectDetail → agent
@@ -95,7 +95,7 @@ func TestSubscribeAgentContext_OpensStream(t *testing.T) {
 	}
 }
 
-func TestUnsubscribeOnPopView(t *testing.T) {
+func TestUnsubscribeOnDetailPop(t *testing.T) {
 	srv := httptest.NewServer(sseTestHandler([]client.ExecutionContext{
 		{AgentID: "a1", Activity: client.StateIdle},
 	}))
@@ -106,21 +106,21 @@ func TestUnsubscribeOnPopView(t *testing.T) {
 	m.Update(m.loadNode())
 	m.connected = true
 
-	// Drill into agent view.
-	m.Update(namedKey(tea.KeyEnter))
+	// Select the project, then drill into the agent view.
+	selectProjectChild(m, "p1")
 	m.Update(namedKey(tea.KeyEnter))
 	require.Equal(t, viewAgent, m.view)
 	require.NotNil(t, m.streamCancel)
 
-	// Esc pops back — should unsubscribe.
+	// Esc pops the detail drill back to the roster — should unsubscribe.
 	m.Update(escKey())
 	assert.Equal(t, viewProjectDetail, m.view)
-	assert.Nil(t, m.streamCancel, "streamCancel should be nil after popView")
-	assert.Nil(t, m.streamCh, "streamCh should be nil after popView")
-	assert.False(t, m.streamConnected, "streamConnected should be false after popView")
+	assert.Nil(t, m.streamCancel, "streamCancel should be nil after popping the drill")
+	assert.Nil(t, m.streamCh, "streamCh should be nil after popping the drill")
+	assert.False(t, m.streamConnected, "streamConnected should be false after popping the drill")
 }
 
-func TestUnsubscribeOnGoHome(t *testing.T) {
+func TestUnsubscribeOnSidebarReselect(t *testing.T) {
 	srv := httptest.NewServer(sseTestHandler([]client.ExecutionContext{
 		{AgentID: "a1", Activity: client.StateIdle},
 	}))
@@ -131,13 +131,14 @@ func TestUnsubscribeOnGoHome(t *testing.T) {
 	m.Update(m.loadNode())
 	m.connected = true
 
-	m.Update(namedKey(tea.KeyEnter))
+	selectProjectChild(m, "p1")
 	m.Update(namedKey(tea.KeyEnter))
 	require.Equal(t, viewAgent, m.view)
 	require.NotNil(t, m.streamCancel)
 
-	m.goHome()
-	assert.Nil(t, m.streamCancel, "streamCancel should be nil after goHome")
+	// Selecting another sidebar entry tears the agent stream down.
+	m.goCluster()
+	assert.Nil(t, m.streamCancel, "streamCancel should be nil after re-selecting")
 	assert.False(t, m.streamConnected)
 }
 

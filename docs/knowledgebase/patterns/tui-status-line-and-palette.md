@@ -77,6 +77,18 @@ the gap so the view fills the terminal height, then insets the whole block by
 line is right-aligned to. Note the `+1` in the gap calculation: joining body and
 footer with N newlines produces N-1 blank rows between them.
 
+The connected body is a **two-pane layout** (`renderPanes`): a full-height left
+navigation sidebar, a one-column vertical divider, and the detail pane, joined
+with `lipgloss.JoinHorizontal(lipgloss.Top, …)`. All three columns are wrapped
+in `lipgloss.NewStyle().Width(w).Height(H)` and padded to the **same** height
+`H = m.height − edgePad − footerH − titleRows` so the columns align and `fill`'s
+gap math resolves to no interior blank rows (keeping the footer pinned). The
+sidebar model itself lives in `internal/app/sidebar.go`; see
+[TUI sidebar navigation](tui-sidebar-navigation.md). Because the sidebar
+subsumes navigation, the palette's navigation commands (Nodes, Agents, Activity,
+Logs, Switch Project) now *jump the sidebar* — they move the sidebar cursor and
+apply the selection rather than pushing a breadcrumb.
+
 **Alt-screen is required for this layout.** `View` returns its views via
 `altView`, which sets `tea.View.AltScreen = true`. In inline (non-alt) mode
 bubbletea sizes the frame to `content.Height()` and trims trailing blank
@@ -93,9 +105,12 @@ at Z 0 and the dialog at Z 1. Uniform dimming relies on the background carrying
 
 `Model.paint(render, s)` enforces that: it applies a style's bound `Render`
 method normally, but returns `s` **unstyled** while `pal.open` is true. Every
-styled site in the background (title, mode, status blocks, retry warning) goes
-through `paint`; the palette dialog itself does **not** — it renders styles
-directly because it is the bright foreground layer.
+styled site in the background (title, mode, status blocks, retry warning, the
+sidebar cursor highlight, and the pane divider) goes through `paint`; the palette
+dialog itself does **not** — it renders styles directly because it is the bright
+foreground layer. The pane wrappers must not set a `Background()` (only
+`Width`/`Height` padding, which is spaces) or the dimming would show a bright
+band.
 
 ```go
 // background site — dims when the palette is open:

@@ -19,7 +19,6 @@ func TestGoLogs_ClearsSelectionAndEntersView(t *testing.T) {
 	m.goLogs()
 
 	assert.Equal(t, viewLogs, m.view)
-	assert.Empty(t, m.crumbs)
 	assert.Empty(t, m.selectedAgentID)
 	assert.Empty(t, m.selectedProjectID)
 	assert.Equal(t, 0, m.logScroll, "entering the logs page pins to the newest line")
