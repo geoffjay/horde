@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,7 +10,7 @@ import (
 )
 
 func TestAgentsView_ListLengthAndSelection(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.view = viewAgents
 	m.agents = []client.Agent{
 		{ID: "a1", Name: "greeter", Status: "running"},
@@ -34,7 +33,7 @@ func TestAgentsView_ListLengthAndSelection(t *testing.T) {
 }
 
 func TestGoAgents_ClearsSelectionAndEntersView(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.selectedAgentID = "stale"
 	m.selectedProjectID = "p1"
 

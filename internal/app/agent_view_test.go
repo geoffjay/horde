@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -65,7 +64,7 @@ func TestSubscribeAgentContext_OpensStream(t *testing.T) {
 	srv := httptest.NewServer(sseTestHandler(snapshots))
 	defer srv.Close()
 
-	m := New(context.Background(), srv.Listener.Addr().String())
+	m := newTestModel(srv.Listener.Addr().String())
 	m.Update(m.connect())
 	m.Update(m.loadNode())
 	m.connected = true
@@ -101,7 +100,7 @@ func TestUnsubscribeOnDetailPop(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := New(context.Background(), srv.Listener.Addr().String())
+	m := newTestModel(srv.Listener.Addr().String())
 	m.Update(m.connect())
 	m.Update(m.loadNode())
 	m.connected = true
@@ -126,7 +125,7 @@ func TestUnsubscribeOnSidebarReselect(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := New(context.Background(), srv.Listener.Addr().String())
+	m := newTestModel(srv.Listener.Addr().String())
 	m.Update(m.connect())
 	m.Update(m.loadNode())
 	m.connected = true
@@ -143,7 +142,7 @@ func TestUnsubscribeOnSidebarReselect(t *testing.T) {
 }
 
 func TestContextDeltaMsg_UpdatesContextsMap(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.contexts = map[string]client.ExecutionContext{
 		"a1": {AgentID: "a1", Activity: client.StateIdle},
 	}
@@ -159,7 +158,7 @@ func TestContextDeltaMsg_UpdatesContextsMap(t *testing.T) {
 }
 
 func TestStreamErrMsg_ClearsStreamConnected(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.streamConnected = true
 	m.streamCh = make(<-chan client.ExecutionContext)
 
@@ -170,7 +169,7 @@ func TestStreamErrMsg_ClearsStreamConnected(t *testing.T) {
 }
 
 func TestLiveStatusBlock_WhenConnected(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.streamConnected = true
 
 	block := liveStatusBlock()
@@ -179,7 +178,7 @@ func TestLiveStatusBlock_WhenConnected(t *testing.T) {
 }
 
 func TestLiveStatusBlock_WhenDisconnected(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.streamConnected = false
 
 	block := liveStatusBlock()
@@ -187,7 +186,7 @@ func TestLiveStatusBlock_WhenDisconnected(t *testing.T) {
 }
 
 func TestRenderAgentView_HeaderAndFields(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewAgent
 	m.selectedProjectID = "p1"
@@ -235,7 +234,7 @@ func TestRenderAgentView_HeaderAndFields(t *testing.T) {
 }
 
 func TestRenderAgentView_NoAgentSelected(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewAgent
 	m.projects = nil
@@ -245,7 +244,7 @@ func TestRenderAgentView_NoAgentSelected(t *testing.T) {
 }
 
 func TestRenderAgentView_WaitingOnModel(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewAgent
 	m.selectedProjectID = "p1"
@@ -262,7 +261,7 @@ func TestRenderAgentView_WaitingOnModel(t *testing.T) {
 }
 
 func TestRenderAgentView_RedactedContext(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewAgent
 	m.selectedProjectID = "p1"

@@ -63,6 +63,7 @@ environment variable (any extension: `yaml`, `yml`, `json`, `toml`).
 | `agent.context_share`            | `restricted`        | `HORDE_AGENT_CONTEXT_SHARE`             | What a remote (non-loopback) principal sees on this node's own context endpoints: `restricted` (redacted subset + error/approval counts) or `full`. The cross-node master summary is always redacted. |
 | `project.workspace_dir`          | `.`                 | `HORDE_PROJECT_WORKSPACE_DIR`           | Default workspace dir for a project whose create request omits `workspace`. |
 | `project.context_retention`      | `0`                 | `HORDE_PROJECT_CONTEXT_RETENTION`       | Seconds to retain a finished project's agent contexts before eviction. `0` inherits `agent.context_retention`. |
+| `auth.users`                    | _(empty list)_      | _(not via env; see `HORDE_USER_TOKEN`)_ | Per-user API tokens (opt-in per-user auth). Empty disables auth — the API stays unauthenticated (current behavior). Each entry has `id`, `token`, `admin` (bool), `allowed_tools` (list, empty = all), and `permissions` (`{mode, writable_paths, deny_paths}`). Users are config-defined and identical on every node (no raft). Example block below. |
 | `log.formatter`                  | `text`              | `HORDE_LOG_FORMATTER`                  | Log formatter: `text` or `json`.        |
 | `log.level`                      | `info`              | `HORDE_LOG_LEVEL`                      | Log level.                               |
 | `log.output`                     | `stderr`            | `HORDE_LOG_OUTPUT`                     | Log destination for `serve`/`agent`: `stderr`, `stdout`, or `file`. The TUI ignores this for its own display (it always captures logs into an in-memory buffer shown on its logs page), but honors `file` to additionally tee those lines to disk. |
@@ -104,6 +105,41 @@ replays it in the next `initialize` so a respawned adapter (or a node restart)
 resumes the prior conversation. No configuration is required; an adapter
 without the `resume` capability ignores the token.
 
+### Per-user auth (`auth.users.*`)
+
+Per-user API-token auth is opt-in. Empty (the default) disables auth — the API
+stays unauthenticated (current behavior). When `auth.users` is non-empty, a
+request with `Authorization: Bearer <token>` resolves to a user identity; an
+unrecognized token is anonymous. Users are config-defined and identical on
+every node, so the user table needs no raft replication. See the
+[Phase 3.5b plan](knowledgebase/plans/phase-3.5b-auth.md).
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `auth.users[].id` | *(required)* | User identifier surfaced via `GET /users` and recorded as a project owner. Never the token. |
+| `auth.users[].token` | *(required)* | Shared secret presented as `Authorization: Bearer <token>`. |
+| `auth.users[].admin` | `false` | Bypasses ownership checks (node-operator convenience). |
+| `auth.users[].allowed_tools` | `[]` | Per-user AAP tool allowlist; empty means all tools (no gating). |
+| `auth.users[].permissions.mode` | *(empty)* | Advisory filesystem scope (`read_only`/`read_write`) applied per-user at AAP invoke. |
+| `auth.users[].permissions.writable_paths` | `[]` | Writable paths when mode is `read_write`. |
+| `auth.users[].permissions.deny_paths` | `[]` | Paths the adapter must not read or write. |
+
+```yaml
+auth:
+  users:
+    - id: alice
+      token: alices-secret
+      admin: true
+    - id: bob
+      token: bobs-secret
+      allowed_tools: [read, edit]
+      permissions:
+        mode: read_write
+        writable_paths: ["src/"]
+```
+
+The TUI sends its token via `--token` or `HORDE_USER_TOKEN`.
+
 ### Data and state directories (XDG)
 
 horde persists data to XDG-compliant directories (see the [persistence
@@ -114,6 +150,7 @@ decision](knowledgebase/decisions/persistence-and-knowledgebase.md)).
 | `HORDE_PATHS_CONFIG_DIR` | `~/.config/horde` | Configuration directory (`horde.yaml`, global project defaults). |
 | `HORDE_PATHS_DATA_DIR` | `~/.local/share/horde` | General storage: logs, auth, session data, database files. |
 | `HORDE_PATHS_STATE_DIR` | `~/.local/state/horde` | Trivial state: JSON KV, execution state, agent info, prompt history, lock files. |
+| `HORDE_USER_TOKEN` | *(empty)* | Per-user API token sent by the TUI as `Authorization: Bearer <token>`. Required only when the target node has `auth.users` configured; empty leaves the TUI unauthenticated. Also settable via the `--token` flag. |
 
 Per-project configuration lives in `.horde/` within a project's workspace
 directory and overrides global config. Every project has a knowledgebase at

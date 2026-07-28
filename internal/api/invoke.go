@@ -68,7 +68,7 @@ func invokeAgent(srv invokeView) http.HandlerFunc {
 		// Not local: route to the node that hosts the agent, if known
 		// (master → owning slave). Otherwise it's genuinely unknown.
 		if addr, ok := srv.RemoteAgentNode(id); ok {
-			invokeRemoteAgent(w, r, addr, srv.ClusterAuthToken())
+			invokeRemoteAgent(w, r, addr, srv.ClusterAuthToken(), forwardedUser(r))
 			return
 		}
 		// On a non-master node, an agent this node does not host may live on the
@@ -77,7 +77,7 @@ func invokeAgent(srv invokeView) http.HandlerFunc {
 		// any node a valid invoke entry point.
 		if srv.Mode() == server.ModeSlave {
 			if leader := srv.LeaderAddr(); leader != "" {
-				invokeRemoteAgent(w, r, leader, srv.ClusterAuthToken())
+				invokeRemoteAgent(w, r, leader, srv.ClusterAuthToken(), forwardedUser(r))
 				return
 			}
 		}
@@ -88,13 +88,18 @@ func invokeAgent(srv invokeView) http.HandlerFunc {
 // invokeRemoteAgent reverse-proxies the invoke to the node hosting the agent,
 // streaming the SSE response back. The path (/api/v1/agents/{id}/invoke) and
 // body are preserved; Last-Event-ID and other headers pass through, so resume
-// works across the hop. FlushInterval -1 streams each write immediately.
-func invokeRemoteAgent(w http.ResponseWriter, r *http.Request, addr, token string) {
+// works across the hop. forwardedUser is echoed as X-Horde-User so the owning
+// node can apply the per-user tool allowlist (empty for anonymous/auth-disabled).
+// FlushInterval -1 streams each write immediately.
+func invokeRemoteAgent(w http.ResponseWriter, r *http.Request, addr, token, forwardedUser string) {
 	target := &url.URL{Scheme: "http", Host: addr}
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(req *httputil.ProxyRequest) {
 			req.SetURL(target) // host+scheme only; preserves the incoming path + query
 			server.SetClusterAuth(req.Out.Header, token)
+			if forwardedUser != "" {
+				req.Out.Header.Set("X-Horde-User", forwardedUser)
+			}
 		},
 		FlushInterval: -1,
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
@@ -102,6 +107,17 @@ func invokeRemoteAgent(w http.ResponseWriter, r *http.Request, addr, token strin
 		},
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+// forwardedUser returns the per-user identity to echo on a cross-node invoke
+// forward. A user caller echoes its own id; a node caller honors any
+// X-Horde-User already present (cross-node re-forward); anonymous yields "".
+func forwardedUser(r *http.Request) string {
+	uid, ok := resolveForwardedUser(r)
+	if !ok {
+		return ""
+	}
+	return uid
 }
 
 // invokeADKAgent is the reverse-proxy path for native ADK agents.

@@ -61,11 +61,17 @@ func namedKey(code rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: code}
 }
 
+// newTestModel builds a Model with no auth token for tests. Most tests don't
+// care about per-user auth; this keeps their New call sites short.
+func newTestModel(addr string) *Model {
+	return New(context.Background(), addr, "")
+}
+
 func TestModel_ConnectsToReachableNode(t *testing.T) {
 	stub := httptest.NewServer(newTestHandler())
 	defer stub.Close()
 
-	m := New(context.Background(), stub.Listener.Addr().String())
+	m := newTestModel(stub.Listener.Addr().String())
 	msg := m.connect()
 
 	res, ok := msg.(connectResultMsg)
@@ -75,7 +81,7 @@ func TestModel_ConnectsToReachableNode(t *testing.T) {
 
 func TestModel_RetryWhenNoNode(t *testing.T) {
 	// Nothing listening on this port.
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	msg := m.connect()
 
 	res, ok := msg.(connectResultMsg)
@@ -89,7 +95,7 @@ func TestModel_RetryWhenNoNode(t *testing.T) {
 }
 
 func TestModel_ImmediateRetryResetsTimer(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.Update(m.connect())
 	require.True(t, m.retrying)
 
@@ -105,7 +111,7 @@ func TestModel_ImmediateRetryResetsTimer(t *testing.T) {
 }
 
 func TestModel_PaletteToggle(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	require.False(t, m.pal.open)
 
 	// ctrl+p opens, then closes.
@@ -122,7 +128,7 @@ func TestModel_PaletteToggle(t *testing.T) {
 }
 
 func TestPalette_SearchFiltersAndTypesIntoQuery(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true // commands: Refresh, Select Cluster, New Project, Switch Project, Quit
 	m.openPalette()
 
@@ -144,7 +150,7 @@ func TestPalette_SearchFiltersAndTypesIntoQuery(t *testing.T) {
 }
 
 func TestPalette_CursorNavigationClamps(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true // 5 commands: Refresh, Select Cluster, New Project, Switch Project, Quit
 	m.openPalette()
 	require.Equal(t, 0, m.pal.cursor)
@@ -162,7 +168,7 @@ func TestPalette_CursorNavigationClamps(t *testing.T) {
 }
 
 func TestPalette_EnterRunsSelectedCommand(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.openPalette()
 
@@ -177,7 +183,7 @@ func TestPalette_EnterRunsSelectedCommand(t *testing.T) {
 }
 
 func TestStatusLine_RightAlignedBlocks(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.node.Mode = "master"
 	m.node.NodeID = "n1"
@@ -232,7 +238,7 @@ func TestStatusLine_AddRemove(t *testing.T) {
 	s.Add(StatusBlock{Name: "a", Render: func(*Model) string { return "A" }})
 	s.Add(StatusBlock{Name: "b", Render: func(*Model) string { return "B" }})
 
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	assert.Contains(t, s.Render(m, 0), "A")
 	assert.Contains(t, s.Render(m, 0), "B")
 
@@ -243,7 +249,7 @@ func TestStatusLine_AddRemove(t *testing.T) {
 }
 
 func TestView_EdgePadding(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	// The two-pane body needs room for the sidebar's group rows plus the title
 	// and footer chrome, so use a realistic terminal size.
@@ -266,7 +272,7 @@ func TestView_EdgePadding(t *testing.T) {
 }
 
 func TestModel_ViewOverlaysPaletteWhenOpen(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.width, m.height = 80, 24
 

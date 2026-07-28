@@ -105,6 +105,7 @@ func (c *Client) StreamAgentContext(ctx context.Context, id string) (<-chan Exec
 	if err != nil {
 		return nil, err
 	}
+	c.setAuth(req.Header)
 	resp, err := c.streamHTTP.Do(req)
 	if err != nil {
 		return nil, err

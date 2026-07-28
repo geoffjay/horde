@@ -17,6 +17,11 @@ import (
 // It defaults to "dev" for `go build` without ldflags.
 var version = "dev"
 
+// tuiToken is the per-user bearer token for the TUI's node API requests. Set
+// from --token or HORDE_USER_TOKEN; empty leaves the TUI unauthenticated
+// (the current behavior when auth is disabled on the target node).
+var tuiToken string
+
 // rootCmd is the horde root command.
 var rootCmd = &cobra.Command{
 	Use:   "horde",
@@ -44,6 +49,14 @@ func init() {
 	// Format `--version` output as "horde <version>" (single line) instead
 	// of the verbose cobra default template.
 	rootCmd.SetVersionTemplate("horde {{.Version}}\n")
+
+	// Per-user API token for the TUI (the root command). The env var is the
+	// primary source; --token overrides it. Empty leaves the TUI
+	// unauthenticated (current behavior when auth is disabled on the node).
+	rootCmd.Flags().StringVar(&tuiToken, "token", "", "Per-user API token (or HORDE_USER_TOKEN)")
+	if tuiToken == "" {
+		tuiToken = os.Getenv("HORDE_USER_TOKEN")
+	}
 
 	// Eagerly load configuration so subcommands have access to it via
 	// config.Get(). Failures are deferred until a subcommand actually needs

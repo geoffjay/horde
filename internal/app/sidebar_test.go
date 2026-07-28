@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -12,7 +11,7 @@ import (
 )
 
 func TestSidebarRows_CollapsedOrder(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	rows := m.sidebarRows()
 
 	// All groups collapsed: five group headers followed by two feed leaves.
@@ -27,7 +26,7 @@ func TestSidebarRows_CollapsedOrder(t *testing.T) {
 }
 
 func TestSidebarRows_ExpandSplicesChildren(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.projects = []client.Project{
 		{ID: "p1", Name: "auth"},
 		{ID: "p2", Name: "billing"},
@@ -46,7 +45,7 @@ func TestSidebarRows_ExpandSplicesChildren(t *testing.T) {
 }
 
 func TestSidebarRows_TeamsDerivedFromProjects(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.projects = []client.Project{
 		{ID: "p1", Name: "auth"},
 		{ID: "p2", Name: "billing"},
@@ -60,13 +59,13 @@ func TestSidebarRows_TeamsDerivedFromProjects(t *testing.T) {
 }
 
 func TestSidebarRows_UsersHasNoChildren(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.sidebar.expanded[groupUsers] = true
 	assert.Empty(t, m.groupChildren(groupUsers))
 }
 
 func TestSidebarRows_NodesIncludesLocalAndSlaves(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.node.NodeID = "n1"
 	m.nodes = client.ClusterView{Nodes: []client.ClusterNode{
 		{NodeID: "n1"}, // duplicate of local — must be deduped
@@ -80,7 +79,7 @@ func TestSidebarRows_NodesIncludesLocalAndSlaves(t *testing.T) {
 }
 
 func TestMoveSidebarCursor_Clamps(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	n := m.sidebarLen()
 
 	m.sidebar.cursor = 0
@@ -92,7 +91,7 @@ func TestMoveSidebarCursor_Clamps(t *testing.T) {
 }
 
 func TestApplySelection_ChildMappings(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.projects = []client.Project{{ID: "p1", Name: "auth"}}
 	m.agents = []client.Agent{{ID: "a1", Name: "greeter"}}
 
@@ -109,7 +108,7 @@ func TestApplySelection_ChildMappings(t *testing.T) {
 }
 
 func TestApplySelection_GroupAndLeafOverviews(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 
 	cases := []struct {
 		row  sidebarRow
@@ -129,7 +128,7 @@ func TestApplySelection_GroupAndLeafOverviews(t *testing.T) {
 }
 
 func TestApplySelection_ResetsDetailState(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.detailBack = []view{viewAgent}
 	m.cursor = 3
 	m.approvalCursor = 2
@@ -145,7 +144,7 @@ func TestApplySelection_ResetsDetailState(t *testing.T) {
 }
 
 func TestSidebarKey_EnterOnGroupTogglesExpand(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	// Cursor starts on the Projects group header.
 	require.Equal(t, groupProjects, mustRow(t, m).group)
@@ -203,8 +202,9 @@ func TestRenderSidebar_ShowsGroupsAndCarets(t *testing.T) {
 }
 
 func TestRenderUsersView_ShowsPlaceholder(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
-	assert.Contains(t, m.renderUsersView(), "not available")
+	m := newTestModel("127.0.0.1:1")
+	// With no node fetched, auth is disabled by default; the view explains it.
+	assert.Contains(t, m.renderUsersView(), "auth is disabled")
 }
 
 // tabKey constructs a KeyPressMsg for the tab key.

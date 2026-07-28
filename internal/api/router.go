@@ -24,6 +24,7 @@ func Router(srv *server.Server) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
+	r.Use(resolvePrincipal(srv))
 	r.Use(jsonContentType)
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -55,6 +56,9 @@ func Router(srv *server.Server) http.Handler {
 
 		// Cluster-activity event stream (SSE)
 		r.Get("/events/stream", streamEvents(srv))
+
+		// Users (per-user auth; ids only — never tokens)
+		r.Get("/users", listUsers(srv))
 
 		// Projects
 		r.Route("/projects", func(r chi.Router) {

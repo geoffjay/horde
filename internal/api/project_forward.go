@@ -32,10 +32,16 @@ func projectForwardMiddleware(fwd projectForwarder) func(http.Handler) http.Hand
 				_ = r.Body.Close()
 			}
 
+			// Resolve the per-user identity to echo to the master. A user
+			// caller is forwarded as X-Horde-User; a node caller honors any
+			// X-Horde-User already present (cross-node re-forward); an
+			// anonymous caller yields empty.
+			uid, _ := resolveForwardedUser(r)
+
 			// Forward to the master. The path includes the /api/v1 prefix
 			// (chi routes are nested under /api/v1, but the full path is
 			// available on the request).
-			status, header, respBody, err := fwd.ForwardProjectRequest(r.Context(), r.Method, r.URL.Path+queryString(r), body)
+			status, header, respBody, err := fwd.ForwardProjectRequest(r.Context(), r.Method, r.URL.Path+queryString(r), body, uid)
 			if err != nil {
 				writeJSON(w, http.StatusBadGateway, errorResponse{Error: "forward to leader: " + err.Error()})
 				return

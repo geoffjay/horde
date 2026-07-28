@@ -121,6 +121,9 @@ type Model struct {
 	contexts       map[string]client.ExecutionContext
 	nodes          client.ClusterView
 	remoteContexts []client.ExecutionContext
+	// users is the per-user identity list + auth-enabled state for the Users
+	// view (best-effort fetch).
+	users client.UsersResponse
 
 	// SSE subscription for the agent context stream. When the user drills
 	// into the agent view, subscribeAgentContext opens a stream and stores
@@ -170,9 +173,10 @@ type Model struct {
 }
 
 // New constructs the initial Model for the TUI, targeting the node API at
-// addr (host:port). It creates the in-memory client-log buffer that the logs
-// page renders; Run redirects logrus into it.
-func New(ctx context.Context, addr string) *Model {
+// addr (host:port). token is the per-user bearer token sent on every request
+// (empty when auth is disabled). It creates the in-memory client-log buffer
+// that the logs page renders; Run redirects logrus into it.
+func New(ctx context.Context, addr, token string) *Model {
 	m := &Model{
 		ctx:      ctx,
 		c:        client.New(addr),
@@ -183,6 +187,9 @@ func New(ctx context.Context, addr string) *Model {
 		logs:     clientlog.NewBuffer(clientlog.DefaultCapacity),
 		sidebar:  sidebar{expanded: make(map[groupID]bool)},
 		focus:    focusSidebar,
+	}
+	if token != "" {
+		m.c.SetAuth(token)
 	}
 	// Start with the sidebar cursor on the Projects group so the initial
 	// highlight matches the default projects overview in the detail pane.
@@ -209,6 +216,7 @@ type nodeInfoMsg struct {
 	contexts       map[string]client.ExecutionContext
 	clusterNodes   client.ClusterView
 	remoteContexts []client.ExecutionContext
+	users          client.UsersResponse
 	err            error
 }
 
@@ -315,6 +323,13 @@ func (m *Model) loadNode() tea.Msg {
 		logrus.WithError(rErr).Debug("tui: fetch remote agent contexts failed")
 	}
 
+	// Users + auth-enabled state (best-effort): an older node without the
+	// /users endpoint returns an error; the TUI renders a placeholder.
+	users, uErr := m.c.Users(ctx)
+	if uErr != nil {
+		logrus.WithError(uErr).Debug("tui: fetch users failed")
+	}
+
 	return nodeInfoMsg{
 		node:           node,
 		agents:         agents,
@@ -323,6 +338,7 @@ func (m *Model) loadNode() tea.Msg {
 		contexts:       ctxMap,
 		clusterNodes:   clusterNodes,
 		remoteContexts: remoteContexts,
+		users:          users,
 	}
 }
 
@@ -672,6 +688,7 @@ func (m *Model) handleNodeInfo(msg *nodeInfoMsg) (tea.Model, tea.Cmd) {
 	}
 	m.nodes = msg.clusterNodes
 	m.remoteContexts = msg.remoteContexts
+	m.users = msg.users
 	return m, tea.Tick(agentRefreshInterval, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
@@ -1138,8 +1155,8 @@ func renderRetry(m *Model) string {
 // tee is non-nil (log.output "file") the same lines are also written there.
 // The buffer's notify callback asks the program to redraw as new lines arrive,
 // so the logs page stays live.
-func Run(ctx context.Context, addr string, tee io.Writer) error {
-	m := New(ctx, addr)
+func Run(ctx context.Context, addr, token string, tee io.Writer) error {
+	m := New(ctx, addr, token)
 
 	out := io.Writer(m.logs)
 	if tee != nil {

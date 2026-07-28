@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"net/http/httptest"
 	"testing"
 
@@ -12,7 +11,7 @@ import (
 )
 
 func TestHintStatusBlock_DisconnectedOmits(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = false
 
 	block := hintStatusBlock()
@@ -20,7 +19,7 @@ func TestHintStatusBlock_DisconnectedOmits(t *testing.T) {
 }
 
 func TestHintStatusBlock_Sidebar(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.focus = focusSidebar
 
@@ -31,7 +30,7 @@ func TestHintStatusBlock_Sidebar(t *testing.T) {
 }
 
 func TestHintStatusBlock_ProjectsView(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.focus = focusDetail
 	m.view = viewProjects
@@ -43,7 +42,7 @@ func TestHintStatusBlock_ProjectsView(t *testing.T) {
 }
 
 func TestHintStatusBlock_ProjectDetailActive(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.focus = focusDetail
 	m.view = viewProjectDetail
@@ -59,7 +58,7 @@ func TestHintStatusBlock_ProjectDetailActive(t *testing.T) {
 }
 
 func TestHintStatusBlock_ProjectDetailPaused(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.focus = focusDetail
 	m.view = viewProjectDetail
@@ -73,7 +72,7 @@ func TestHintStatusBlock_ProjectDetailPaused(t *testing.T) {
 }
 
 func TestHintStatusBlock_ProjectDetailFinished(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.focus = focusDetail
 	m.view = viewProjectDetail
@@ -88,7 +87,7 @@ func TestHintStatusBlock_ProjectDetailFinished(t *testing.T) {
 }
 
 func TestHintStatusBlock_AgentView(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewAgent
 	m.focus = focusDetail
@@ -100,7 +99,7 @@ func TestHintStatusBlock_AgentView(t *testing.T) {
 }
 
 func TestHintStatusBlock_InvokeView(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewInvoke
 	m.focus = focusDetail
@@ -112,7 +111,7 @@ func TestHintStatusBlock_InvokeView(t *testing.T) {
 }
 
 func TestHintStatusBlock_ClusterView(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewCluster
 	m.focus = focusDetail
@@ -136,7 +135,7 @@ func TestDefaultStatusLine_RenderContainsHint(t *testing.T) {
 	stub := httptest.NewServer(navTestHandler())
 	defer stub.Close()
 
-	m := New(context.Background(), stub.Listener.Addr().String())
+	m := newTestModel(stub.Listener.Addr().String())
 	m.Update(m.loadNode())
 	m.connected = true
 	m.focus = focusDetail
@@ -147,7 +146,7 @@ func TestDefaultStatusLine_RenderContainsHint(t *testing.T) {
 }
 
 func TestStatusLine_HintDimsWithPalette(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjects
 

@@ -21,6 +21,9 @@ import (
 // lines would corrupt the display. Instead it captures logs into an in-memory
 // buffer surfaced on the logs page (app.Run wires logrus to it). When
 // log.output is "file" the same lines are also teed to that file.
+//
+// --token / HORDE_USER_TOKEN sets the per-user bearer token sent on every
+// request; required only when the target node has auth.users configured.
 func runTUI(_ *cobra.Command, _ []string) error {
 	cfg := config.Get()
 	configureLogging(cfg)
@@ -29,5 +32,5 @@ func runTUI(_ *cobra.Command, _ []string) error {
 	defer stop()
 
 	addr := fmt.Sprintf("localhost:%d", cfg.Server.Port)
-	return app.Run(ctx, addr, logFileWriter(cfg))
+	return app.Run(ctx, addr, tuiToken, logFileWriter(cfg))
 }

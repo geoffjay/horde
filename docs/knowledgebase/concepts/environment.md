@@ -25,6 +25,13 @@ idea.
 * `horde agent` — hidden; hosts one ADK agent per subprocess.
 * `horde` — the TUI; a pure client of the node API (does not start a node).
 
+# Auth (opt-in)
+
+Per-user API-token auth is configured via the `auth.users` block and presented
+by clients via `HORDE_USER_TOKEN` / `--token`. Empty disables auth. See
+[`docs/environment.md`](../../../environment.md) and the
+[Phase 3.5b plan](../plans/phase-3.5b-auth.md).
+
 # Integration environment
 
 `docker/docker-compose.yml` defines one master and two slaves from a single

@@ -11,7 +11,7 @@ import (
 )
 
 func TestClusterView_LeaderLine(t *testing.T) {
-	m := New(nil, "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewCluster
 	m.node = client.NodeInfo{Mode: "master", NodeID: "n1"}
@@ -24,7 +24,7 @@ func TestClusterView_LeaderLine(t *testing.T) {
 }
 
 func TestClusterView_LeaderFromNodeID(t *testing.T) {
-	m := New(nil, "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewCluster
 	m.node = client.NodeInfo{Mode: "master", NodeID: "n1"}
@@ -36,7 +36,7 @@ func TestClusterView_LeaderFromNodeID(t *testing.T) {
 }
 
 func TestClusterView_NodeRows(t *testing.T) {
-	m := New(nil, "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewCluster
 	m.node = client.NodeInfo{Mode: "master", NodeID: "n1"}
@@ -67,7 +67,7 @@ func TestClusterView_NodeRows(t *testing.T) {
 }
 
 func TestClusterView_RemoteAgents(t *testing.T) {
-	m := New(nil, "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewCluster
 	m.node = client.NodeInfo{Mode: "master", NodeID: "n1"}
@@ -89,7 +89,7 @@ func TestClusterView_RemoteAgents(t *testing.T) {
 }
 
 func TestClusterView_EmptyCluster(t *testing.T) {
-	m := New(nil, "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewCluster
 	m.node = client.NodeInfo{Mode: "master", NodeID: "n1"}
@@ -102,7 +102,7 @@ func TestClusterView_EmptyCluster(t *testing.T) {
 }
 
 func TestClusterView_CursorHighlight(t *testing.T) {
-	m := New(nil, "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewCluster
 	m.node = client.NodeInfo{Mode: "master", NodeID: "n1"}

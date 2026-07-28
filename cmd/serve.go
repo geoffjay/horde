@@ -102,6 +102,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		StateDir:            cfg.Paths.StateDir,
 		ProjectWorkspaceDir: cfg.Project.WorkspaceDir,
 		AgentDefs:           buildServerAgentDefs(cfg.Agents),
+		Users:               buildServerUsers(cfg.Auth.Users),
 	})
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
@@ -157,6 +158,33 @@ func buildServerAgentDefs(cfgs map[string]config.AgentDef) map[string]server.Age
 			}
 		}
 		out[name] = def
+	}
+	return out
+}
+
+// buildServerUsers maps the config-layer per-user auth declarations into the
+// server's value-type UserAuth. Returned in config order; the server resolves
+// a presented token by linear scan (small N, constant-time compare).
+func buildServerUsers(users []config.UserDef) []server.UserAuth {
+	if len(users) == 0 {
+		return nil
+	}
+	out := make([]server.UserAuth, 0, len(users))
+	for _, u := range users {
+		ua := server.UserAuth{
+			ID:           u.ID,
+			Token:        u.Token,
+			Admin:        u.Admin,
+			AllowedTools: u.AllowedTools,
+		}
+		if u.Permissions != nil {
+			ua.Permissions = &server.PermissionScope{
+				Mode:          u.Permissions.Mode,
+				WritablePaths: u.Permissions.WritablePaths,
+				DenyPaths:     u.Permissions.DenyPaths,
+			}
+		}
+		out = append(out, ua)
 	}
 	return out
 }

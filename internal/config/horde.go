@@ -193,6 +193,34 @@ type MCPServerDef struct {
 	Env     []EnvPair `mapstructure:"env"`
 }
 
+// AuthConfig configures opt-in per-user API-token authentication on the node
+// API. Modeled on ClusterConfig: when Auth.Users is empty, auth is disabled
+// and the API stays unauthenticated (current single-node behavior preserved
+// byte-for-byte). Users are config-defined and identical on every node, so the
+// user table needs no raft replication.
+type AuthConfig struct {
+	// Users declares the per-user API tokens. Empty disables auth.
+	Users []UserDef `mapstructure:"users"`
+}
+
+// UserDef declares one per-user API token. A request with
+// `Authorization: Bearer <Token>` resolves to this user identity.
+type UserDef struct {
+	// ID is the user identifier surfaced via GET /users and recorded as a
+	// project owner. Never the token.
+	ID string `mapstructure:"id"`
+	// Token is the shared secret presented in an Authorization: Bearer header.
+	Token string `mapstructure:"token"`
+	// Admin, when true, bypasses ownership checks (node-operator convenience).
+	Admin bool `mapstructure:"admin"`
+	// AllowedTools narrows the per-user tool allowlist for AAP agents. Empty
+	// means all tools (no gating). See phase-3.5b-auth.md §5.
+	AllowedTools []string `mapstructure:"allowed_tools"`
+	// Permissions is the advisory filesystem scope applied per-user at AAP
+	// invoke (advisory via the tool gate in 3.5b). Empty omits the scope.
+	Permissions *PermissionScope `mapstructure:"permissions"`
+}
+
 // DataPaths holds the XDG-compliant on-disk directories horde uses for
 // configuration, general storage, and trivial state. Each is overridable via
 // its respective env var; see the persistence decision doc.
@@ -218,6 +246,7 @@ type Config struct {
 	Cluster ClusterConfig `mapstructure:"cluster"`
 	Agent   AgentConfig   `mapstructure:"agent"`
 	Project ProjectConfig `mapstructure:"project"`
+	Auth    AuthConfig    `mapstructure:"auth"`
 	// Agents declares named agents. Native ADK agents (greeter, repeater) are
 	// registry-built and need no entry here; an entry with Kind "aap"
 	// configures an external AAP adapter. The map is keyed by agent name.
@@ -302,6 +331,9 @@ var defaults = map[string]any{
 
 	// Service defaults
 	"service.id": "org.horde.Horde",
+
+	// Auth: no users by default ⇒ auth disabled (backward compatible).
+	"auth.users": []UserDef{},
 }
 
 // Load loads the horde configuration into the package singleton. It is safe
@@ -379,7 +411,47 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	return c.validateCluster()
+	if err := c.validateCluster(); err != nil {
+		return err
+	}
+	return c.validateAuth()
+}
+
+// AuthEnabled reports whether per-user API-token auth is enabled. Auth is
+// opt-in: no configured users ⇒ auth disabled, the API stays unauthenticated.
+func (c *Config) AuthEnabled() bool { return len(c.Auth.Users) > 0 }
+
+// validateAuth validates the auth.users block. Split from Validate to keep
+// each function's cyclomatic complexity within lint bounds. When auth is
+// disabled (no users) it returns nil.
+func (c *Config) validateAuth() error {
+	ids := make(map[string]struct{}, len(c.Auth.Users))
+	tokens := make(map[string]struct{}, len(c.Auth.Users))
+	for _, u := range c.Auth.Users {
+		if u.ID == "" {
+			return fmt.Errorf("auth.users: each user requires a non-empty id")
+		}
+		if u.Token == "" {
+			return fmt.Errorf("auth.users: user %q requires a non-empty token", u.ID)
+		}
+		if _, dup := ids[u.ID]; dup {
+			return fmt.Errorf("auth.users: duplicate user id %q", u.ID)
+		}
+		ids[u.ID] = struct{}{}
+		if _, dup := tokens[u.Token]; dup {
+			return fmt.Errorf("auth.users: duplicate token (shared by user %q)", u.ID)
+		}
+		tokens[u.Token] = struct{}{}
+		if u.Permissions != nil {
+			switch u.Permissions.Mode {
+			case "", "read_only", "read_write":
+			default:
+				return fmt.Errorf("auth.users: user %q has invalid permissions.mode %q: want read_only or read_write",
+					u.ID, u.Permissions.Mode)
+			}
+		}
+	}
+	return nil
 }
 
 // validateCluster validates the cluster discovery, gossip encryption, and

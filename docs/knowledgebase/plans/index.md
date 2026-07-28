@@ -6,6 +6,6 @@ Forward-looking plans for the project.
 * [Improvement Tasks](improvements.md) - outstanding code-review follow-ups.
 * [Agent execution context](agent-execution-context.md) - queryable per-agent work-state, materialized at the node and aggregated across the cluster with redacted remote access.
 * [TUI for projects, teams, and execution context](tui-projects.md) - complete; the domain TUI over projects, teams, execution context, invoke, and cluster (navigation since superseded by the [sidebar](../patterns/tui-sidebar-navigation.md)).
-* [Phase 3.5b — Per-user auth, ownership, and permissions](phase-3.5b-auth.md) - proposed; config-token per-user auth, project ownership, owner+team authorization, per-user tool/permission scopes (opt-in, OS sandboxing deferred).
+* [Phase 3.5b — Per-user auth, ownership, and permissions](phase-3.5b-auth.md) - in progress (slice 1 done); config-token per-user auth, project ownership, owner+team authorization, per-user tool/permission scopes (opt-in, OS sandboxing deferred).
 * [Distributed project management](distributed-project-management.md) - forward project mutations from slave to master, and add a `horde project` CLI subcommand.
 * [Leader failover](leader-failover.md) - automatic leader failover via raft on the gossip ring, master-only state replicated through the raft log, and a stable entry point that survives a leader change (Phase 5, planned).

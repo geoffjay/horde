@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -67,7 +66,7 @@ func TestSendInvoke_AppendsUserMessageAndStreams(t *testing.T) {
 	srv := httptest.NewServer(invokeTestHandler([]string{"hello", " world"}))
 	defer srv.Close()
 
-	m := New(context.Background(), srv.Listener.Addr().String())
+	m := newTestModel(srv.Listener.Addr().String())
 	m.Update(m.connect())
 	m.Update(m.loadNode())
 	m.connected = true
@@ -152,7 +151,7 @@ func TestSendInvoke_409SetsError(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	m := New(context.Background(), srv.Listener.Addr().String())
+	m := newTestModel(srv.Listener.Addr().String())
 	m.Update(m.connect())
 	m.Update(m.loadNode())
 	m.connected = true
@@ -174,7 +173,7 @@ func TestSendInvoke_409SetsError(t *testing.T) {
 }
 
 func TestInvokeKey_TypesIntoInput(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewInvoke
 
@@ -184,7 +183,7 @@ func TestInvokeKey_TypesIntoInput(t *testing.T) {
 }
 
 func TestInvokeKey_BackspaceDeletes(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewInvoke
 	m.invokeInput = "hello"
@@ -194,7 +193,7 @@ func TestInvokeKey_BackspaceDeletes(t *testing.T) {
 }
 
 func TestInvokeKey_EnterDoesNothingWhenEmpty(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewInvoke
 	m.invokeInput = ""
@@ -205,7 +204,7 @@ func TestInvokeKey_EnterDoesNothingWhenEmpty(t *testing.T) {
 }
 
 func TestInvokeKey_EnterDoesNothingWhenStreaming(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewInvoke
 	m.invokeInput = "hello"
@@ -216,7 +215,7 @@ func TestInvokeKey_EnterDoesNothingWhenStreaming(t *testing.T) {
 }
 
 func TestInvokeKey_EscPopsBack(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewInvoke
 	m.detailBack = []view{viewAgent}
@@ -226,7 +225,7 @@ func TestInvokeKey_EscPopsBack(t *testing.T) {
 }
 
 func TestUnsubscribeInvokeOnDetailPop(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewInvoke
 	m.invokeStreaming = true
@@ -239,7 +238,7 @@ func TestUnsubscribeInvokeOnDetailPop(t *testing.T) {
 }
 
 func TestResetInvokeState(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.invokeTranscript = []transcriptEntry{{role: "user", text: "hi"}}
 	m.invokeInput = "typing"
 	m.invokeStreaming = true
@@ -253,7 +252,7 @@ func TestResetInvokeState(t *testing.T) {
 }
 
 func TestRenderInvokeView_SessionBanner(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewInvoke
 	m.selectedProjectID = "p1"
@@ -268,7 +267,7 @@ func TestRenderInvokeView_SessionBanner(t *testing.T) {
 }
 
 func TestRenderInvokeView_Transcript(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewInvoke
 	m.selectedProjectID = "p1"
@@ -289,7 +288,7 @@ func TestRenderInvokeView_Transcript(t *testing.T) {
 }
 
 func TestRenderInvokeView_ErrorNotice(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewInvoke
 	m.selectedProjectID = "p1"
@@ -304,7 +303,7 @@ func TestRenderInvokeView_ErrorNotice(t *testing.T) {
 }
 
 func TestRenderInvokeView_StreamingIndicator(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewInvoke
 	m.selectedProjectID = "p1"
@@ -319,7 +318,7 @@ func TestRenderInvokeView_StreamingIndicator(t *testing.T) {
 }
 
 func TestRenderInvokeView_NoAgentSelected(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewInvoke
 	m.projects = nil

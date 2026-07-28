@@ -38,6 +38,7 @@ func (c *Client) StreamEvents(ctx context.Context) (<-chan Event, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.setAuth(req.Header)
 	resp, err := c.streamHTTP.Do(req)
 	if err != nil {
 		return nil, err

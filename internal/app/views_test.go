@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -12,7 +11,7 @@ import (
 )
 
 func TestProjectsView_RendersProjectRows(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = []client.Project{
 		{ID: "p1", Name: "auth-service", State: "active", Goal: "Fix login", Team: client.ProjectTeam{Agents: []client.TeamAgent{{AgentID: "a1", Name: "greeter"}}}},
@@ -29,7 +28,7 @@ func TestProjectsView_RendersProjectRows(t *testing.T) {
 }
 
 func TestProjectsView_RollupFromContexts(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = []client.Project{
 		{ID: "p1", Name: "auth", State: "active", Team: client.ProjectTeam{Agents: []client.TeamAgent{
@@ -52,7 +51,7 @@ func TestProjectsView_RollupFromContexts(t *testing.T) {
 }
 
 func TestProjectsView_RollupZeroAgents(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = []client.Project{
 		{ID: "p1", Name: "empty", State: "active"},
@@ -63,7 +62,7 @@ func TestProjectsView_RollupZeroAgents(t *testing.T) {
 }
 
 func TestProjectsView_EmptyProjects(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = nil
 
@@ -72,7 +71,7 @@ func TestProjectsView_EmptyProjects(t *testing.T) {
 }
 
 func TestProjectsView_CursorHighlight(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = []client.Project{
 		{ID: "p1", Name: "first", State: "active"},
@@ -87,7 +86,7 @@ func TestProjectsView_CursorHighlight(t *testing.T) {
 }
 
 func TestProjectDetailView_RendersStateWorkspaceGoal(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = []client.Project{
 		{ID: "p1", Name: "auth", State: "active", Workspace: "~/work/auth", Goal: "Fix login"},
@@ -107,7 +106,7 @@ func TestProjectDetailView_RendersStateWorkspaceGoal(t *testing.T) {
 }
 
 func TestProjectDetailView_RendersTeamAgents(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = []client.Project{
 		{ID: "p1", Name: "auth", State: "active", Team: client.ProjectTeam{Agents: []client.TeamAgent{
@@ -133,7 +132,7 @@ func TestProjectDetailView_RendersTeamAgents(t *testing.T) {
 }
 
 func TestProjectDetailView_AgentErrorsAndApprovals(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = []client.Project{
 		{ID: "p1", Name: "auth", State: "active", Team: client.ProjectTeam{Agents: []client.TeamAgent{
@@ -159,7 +158,7 @@ func TestProjectDetailView_AgentErrorsAndApprovals(t *testing.T) {
 }
 
 func TestProjectDetailView_RemoteRedactedContext(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = []client.Project{
 		{ID: "p1", Name: "auth", State: "active", Team: client.ProjectTeam{Agents: []client.TeamAgent{
@@ -180,7 +179,7 @@ func TestProjectDetailView_RemoteRedactedContext(t *testing.T) {
 }
 
 func TestProjectDetailView_NoAgentsAssigned(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = []client.Project{
 		{ID: "p1", Name: "empty", State: "active"},
@@ -194,7 +193,7 @@ func TestProjectDetailView_NoAgentsAssigned(t *testing.T) {
 }
 
 func TestProjectDetailView_ProjectNotFound(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = nil
 	m.cursor = 0
@@ -206,7 +205,7 @@ func TestProjectDetailView_ProjectNotFound(t *testing.T) {
 }
 
 func TestProjectDetailView_CursorOnTeamAgents(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = []client.Project{
 		{ID: "p1", Name: "auth", State: "active", Team: client.ProjectTeam{Agents: []client.TeamAgent{
@@ -254,7 +253,7 @@ type navTestModel struct {
 
 func setupNavTestModel(t *testing.T) *navTestModel {
 	t.Helper()
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = []client.Project{
 		{ID: "p1", Name: "auth", State: "active", Team: client.ProjectTeam{Agents: []client.TeamAgent{

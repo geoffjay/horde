@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,7 +9,7 @@ import (
 )
 
 func TestAgentForm_CycleSelectors(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.node = client.NodeInfo{NodeID: "n1"}
 	m.availableAgents = []client.AvailableAgent{{Name: "greeter", Kind: "adk"}, {Name: "pi", Kind: "aap"}}
 	m.openAgentForm()
@@ -26,7 +25,7 @@ func TestAgentForm_CycleSelectors(t *testing.T) {
 }
 
 func TestAgentForm_SubmitWithNoAvailableAgentsIsNoOp(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.openAgentForm()
 
 	_, cmd := m.submitAgentForm()
@@ -35,7 +34,7 @@ func TestAgentForm_SubmitWithNoAvailableAgentsIsNoOp(t *testing.T) {
 }
 
 func TestHandleAgentAction_SurfacesSpawnError(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	_, _ = m.handleAgentAction(&agentActionMsg{err: assertErr("boom")})
 	assert.Contains(t, m.actionErr, "boom")
 

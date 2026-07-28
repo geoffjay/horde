@@ -95,6 +95,16 @@ without committing to an auth mechanism. When 3.5b lands, the project/team
 model already has the right shape — it just gains an `owner` field and
 access control.
 
+# Phase 3.5b — Per-user auth, ownership, and permissions (in progress)
+
+Detailed plan: [Phase 3.5b — Per-user auth](phase-3.5b-auth.md).
+
+Slice 1 (identity plumbing) is complete: opt-in per-user API-token auth,
+`resolvePrincipal` middleware, `GET /users`, `Client.SetAuth`, the TUI Users
+view, and the `X-Horde-User` cross-node echo. No route rejects yet (disabled ⇒
+no-op). Slices 2–5 (ownership + authz, agent mutation gating, AAP tool
+allowlist, docs) remain.
+
 # Phase 3.6 — AAP host (external coding agents) (complete)
 
 Detailed plan: [AAP host — driving external coding agents](aap-host.md).

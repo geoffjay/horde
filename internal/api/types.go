@@ -12,6 +12,17 @@ import (
 // decode as JSON.
 const errInvalidBody = "invalid request body"
 
+// authView is the subset of *server.Server the per-user auth + principal
+// resolution middleware needs.
+type authView interface {
+	AuthEnabled() bool
+	ResolveUser(token string) (server.UserAuth, bool)
+	ClusterAuthToken() string
+	// Users returns the configured identities with tokens stripped, for the
+	// read-only GET /users list. Order is config declaration order.
+	Users() []server.UserAuth
+}
+
 // nodeView is the subset of *server.Server that node-control handlers need.
 // Defined as an interface so handlers can be tested with a fake.
 type nodeView interface {
@@ -71,10 +82,12 @@ type projectView interface {
 // projectForwarder is the subset of *server.Server needed to proxy project
 // requests to the master. A slave node with a leader returns a non-empty
 // LeaderAddr; the API layer forwards project reads and mutations to the
-// master via ForwardProjectRequest.
+// master via ForwardProjectRequest. forwardedUser carries the resolved user
+// id (X-Horde-User) so the master can attribute mutations when auth is
+// enabled; empty when the caller is anonymous or auth disabled.
 type projectForwarder interface {
 	LeaderAddr() string
-	ForwardProjectRequest(ctx context.Context, method, path string, body []byte) (int, http.Header, []byte, error)
+	ForwardProjectRequest(ctx context.Context, method, path string, body []byte, forwardedUser string) (int, http.Header, []byte, error)
 }
 
 // invokeView is the subset needed by the invoke proxy (extends agentView
@@ -127,4 +140,5 @@ var (
 	_ projectForwarder = (*server.Server)(nil)
 	_ invokeView       = (*server.Server)(nil)
 	_ eventView        = (*server.Server)(nil)
+	_ authView         = (*server.Server)(nil)
 )

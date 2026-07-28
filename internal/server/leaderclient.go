@@ -156,9 +156,11 @@ func (c *leaderClient) leaderAddr() string {
 // response status, headers, and body back to the caller. It is used by slave
 // nodes to proxy project reads and mutations to the master so project state
 // is cluster-wide. The method and path are taken from the original request.
+// forwardedUser is echoed as X-Horde-User so the master can attribute the
+// mutation when per-user auth is enabled (empty for anonymous/auth-disabled).
 //
 //nolint:gocritic // unnamedResult: result types are clear from context
-func (c *leaderClient) forwardRequest(ctx context.Context, method, path string, body []byte) (int, http.Header, []byte, error) {
+func (c *leaderClient) forwardRequest(ctx context.Context, method, path string, body []byte, forwardedUser string) (int, http.Header, []byte, error) {
 	leader, err := c.resolve(ctx)
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("resolve leader: %w", err)
@@ -170,6 +172,9 @@ func (c *leaderClient) forwardRequest(ctx context.Context, method, path string, 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	SetClusterAuth(req.Header, c.token)
+	if forwardedUser != "" {
+		req.Header.Set("X-Horde-User", forwardedUser)
+	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {

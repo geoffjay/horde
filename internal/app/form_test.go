@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +15,7 @@ import (
 )
 
 func TestOpenForm_ClearsFields(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 
 	m.openForm()
 	assert.True(t, m.form.open)
@@ -27,7 +26,7 @@ func TestOpenForm_ClearsFields(t *testing.T) {
 }
 
 func TestCloseForm_ResetsState(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.form = projectForm{open: true, cursor: 2, fields: [formFieldCount]string{"x", "y", "z", "w"}}
 
 	m.closeForm()
@@ -39,7 +38,7 @@ func TestCloseForm_ResetsState(t *testing.T) {
 }
 
 func TestFormKey_TypesIntoActiveField(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.openForm()
 
 	m.handleFormKey(keyPress("a"))
@@ -48,7 +47,7 @@ func TestFormKey_TypesIntoActiveField(t *testing.T) {
 }
 
 func TestFormKey_BackspaceDeletes(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.openForm()
 	m.form.fields[formFieldName] = "hello"
 
@@ -57,7 +56,7 @@ func TestFormKey_BackspaceDeletes(t *testing.T) {
 }
 
 func TestFormKey_TabMovesToNextField(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.openForm()
 	require.Equal(t, 0, m.form.cursor)
 
@@ -76,7 +75,7 @@ func TestFormKey_TabMovesToNextField(t *testing.T) {
 }
 
 func TestFormKey_ShiftTabMovesToPreviousField(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.openForm()
 	m.form.cursor = 0
 
@@ -90,7 +89,7 @@ func TestFormKey_ShiftTabMovesToPreviousField(t *testing.T) {
 }
 
 func TestFormKey_UpDownMoveBetweenFields(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.openForm()
 
 	m.handleFormKey(namedKey(tea.KeyDown))
@@ -104,7 +103,7 @@ func TestFormKey_UpDownMoveBetweenFields(t *testing.T) {
 }
 
 func TestFormKey_EscClosesForm(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.openForm()
 	require.True(t, m.form.open)
 
@@ -113,7 +112,7 @@ func TestFormKey_EscClosesForm(t *testing.T) {
 }
 
 func TestFormKey_CtrlCQuits(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.openForm()
 
 	m.handleFormKey(ctrlKey('c'))
@@ -125,7 +124,7 @@ func TestFormKey_EnterSubmitsWhenNameFilled(t *testing.T) {
 	stub := setupProjectActionServer(t, http.StatusOK, client.Project{ID: "p9", Name: "test", State: "active"})
 	defer stub.Close()
 
-	m := New(context.Background(), stub.Listener.Addr().String())
+	m := newTestModel(stub.Listener.Addr().String())
 	m.openForm()
 	m.form.fields[formFieldName] = "test"
 	m.form.fields[formFieldWorkspace] = "~/work/test"
@@ -145,7 +144,7 @@ func TestFormKey_EnterSubmitsWhenNameFilled(t *testing.T) {
 }
 
 func TestFormKey_EnterDoesNothingWhenNameEmpty(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.openForm()
 	m.form.fields[formFieldName] = "   " // whitespace only
 
@@ -166,7 +165,7 @@ func TestSubmitForm_WhitespaceTrimmedFromName(t *testing.T) {
 	stub := setupProjectActionServer(t, http.StatusOK, client.Project{ID: "p1", Name: "auth", State: "active"})
 	defer stub.Close()
 
-	m := New(context.Background(), stub.Listener.Addr().String())
+	m := newTestModel(stub.Listener.Addr().String())
 	m.openForm()
 	m.form.fields[formFieldName] = "  auth  "
 	m.form.fields[formFieldAgents] = " coder , reviewer "
@@ -181,7 +180,7 @@ func TestSubmitForm_WhitespaceTrimmedFromName(t *testing.T) {
 }
 
 func TestHandleKey_CtrlNOpensForm(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjects
 
@@ -190,7 +189,7 @@ func TestHandleKey_CtrlNOpensForm(t *testing.T) {
 }
 
 func TestHandleKey_CtrlNOpensFormInAnyView(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjectDetail
 	m.focus = focusDetail
@@ -200,7 +199,7 @@ func TestHandleKey_CtrlNOpensFormInAnyView(t *testing.T) {
 }
 
 func TestHandleKey_FormKeysRoutedToForm(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.openForm()
 
@@ -211,7 +210,7 @@ func TestHandleKey_FormKeysRoutedToForm(t *testing.T) {
 }
 
 func TestHandleKey_CtrlSDoesNotPauseInProjectsView(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjects
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active"}}
@@ -223,7 +222,7 @@ func TestHandleKey_CtrlSDoesNotPauseInProjectsView(t *testing.T) {
 }
 
 func TestPalette_NewProjectCommand(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.openPalette()
 
@@ -239,7 +238,7 @@ func TestPalette_NewProjectCommand(t *testing.T) {
 }
 
 func TestPalette_NoLifecycleCommands(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjects
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active"}}
@@ -261,7 +260,7 @@ func TestPalette_NoLifecycleCommands(t *testing.T) {
 }
 
 func TestPalette_NoLifecycleCommandsOnProjectDetail(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjectDetail
 	m.focus = focusDetail
@@ -277,7 +276,7 @@ func TestPalette_NoLifecycleCommandsOnProjectDetail(t *testing.T) {
 }
 
 func TestPalette_NoLifecycleCommandsOnAgentView(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewAgent
 	m.selectedProjectID = "p1"
@@ -293,7 +292,7 @@ func TestHandleKey_PauseInProjectDetail(t *testing.T) {
 	stub := setupProjectActionServer(t, http.StatusOK, client.Project{ID: "p1", Name: "auth", State: "paused"})
 	defer stub.Close()
 
-	m := New(context.Background(), stub.Listener.Addr().String())
+	m := newTestModel(stub.Listener.Addr().String())
 	m.connected = true
 	m.view = viewProjectDetail
 	m.focus = focusDetail
@@ -314,7 +313,7 @@ func TestHandleKey_ResumeInProjectDetail(t *testing.T) {
 	stub := setupProjectActionServer(t, http.StatusOK, client.Project{ID: "p1", Name: "auth", State: "active"})
 	defer stub.Close()
 
-	m := New(context.Background(), stub.Listener.Addr().String())
+	m := newTestModel(stub.Listener.Addr().String())
 	m.connected = true
 	m.view = viewProjectDetail
 	m.focus = focusDetail
@@ -336,7 +335,7 @@ func TestHandleKey_FinishInProjectDetail(t *testing.T) {
 	stub := setupProjectActionServer(t, http.StatusOK, client.Project{ID: "p1", Name: "auth", State: "finished"})
 	defer stub.Close()
 
-	m := New(context.Background(), stub.Listener.Addr().String())
+	m := newTestModel(stub.Listener.Addr().String())
 	m.connected = true
 	m.view = viewProjectDetail
 	m.focus = focusDetail
@@ -357,7 +356,7 @@ func TestHandleKey_AssignInProjectDetail(t *testing.T) {
 	stub := setupProjectActionServer(t, http.StatusOK, client.Project{ID: "p1", Name: "auth", State: "active"})
 	defer stub.Close()
 
-	m := New(context.Background(), stub.Listener.Addr().String())
+	m := newTestModel(stub.Listener.Addr().String())
 	m.connected = true
 	m.view = viewProjectDetail
 	m.focus = focusDetail
@@ -387,7 +386,7 @@ func TestHandleKey_AssignInProjectDetail(t *testing.T) {
 }
 
 func TestHandleKey_AssignWithNoUnassignedAgentsOpensEmptyPicker(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjectDetail
 	m.focus = focusDetail
@@ -403,7 +402,7 @@ func TestHandleKey_AssignWithNoUnassignedAgentsOpensEmptyPicker(t *testing.T) {
 }
 
 func TestHandleProjectAction_SuccessUpdatesProject(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = []client.Project{
 		{ID: "p1", Name: "auth", State: "active"},
@@ -417,7 +416,7 @@ func TestHandleProjectAction_SuccessUpdatesProject(t *testing.T) {
 }
 
 func TestHandleProjectAction_NewProjectAppended(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = []client.Project{
 		{ID: "p1", Name: "auth", State: "active"},
@@ -429,7 +428,7 @@ func TestHandleProjectAction_NewProjectAppended(t *testing.T) {
 }
 
 func TestHandleProjectAction_ErrorRefreshesOnly(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.projects = []client.Project{{ID: "p1", Name: "auth", State: "active"}}
 
@@ -439,7 +438,7 @@ func TestHandleProjectAction_ErrorRefreshesOnly(t *testing.T) {
 }
 
 func TestRenderForm_ShowsTitleAndFields(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.openForm()
 	m.width, m.height = 80, 24
 
@@ -454,7 +453,7 @@ func TestRenderForm_ShowsTitleAndFields(t *testing.T) {
 }
 
 func TestRenderForm_ShowsFieldValues(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.openForm()
 	m.form.fields[formFieldName] = "auth-service"
 	m.form.fields[formFieldWorkspace] = "~/work/auth"
@@ -465,7 +464,7 @@ func TestRenderForm_ShowsFieldValues(t *testing.T) {
 }
 
 func TestRenderForm_EmptyFieldsShowPlaceholder(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.openForm()
 	m.form.cursor = formFieldWorkspace // focus on workspace, name is empty
 
@@ -475,7 +474,7 @@ func TestRenderForm_EmptyFieldsShowPlaceholder(t *testing.T) {
 }
 
 func TestView_FormOverlayWhenOpen(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.width, m.height = 80, 24
 
@@ -487,7 +486,7 @@ func TestView_FormOverlayWhenOpen(t *testing.T) {
 }
 
 func TestView_FormOverPalettePrecedence(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.width, m.height = 80, 24
 
@@ -501,7 +500,7 @@ func TestView_FormOverPalettePrecedence(t *testing.T) {
 }
 
 func TestSelectedProjectIDForAction_ProjectsViewUsesCursor(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjects
 	m.projects = []client.Project{
@@ -514,7 +513,7 @@ func TestSelectedProjectIDForAction_ProjectsViewUsesCursor(t *testing.T) {
 }
 
 func TestSelectedProjectIDForAction_DetailViewUsesSelectedID(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjectDetail
 	m.focus = focusDetail
@@ -528,7 +527,7 @@ func TestSelectedProjectIDForAction_DetailViewUsesSelectedID(t *testing.T) {
 }
 
 func TestSelectedProjectIDForAction_EmptyWhenNoProject(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewProjects
 	m.projects = nil
@@ -537,7 +536,7 @@ func TestSelectedProjectIDForAction_EmptyWhenNoProject(t *testing.T) {
 }
 
 func TestOpenAgentPicker_ListsOnlyUnassignedAgents(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.agents = []client.Agent{
 		{ID: "a1", Name: "greeter", Status: "running"},
 		{ID: "a2", Name: "coder", Status: "running"},
@@ -555,7 +554,7 @@ func TestOpenAgentPicker_ListsOnlyUnassignedAgents(t *testing.T) {
 }
 
 func TestOpenAssignProjectPicker_ListsActiveProjects(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.projects = []client.Project{
 		{ID: "p1", Name: "auth", State: "active"},
 		{ID: "p2", Name: "billing", State: "finished"},
@@ -568,7 +567,7 @@ func TestOpenAssignProjectPicker_ListsActiveProjects(t *testing.T) {
 }
 
 func TestActionProjectState(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.projects = []client.Project{
 		{ID: "p1", Name: "auth", State: "active"},
 		{ID: "p2", Name: "billing", State: "paused"},
@@ -580,7 +579,7 @@ func TestActionProjectState(t *testing.T) {
 }
 
 func TestDialogOffset_CentersDialog(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.width, m.height = 80, 24
 
 	dialog := "short"
@@ -639,7 +638,7 @@ func setupProjectActionServer(t *testing.T, status int, response client.Project)
 }
 
 func TestRenderForm_HasRoundedBorder(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.openForm()
 	m.width, m.height = 80, 24
 

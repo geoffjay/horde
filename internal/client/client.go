@@ -27,6 +27,10 @@ type Client struct {
 	members []string // candidate base URLs; members[active] is the current target
 	active  int
 
+	// authToken is the per-user bearer token sent on every request when set
+	// (Authorization: Bearer <token>). Empty means unauthenticated.
+	authToken string
+
 	http       *http.Client
 	streamHTTP *http.Client
 }
@@ -38,6 +42,29 @@ const httpTimeout = 10 * time.Second
 // is optional; "http://" is assumed when absent.
 func New(addr string) *Client {
 	return NewCluster([]string{addr})
+}
+
+// SetAuth sets the per-user bearer token sent on every subsequent request
+// (Authorization: Bearer <token>). Empty clears it (unauthenticated). The
+// TUI sets this from --token / HORDE_USER_TOKEN; an auth-enabled node
+// rejects mutations from a client with no token.
+func (c *Client) SetAuth(token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.authToken = token
+}
+
+// setAuth adds the per-user bearer token to a request header when set. Used
+// by both the unary send path and the streaming paths so the token reaches
+// every request site. Callers may invoke this outside the c.mu lock; the
+// token is read under the lock to be safe against concurrent SetAuth.
+func (c *Client) setAuth(h http.Header) {
+	c.mu.Lock()
+	token := c.authToken
+	c.mu.Unlock()
+	if token != "" {
+		h.Set("Authorization", "Bearer "+token)
+	}
 }
 
 // NewCluster constructs a client seeded with several cluster member addresses.
@@ -152,6 +179,7 @@ func (c *Client) send(ctx context.Context, method, path, contentType string, bod
 		if contentType != "" {
 			req.Header.Set("Content-Type", contentType)
 		}
+		c.setAuth(req.Header)
 		resp, err := c.http.Do(req)
 		if err == nil {
 			return resp, nil

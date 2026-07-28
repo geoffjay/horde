@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -11,7 +10,7 @@ import (
 )
 
 func TestGoLogs_ClearsSelectionAndEntersView(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.selectedAgentID = "stale"
 	m.selectedProjectID = "p1"
 	m.logScroll = 5
@@ -25,13 +24,13 @@ func TestGoLogs_ClearsSelectionAndEntersView(t *testing.T) {
 }
 
 func TestLogsView_EmptyBufferShowsPlaceholder(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.view = viewLogs
 	assert.Contains(t, m.renderLogsView(), "no client log output yet")
 }
 
 func TestLogsView_RendersBufferedLines(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.view = viewLogs
 	m.width, m.height = 80, 24
 
@@ -45,7 +44,7 @@ func TestLogsView_RendersBufferedLines(t *testing.T) {
 }
 
 func TestLogsView_LogrusOutputIsCaptured(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.view = viewLogs
 	m.width, m.height = 80, 24
 
@@ -60,7 +59,7 @@ func TestLogsView_LogrusOutputIsCaptured(t *testing.T) {
 }
 
 func TestScrollLogs_ClampsToBounds(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.view = viewLogs
 	m.width, m.height = 80, 24 // logsVisibleRows == 24 - logsChrome
 
@@ -80,7 +79,7 @@ func TestScrollLogs_ClampsToBounds(t *testing.T) {
 }
 
 func TestLogsView_ScrollShowsOlderLines(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.view = viewLogs
 	m.width, m.height = 80, 20
 

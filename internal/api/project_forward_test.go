@@ -24,13 +24,16 @@ type fakeForwarder struct {
 
 func (f *fakeForwarder) LeaderAddr() string { return f.leaderAddr }
 
-func (f *fakeForwarder) ForwardProjectRequest(ctx context.Context, method, path string, body []byte) (int, http.Header, []byte, error) {
+func (f *fakeForwarder) ForwardProjectRequest(ctx context.Context, method, path string, body []byte, forwardedUser string) (int, http.Header, []byte, error) {
 	url := f.master.URL + path
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if forwardedUser != "" {
+		req.Header.Set("X-Horde-User", forwardedUser)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return 0, nil, nil, err

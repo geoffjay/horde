@@ -6,11 +6,42 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/geoffjay/horde/internal/server"
 )
 
-type fakeAuthView struct{ token string }
+// fakeAuthView satisfies the authView interface for cluster-auth and
+// principal-resolution tests. It carries a cluster token, an auth-enabled
+// flag, and a small user table.
+type fakeAuthView struct {
+	clusterToken string
+	enabled      bool
+	users        []server.UserAuth
+}
 
-func (f fakeAuthView) ClusterAuthToken() string { return f.token }
+func (f fakeAuthView) ClusterAuthToken() string { return f.clusterToken }
+
+func (f fakeAuthView) AuthEnabled() bool { return f.enabled }
+
+func (f fakeAuthView) ResolveUser(token string) (server.UserAuth, bool) {
+	for _, u := range f.users {
+		if u.Token == token {
+			return u, true
+		}
+	}
+	return server.UserAuth{}, false
+}
+
+// Users returns the fake's user table with tokens stripped, mirroring the real
+// server's read-only accessor.
+func (f fakeAuthView) Users() []server.UserAuth {
+	out := make([]server.UserAuth, 0, len(f.users))
+	for _, u := range f.users {
+		u.Token = ""
+		out = append(out, u)
+	}
+	return out
+}
 
 func TestRequireClusterAuth(t *testing.T) {
 	newReq := func(auth string) *http.Request {
@@ -27,7 +58,7 @@ func TestRequireClusterAuth(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		})
 		rec := httptest.NewRecorder()
-		requireClusterAuth(fakeAuthView{token: token})(next).ServeHTTP(rec, newReq(auth))
+		requireClusterAuth(fakeAuthView{clusterToken: token})(next).ServeHTTP(rec, newReq(auth))
 		return reached, rec.Code
 	}
 

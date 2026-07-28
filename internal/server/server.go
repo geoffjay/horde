@@ -18,6 +18,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -152,6 +153,20 @@ type Config struct {
 	// "aap" configures an external AAP adapter; "adk" (or absent) falls back
 	// to the agents registry. Populated from config by cmd/serve.go.
 	AgentDefs map[string]AgentDef
+	// Users declares per-user API tokens for opt-in per-user auth. Empty
+	// disables auth (the API stays unauthenticated). Populated from config
+	// by cmd/serve.go via buildServerUsers.
+	Users []UserAuth
+}
+
+// UserAuth is the server-layer per-user authentication identity. Mirrors
+// config.UserDef minus config-only concerns. Empty when auth is disabled.
+type UserAuth struct {
+	ID           string
+	Token        string
+	Admin        bool
+	AllowedTools []string
+	Permissions  *PermissionScope
 }
 
 // AgentKind is the kind of a spawned agent: a native ADK agent or an external
@@ -674,7 +689,7 @@ func (s *Server) forwardEvents(ctx context.Context) {
 			if err != nil {
 				continue
 			}
-			if _, _, _, err := client.forwardRequest(ctx, http.MethodPost, "/api/v1/cluster/events", body); err != nil {
+			if _, _, _, err := client.forwardRequest(ctx, http.MethodPost, "/api/v1/cluster/events", body, ""); err != nil {
 				logrus.WithError(err).Debug("forward event to leader failed")
 			}
 		}
@@ -1099,14 +1114,16 @@ func (s *Server) LeaderAddr() string {
 
 // ForwardProjectRequest proxies a project API request to the master node.
 // It is called by the API handlers when this node is a slave with a leader.
+// forwardedUser is echoed as X-Horde-User so the master can attribute the
+// mutation when per-user auth is enabled (empty for anonymous/auth-disabled).
 // Returns the HTTP status code, response headers, response body, and error.
 //
 //nolint:gocritic // unnamedResult: result types are clear from context
-func (s *Server) ForwardProjectRequest(ctx context.Context, method, path string, body []byte) (int, http.Header, []byte, error) {
+func (s *Server) ForwardProjectRequest(ctx context.Context, method, path string, body []byte, forwardedUser string) (int, http.Header, []byte, error) {
 	if s.leader == nil {
 		return 0, nil, nil, fmt.Errorf("no leader configured")
 	}
-	return s.leader.forwardRequest(ctx, method, path, body)
+	return s.leader.forwardRequest(ctx, method, path, body, forwardedUser)
 }
 
 // Port returns the TCP port the node API listens on.
@@ -1118,6 +1135,39 @@ func (s *Server) NodeID() string { return s.cfg.NodeID }
 // ClusterAuthToken returns the shared secret required on node→node cluster
 // calls, or empty when cluster request auth is disabled.
 func (s *Server) ClusterAuthToken() string { return s.cfg.AuthToken }
+
+// AuthEnabled reports whether per-user API-token auth is enabled. Auth is
+// opt-in: no configured users ⇒ auth disabled, the API stays unauthenticated.
+func (s *Server) AuthEnabled() bool { return len(s.cfg.Users) > 0 }
+
+// Users returns the configured user identities (id + admin + tools + scope)
+// for the read-only /users endpoint and the TUI users view. Tokens are
+// intentionally excluded from the returned value — they are never surfaced
+// over the API.
+func (s *Server) Users() []UserAuth {
+	out := make([]UserAuth, len(s.cfg.Users))
+	for i, u := range s.cfg.Users {
+		out[i] = UserAuth{
+			ID:           u.ID,
+			Admin:        u.Admin,
+			AllowedTools: u.AllowedTools,
+			Permissions:  u.Permissions,
+		}
+	}
+	return out
+}
+
+// ResolveUser resolves a presented bearer token to a user identity. Returns
+// the matched user and true, or zero-value + false when the token does not
+// match. The compare is constant-time per entry; N is small (config-defined).
+func (s *Server) ResolveUser(token string) (UserAuth, bool) {
+	for _, u := range s.cfg.Users {
+		if subtle.ConstantTimeCompare([]byte(token), []byte(u.Token)) == 1 {
+			return u, true
+		}
+	}
+	return UserAuth{}, false
+}
 
 // SetClusterAuth adds the shared cluster bearer token to a request header when
 // the token is non-empty. Applied to every node→node call so the receiver's

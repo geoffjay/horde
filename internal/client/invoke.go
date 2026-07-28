@@ -69,6 +69,7 @@ func (c *Client) Invoke(ctx context.Context, id string, req InvokeRequest) (<-ch
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	c.setAuth(httpReq.Header)
 	resp, err := c.streamHTTP.Do(httpReq)
 	if err != nil {
 		return nil, err

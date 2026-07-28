@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +15,7 @@ import (
 // agentViewModel builds a connected Model on the agent view with one project
 // whose team contains agent "a1", carrying the given pending approvals.
 func agentViewModel(addr string, approvals []client.ApprovalRef) *Model {
-	m := New(context.Background(), addr)
+	m := newTestModel(addr)
 	m.connected = true
 	m.view = viewAgent
 	m.focus = focusDetail

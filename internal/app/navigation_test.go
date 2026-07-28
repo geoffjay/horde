@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -54,7 +53,7 @@ func navTestHandler() http.Handler {
 func connectedNavModel(t *testing.T) (*Model, *httptest.Server) {
 	t.Helper()
 	stub := httptest.NewServer(navTestHandler())
-	m := New(context.Background(), stub.Listener.Addr().String())
+	m := newTestModel(stub.Listener.Addr().String())
 	m.Update(m.loadNode())
 	m.connected = true
 	return m, stub
@@ -67,7 +66,7 @@ func selectProjectChild(m *Model, id string) {
 }
 
 func TestNew_DefaultsToProjectsView(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	assert.Equal(t, viewProjects, m.view)
 	assert.Equal(t, focusSidebar, m.focus)
 	// The sidebar cursor starts on the Projects group header.
@@ -81,7 +80,7 @@ func TestLoadNode_PopulatesProjects(t *testing.T) {
 	stub := httptest.NewServer(navTestHandler())
 	defer stub.Close()
 
-	m := New(context.Background(), stub.Listener.Addr().String())
+	m := newTestModel(stub.Listener.Addr().String())
 	msg := m.loadNode()
 	nm, ok := msg.(nodeInfoMsg)
 	require.True(t, ok)
@@ -173,7 +172,7 @@ func TestDetailCursor_ClampsToProjects(t *testing.T) {
 }
 
 func TestGoCluster_SelectsNodesGroup(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.goCluster()
 	assert.Equal(t, viewCluster, m.view)
 	assert.True(t, m.sidebar.expanded[groupNodes])
@@ -223,7 +222,7 @@ func TestPaletteStillWorks_NavigationKeysAreIgnored(t *testing.T) {
 }
 
 func TestHandleKey_DisconnectedIgnoresNavigation(t *testing.T) {
-	m := New(context.Background(), "127.0.0.1:1")
+	m := newTestModel("127.0.0.1:1")
 	m.connected = false
 	startCursor := m.sidebar.cursor
 
