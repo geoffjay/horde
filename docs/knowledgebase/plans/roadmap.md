@@ -101,9 +101,12 @@ Detailed plan: [Phase 3.5b — Per-user auth](phase-3.5b-auth.md).
 
 Slice 1 (identity plumbing) is complete: opt-in per-user API-token auth,
 `resolvePrincipal` middleware, `GET /users`, `Client.SetAuth`, the TUI Users
-view, and the `X-Horde-User` cross-node echo. No route rejects yet (disabled ⇒
-no-op). Slices 2–5 (ownership + authz, agent mutation gating, AAP tool
-allowlist, docs) remain.
+view, and the `X-Horde-User` cross-node echo. Slice 2 (ownership + project
+authz) is complete: projects record an `Owner`, `authorizeProject` (owner +
+team members) gates project mutations, `requireUser` rejects anonymous
+mutations, and team membership endpoints (`POST/DELETE /projects/{id}/users`)
+are wired with raft-replicated `AddUser`/`RemoveUser` ops. Slices 3–5 (agent
+mutation gating, AAP tool allowlist, docs) remain.
 
 # Phase 3.6 — AAP host (external coding agents) (complete)
 

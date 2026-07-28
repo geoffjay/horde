@@ -62,3 +62,7 @@ coverage.out
 
 # Layer data
 .otter
+
+# Per-project knowledgebase scaffold (generated at runtime into a project's
+# workspace; tests/dev runs with an empty workspace scaffold it into cwd).
+.horde/

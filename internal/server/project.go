@@ -50,8 +50,13 @@ type Project struct {
 	Goal      string       `json:"goal"`
 	State     ProjectState `json:"state"`
 	Team      Team         `json:"team"`
-	CreatedAt time.Time    `json:"created_at"`
-	UpdatedAt time.Time    `json:"updated_at"`
+	// Owner is the id of the user who created the project (3.5b). Empty on
+	// projects created while auth is disabled (backward compatible). The
+	// owner has full control (lifecycle, membership, delete); team members
+	// may view + invoke.
+	Owner     string    `json:"owner,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ErrProjectNotFound is returned when a project id is unknown.
@@ -72,6 +77,11 @@ type ProjectStore interface {
 	UpdateState(id string, state ProjectState) (*Project, error)
 	AssignAgent(id, agentID, agentName string) (*Project, error)
 	RemoveAgent(id, agentID string) (*Project, error)
+	// AddUser adds a user to the project's team (3.5b). Idempotent: a user
+	// already on the team is a no-op. Owner-only via the API.
+	AddUser(id, userID string) (*Project, error)
+	// RemoveUser removes a user from the project's team (3.5b). Idempotent.
+	RemoveUser(id, userID string) (*Project, error)
 	Delete(id string) error
 }
 
@@ -81,6 +91,9 @@ type CreateProjectInput struct {
 	Workspace  string
 	Goal       string
 	AgentNames []string
+	// Owner is the id of the creating user (3.5b). Empty when auth is
+	// disabled; the project is unowned (backward compatible).
+	Owner string
 }
 
 // stateDirPerm is the permission for the state directory containing
@@ -187,6 +200,8 @@ func (ps *memProjectStore) flush() {
 
 // Create creates a new project in the active state with the supplied team of
 // agents. At least one agent name is required (a team is never empty).
+//
+//nolint:gocritic // hugeParam: value type is intentional (deterministic raft replay)
 func (ps *memProjectStore) Create(in CreateProjectInput) (*Project, error) {
 	if err := validateCreateInput(in); err != nil {
 		return nil, err
@@ -199,6 +214,8 @@ func (ps *memProjectStore) Create(in CreateProjectInput) (*Project, error) {
 // validateCreateInput checks the create input independent of the store, so both
 // the direct path and the raft-replicated path fail fast on bad input before
 // mutating (or replicating) anything.
+//
+//nolint:gocritic // hugeParam: value type matches the Create signature
 func validateCreateInput(in CreateProjectInput) error {
 	if in.Name == "" {
 		return errors.New("project name is required")
@@ -216,7 +233,7 @@ func validateCreateInput(in CreateProjectInput) error {
 // always nil today but kept for signature parity with the other *Locked
 // mutators the FSM dispatches uniformly.
 //
-//nolint:unparam // signature parity with the other *Locked mutators
+//nolint:unparam,gocritic // signature parity + hugeParam: value type is intentional
 func (ps *memProjectStore) createLocked(in CreateProjectInput, now time.Time) (*Project, error) {
 	ps.nextID++
 	id := fmt.Sprintf("proj-%d", ps.nextID)
@@ -236,6 +253,7 @@ func (ps *memProjectStore) createLocked(in CreateProjectInput, now time.Time) (*
 		Goal:      in.Goal,
 		State:     ProjectActive,
 		Team:      team,
+		Owner:     in.Owner,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -347,6 +365,60 @@ func (ps *memProjectStore) removeAgentLocked(id, agentID string, now time.Time) 
 	for i, a := range p.Team.Agents {
 		if a.AgentID == agentID {
 			p.Team.Agents = append(p.Team.Agents[:i], p.Team.Agents[i+1:]...)
+			p.UpdatedAt = now
+			ps.flush()
+			break
+		}
+	}
+	cp := *p
+	return &cp, nil
+}
+
+// AddUser adds a user to the project's team (3.5b). Idempotent: a user
+// already on the team is a no-op.
+func (ps *memProjectStore) AddUser(id, userID string) (*Project, error) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return ps.addUserLocked(id, userID, ps.now().UTC())
+}
+
+// addUserLocked is AddUser with an explicit timestamp for deterministic raft
+// replay. The caller must hold ps.mu.
+func (ps *memProjectStore) addUserLocked(id, userID string, now time.Time) (*Project, error) {
+	p, ok := ps.projects[id]
+	if !ok {
+		return nil, ErrProjectNotFound
+	}
+	for _, u := range p.Team.Users {
+		if u.UserID == userID {
+			cp := *p
+			return &cp, nil
+		}
+	}
+	p.Team.Users = append(p.Team.Users, TeamUser{UserID: userID})
+	p.UpdatedAt = now
+	ps.flush()
+	cp := *p
+	return &cp, nil
+}
+
+// RemoveUser removes a user from the project's team (3.5b). Idempotent.
+func (ps *memProjectStore) RemoveUser(id, userID string) (*Project, error) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return ps.removeUserLocked(id, userID, ps.now().UTC())
+}
+
+// removeUserLocked is RemoveUser with an explicit timestamp for deterministic
+// raft replay. The caller must hold ps.mu.
+func (ps *memProjectStore) removeUserLocked(id, userID string, now time.Time) (*Project, error) {
+	p, ok := ps.projects[id]
+	if !ok {
+		return nil, ErrProjectNotFound
+	}
+	for i, u := range p.Team.Users {
+		if u.UserID == userID {
+			p.Team.Users = append(p.Team.Users[:i], p.Team.Users[i+1:]...)
 			p.UpdatedAt = now
 			ps.flush()
 			break

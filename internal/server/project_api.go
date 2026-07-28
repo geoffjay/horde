@@ -12,6 +12,8 @@ import (
 // workspace, the configured default (project.workspace_dir) is used and
 // written onto the project record so that GetProject, KB scaffolding, and
 // agent spawning all agree on the same path.
+//
+//nolint:gocritic // hugeParam: value type matches the ProjectStore interface
 func (s *Server) CreateProject(_ context.Context, in CreateProjectInput) (*Project, error) {
 	// Resolve the default workspace once, before creating the project, so
 	// the project record carries the resolved value.
@@ -197,6 +199,27 @@ func (s *Server) RemoveAgentFromProject(projectID, agentID string) (*Project, er
 	s.mu.Unlock()
 
 	return updated, nil
+}
+
+// AddUserToProject adds a user to the project's team (3.5b). Owner-only via
+// the API; the store itself is idempotent.
+func (s *Server) AddUserToProject(projectID, userID string) (*Project, error) {
+	return s.projects.AddUser(projectID, userID)
+}
+
+// CreateProjectForTest creates a project directly via the store, bypassing the
+// agent-spawn path of CreateProject. Test-only: the API CreateProject spawns
+// agents by name, which requires a built binary; unit tests use this to set
+// up authz fixtures without spawning.
+//
+//nolint:gocritic // hugeParam: test-only helper mirrors CreateProject
+func (s *Server) CreateProjectForTest(in CreateProjectInput) (*Project, error) {
+	return s.projects.Create(in)
+}
+
+// RemoveUserFromProject removes a user from the project's team (3.5b).
+func (s *Server) RemoveUserFromProject(projectID, userID string) (*Project, error) {
+	return s.projects.RemoveUser(projectID, userID)
 }
 
 // AgentActiveProject returns the active project id for the given agent,

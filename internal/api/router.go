@@ -60,19 +60,34 @@ func Router(srv *server.Server) http.Handler {
 		// Users (per-user auth; ids only — never tokens)
 		r.Get("/users", listUsers(srv))
 
-		// Projects
+		// Projects. The master is the source of truth for project state; a
+		// slave with a leader forwards project requests to it
+		// (projectForwardMiddleware).
 		r.Route("/projects", func(r chi.Router) {
-			// On a slave with a leader, forward all project requests to the
-			// master. The master is the source of truth for project state.
-			r.Use(projectForwardMiddleware(srv))
-			r.Post("/", createProject(srv))
-			r.Get("/", listProjects(srv))
-			r.Get("/{id}", getProject(srv))
-			r.Post("/{id}/pause", pauseProject(srv))
-			r.Post("/{id}/resume", resumeProject(srv))
-			r.Post("/{id}/finish", finishProject(srv))
-			r.Post("/{id}/agents", assignAgentToProject(srv))
-			r.Delete("/{id}/agents/{agentID}", removeAgentFromProject(srv))
+			// Reads are open (origin-redacted) and forward-only on a slave.
+			r.Group(func(r chi.Router) {
+				r.Use(projectForwardMiddleware(srv))
+				r.Get("/", listProjects(srv))
+				r.Get("/{id}", getProject(srv))
+			})
+			// Mutations: requireUser gates BEFORE the forward, so a slave
+			// rejects an anonymous mutation at the edge instead of forwarding
+			// it to the master as trusted node traffic (disabled ⇒ no-op).
+			// The master then enforces ownership (authorizeProject),
+			// re-deriving the forwarded user from X-Horde-User.
+			r.Group(func(r chi.Router) {
+				r.Use(requireUser(srv))
+				r.Use(projectForwardMiddleware(srv))
+				r.Post("/", createProject(srv))
+				r.Post("/{id}/pause", pauseProject(srv))
+				r.Post("/{id}/resume", resumeProject(srv))
+				r.Post("/{id}/finish", finishProject(srv))
+				r.Post("/{id}/agents", assignAgentToProject(srv))
+				r.Delete("/{id}/agents/{agentID}", removeAgentFromProject(srv))
+				// Team membership (3.5b): owner-only add/remove user.
+				r.Post("/{id}/users", addProjectUser(srv))
+				r.Delete("/{id}/users/{userID}", removeProjectUser(srv))
+			})
 		})
 	})
 

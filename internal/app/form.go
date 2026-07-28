@@ -213,9 +213,9 @@ func (m *Model) selectedProjectIDForAction() string {
 // actionProjectState returns the state of the project that a lifecycle
 // command would act on, or "" if no project is found.
 func (m *Model) actionProjectState(id string) string {
-	for _, p := range m.projects {
-		if p.ID == id {
-			return p.State
+	for i := range m.projects {
+		if m.projects[i].ID == id {
+			return m.projects[i].State
 		}
 	}
 	return ""

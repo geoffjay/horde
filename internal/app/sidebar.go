@@ -142,12 +142,12 @@ func (m *Model) groupChildren(g groupID) []sidebarRow {
 			rows = append(rows, sidebarRow{kind: rowChild, group: g, id: a.ID, label: a.Name})
 		}
 	case groupTeams:
-		for _, p := range m.projects {
-			rows = append(rows, sidebarRow{kind: rowChild, group: g, id: p.ID, label: p.Name})
+		for i := range m.projects {
+			rows = append(rows, sidebarRow{kind: rowChild, group: g, id: m.projects[i].ID, label: m.projects[i].Name})
 		}
 	case groupProjects:
-		for _, p := range m.projects {
-			rows = append(rows, sidebarRow{kind: rowChild, group: g, id: p.ID, label: p.Name})
+		for i := range m.projects {
+			rows = append(rows, sidebarRow{kind: rowChild, group: g, id: m.projects[i].ID, label: m.projects[i].Name})
 		}
 	case groupUsers:
 		// No children — per-user accounts do not exist yet.

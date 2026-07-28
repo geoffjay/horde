@@ -201,6 +201,36 @@ func TestProjectForwardMiddleware_LeaderErrorReturnsBadGateway(t *testing.T) {
 	assert.Equal(t, http.StatusBadGateway, w2.Code)
 }
 
+// TestSlaveGatesAnonymousBeforeForwarding mirrors the router's mutation
+// middleware order (resolvePrincipal → requireUser → projectForwardMiddleware)
+// and asserts a slave (leader set) rejects an anonymous mutation with 401
+// BEFORE forwarding it to the master, while a resolved user is forwarded.
+func TestSlaveGatesAnonymousBeforeForwarding(t *testing.T) {
+	master := newMasterStub(t)
+	fwd := &fakeForwarder{leaderAddr: master.Listener.Addr().String(), master: master}
+	srv := newAuthServer(t) // auth enabled: alice/tok-a
+
+	// Chain composed exactly as router.go wires project mutations.
+	chain := resolvePrincipal(srv)(requireUser(srv)(projectForwardMiddleware(fwd)(createProject(srv))))
+
+	body, _ := json.Marshal(createProjectRequest{Name: "x", AgentNames: []string{"greeter"}})
+
+	// Anonymous → 401 from requireUser; the forward never runs.
+	anon := httptest.NewRequest(http.MethodPost, "/api/v1/projects/", bytes.NewReader(body))
+	anon.Header.Set("Content-Type", "application/json")
+	wAnon := httptest.NewRecorder()
+	chain.ServeHTTP(wAnon, anon)
+	assert.Equal(t, http.StatusUnauthorized, wAnon.Code, "slave rejects anonymous before forwarding")
+
+	// Resolved user → forwarded to the master stub (201).
+	user := httptest.NewRequest(http.MethodPost, "/api/v1/projects/", bytes.NewReader(body))
+	user.Header.Set("Content-Type", "application/json")
+	user.Header.Set("Authorization", "Bearer tok-a")
+	wUser := httptest.NewRecorder()
+	chain.ServeHTTP(wUser, user)
+	assert.Equal(t, http.StatusCreated, wUser.Code, "resolved user is forwarded to the master")
+}
+
 func TestServer_LeaderAddr_MasterMode(t *testing.T) {
 	srv, err := server.New(server.Config{SpawnDefaultAgent: false})
 	require.NoError(t, err)

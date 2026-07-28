@@ -96,8 +96,8 @@ func (m *Model) detailEnter() (tea.Model, tea.Cmd) {
 // selectedProjectID.
 func (m *Model) selectedProjectIndex() int {
 	if m.selectedProjectID != "" {
-		for i, p := range m.projects {
-			if p.ID == m.selectedProjectID {
+		for i := range m.projects {
+			if m.projects[i].ID == m.selectedProjectID {
 				return i
 			}
 		}

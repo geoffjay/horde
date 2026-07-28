@@ -31,9 +31,15 @@ type teamAgentDTO struct {
 	AssignedAt string `json:"assigned_at"`
 }
 
+// teamUserDTO is the JSON shape for a team user member (3.5b).
+type teamUserDTO struct {
+	UserID string `json:"user_id"`
+}
+
 // teamDTO is the JSON shape for a team.
 type teamDTO struct {
 	Agents []teamAgentDTO `json:"agents"`
+	Users  []teamUserDTO  `json:"users,omitempty"`
 }
 
 // projectDTO is the JSON shape for a project in API responses.
@@ -44,6 +50,7 @@ type projectDTO struct {
 	Goal      string  `json:"goal"`
 	State     string  `json:"state"`
 	Team      teamDTO `json:"team"`
+	Owner     string  `json:"owner,omitempty"`
 }
 
 // assignAgentRequest is the body of POST /api/v1/projects/{id}/agents. Exactly
@@ -63,18 +70,23 @@ func toProjectDTO(p *server.Project) projectDTO {
 			AssignedAt: a.AssignedAt.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
+	users := make([]teamUserDTO, 0, len(p.Team.Users))
+	for _, u := range p.Team.Users {
+		users = append(users, teamUserDTO{UserID: u.UserID})
+	}
 	return projectDTO{
 		ID:        p.ID,
 		Name:      p.Name,
 		Workspace: p.Workspace,
 		Goal:      p.Goal,
 		State:     string(p.State),
-		Team:      teamDTO{Agents: agents},
+		Team:      teamDTO{Agents: agents, Users: users},
+		Owner:     p.Owner,
 	}
 }
 
 // createProject creates a new project with a team of agents.
-func createProject(srv projectView) http.HandlerFunc {
+func createProject(srv projectAuthView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createProjectRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -90,11 +102,17 @@ func createProject(srv projectView) http.HandlerFunc {
 			return
 		}
 
+		// Attribute the project to the resolved user (empty when auth is
+		// disabled — backward compatible). On a forwarded slave request the
+		// X-Horde-User header supplies the originating user's id.
+		owner := resolveOwnerForCreate(srv, r)
+
 		p, err := srv.CreateProject(r.Context(), server.CreateProjectInput{
 			Name:       req.Name,
 			Workspace:  req.Workspace,
 			Goal:       req.Goal,
 			AgentNames: req.AgentNames,
+			Owner:      owner,
 		})
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
@@ -135,9 +153,13 @@ func getProject(srv projectView) http.HandlerFunc {
 }
 
 // pauseProject transitions a project to the paused state.
-func pauseProject(srv projectView) http.HandlerFunc {
+func pauseProject(srv projectAuthView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
+		if _, err := authorizeProject(srv, r, id, levelOwn); err != nil {
+			writeAuthzError(w, err)
+			return
+		}
 		p, err := srv.PauseProject(id)
 		if err != nil {
 			if errors.Is(err, server.ErrProjectNotFound) {
@@ -152,9 +174,13 @@ func pauseProject(srv projectView) http.HandlerFunc {
 }
 
 // resumeProject transitions a project back to active.
-func resumeProject(srv projectView) http.HandlerFunc {
+func resumeProject(srv projectAuthView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
+		if _, err := authorizeProject(srv, r, id, levelOwn); err != nil {
+			writeAuthzError(w, err)
+			return
+		}
 		p, err := srv.ResumeProject(id)
 		if err != nil {
 			if errors.Is(err, server.ErrProjectNotFound) {
@@ -169,9 +195,13 @@ func resumeProject(srv projectView) http.HandlerFunc {
 }
 
 // finishProject transitions a project to finished.
-func finishProject(srv projectView) http.HandlerFunc {
+func finishProject(srv projectAuthView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
+		if _, err := authorizeProject(srv, r, id, levelOwn); err != nil {
+			writeAuthzError(w, err)
+			return
+		}
 		p, err := srv.FinishProject(id)
 		if err != nil {
 			if errors.Is(err, server.ErrProjectNotFound) {
@@ -186,9 +216,13 @@ func finishProject(srv projectView) http.HandlerFunc {
 }
 
 // assignAgentToProject assigns an agent to a project's team.
-func assignAgentToProject(srv projectView) http.HandlerFunc {
+func assignAgentToProject(srv projectAuthView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
+		if _, err := authorizeProject(srv, r, id, levelOwn); err != nil {
+			writeAuthzError(w, err)
+			return
+		}
 		var req assignAgentRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: errInvalidBody})
@@ -222,11 +256,72 @@ func assignAgentToProject(srv projectView) http.HandlerFunc {
 }
 
 // removeAgentFromProject removes an agent from a project's team.
-func removeAgentFromProject(srv projectView) http.HandlerFunc {
+func removeAgentFromProject(srv projectAuthView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "id")
 		agentID := chi.URLParam(r, "agentID")
+		if _, err := authorizeProject(srv, r, projectID, levelOwn); err != nil {
+			writeAuthzError(w, err)
+			return
+		}
 		_, err := srv.RemoveAgentFromProject(projectID, agentID)
+		if err != nil {
+			if errors.Is(err, server.ErrProjectNotFound) {
+				writeJSON(w, http.StatusNotFound, errorResponse{Error: errProjectNotFound})
+				return
+			}
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// addProjectUserRequest is the body of POST /api/v1/projects/{id}/users.
+type addProjectUserRequest struct {
+	UserID string `json:"user_id"`
+}
+
+// addProjectUser adds a user to a project's team (3.5b). Owner-only.
+func addProjectUser(srv projectAuthView) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		projectID := chi.URLParam(r, "id")
+		if _, err := authorizeProject(srv, r, projectID, levelOwn); err != nil {
+			writeAuthzError(w, err)
+			return
+		}
+		var req addProjectUserRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: errInvalidBody})
+			return
+		}
+		if req.UserID == "" {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "user_id is required"})
+			return
+		}
+		p, err := srv.AddUserToProject(projectID, req.UserID)
+		if err != nil {
+			if errors.Is(err, server.ErrProjectNotFound) {
+				writeJSON(w, http.StatusNotFound, errorResponse{Error: errProjectNotFound})
+				return
+			}
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, toProjectDTO(p))
+	}
+}
+
+// removeProjectUser removes a user from a project's team (3.5b). Owner-only.
+func removeProjectUser(srv projectAuthView) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		projectID := chi.URLParam(r, "id")
+		userID := chi.URLParam(r, "userID")
+		if _, err := authorizeProject(srv, r, projectID, levelOwn); err != nil {
+			writeAuthzError(w, err)
+			return
+		}
+		_, err := srv.RemoveUserFromProject(projectID, userID)
 		if err != nil {
 			if errors.Is(err, server.ErrProjectNotFound) {
 				writeJSON(w, http.StatusNotFound, errorResponse{Error: errProjectNotFound})

@@ -19,7 +19,8 @@ func (m *Model) renderProjectsView() string {
 		return m.paint(lipgloss.NewStyle().Faint(true).Render, "  (no projects)\n")
 	}
 	var b strings.Builder
-	for i, p := range m.projects {
+	for i := range m.projects {
+		p := &m.projects[i]
 		dot := stateDot(p.State)
 		line := fmt.Sprintf("  %s  %-20s %-10s %-9s  %s", dot, p.Name, p.State, agentCountLabel(len(p.Team.Agents)), p.Goal)
 		if i == m.cursor && m.focus == focusDetail {
@@ -482,8 +483,8 @@ type lipglossStyle = lipgloss.Style
 // mockup format: "4 agents · 1 idle · 2 busy · 1 blocked".
 func (m *Model) activityRollup() string {
 	totalAgents := 0
-	for _, p := range m.projects {
-		totalAgents += len(p.Team.Agents)
+	for i := range m.projects {
+		totalAgents += len(m.projects[i].Team.Agents)
 	}
 	if totalAgents == 0 {
 		return "0 agents"

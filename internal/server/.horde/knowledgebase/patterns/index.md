@@ -1,3 +1,0 @@
-# Patterns
-
-Records of Patterns.

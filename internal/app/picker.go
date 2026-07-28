@@ -59,7 +59,8 @@ func (m *Model) closePicker() {
 // its detail view via the sidebar (the palette's "Switch Project" command).
 func (m *Model) openSwitchProjectPicker() {
 	items := make([]pickerItem, 0, len(m.projects))
-	for _, p := range m.projects {
+	for i := range m.projects {
+		p := &m.projects[i]
 		items = append(items, pickerItem{id: p.ID, label: p.Name, right: p.State, dot: stateDot(p.State)})
 	}
 	m.openPicker("Select Project", items, func(m *Model, it pickerItem) tea.Cmd {
@@ -71,7 +72,8 @@ func (m *Model) openSwitchProjectPicker() {
 // attaches the given agent to it (the Agents-view assign action).
 func (m *Model) openAssignProjectPicker(agentID string) {
 	var items []pickerItem
-	for _, p := range m.projects {
+	for i := range m.projects {
+		p := &m.projects[i]
 		if p.State != stateActive {
 			continue
 		}

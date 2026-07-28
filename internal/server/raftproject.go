@@ -14,6 +14,8 @@ const (
 	opUpdateState projectOp = "update_state"
 	opAssignAgent projectOp = "assign_agent"
 	opRemoveAgent projectOp = "remove_agent"
+	opAddUser     projectOp = "add_user"
+	opRemoveUser  projectOp = "remove_user"
 	opDelete      projectOp = "delete"
 )
 
@@ -27,11 +29,13 @@ type projectCommand struct {
 	Name      string       `json:"name,omitempty"`
 	Workspace string       `json:"workspace,omitempty"`
 	Goal      string       `json:"goal,omitempty"`
+	Owner     string       `json:"owner,omitempty"`
 	Agents    []string     `json:"agents,omitempty"`
 	ID        string       `json:"id,omitempty"`
 	State     ProjectState `json:"state,omitempty"`
 	AgentID   string       `json:"agent_id,omitempty"`
 	AgentName string       `json:"agent_name,omitempty"`
+	UserID    string       `json:"user_id,omitempty"`
 }
 
 // raftApply replicates a command through the raft log and returns the FSM
@@ -70,6 +74,7 @@ func (rs *raftProjectStore) List(stateFilter ProjectState) []Project {
 	return rs.mem.List(stateFilter)
 }
 
+//nolint:gocritic // hugeParam: value type mirrors memProjectStore.Create
 func (rs *raftProjectStore) Create(in CreateProjectInput) (*Project, error) {
 	if err := validateCreateInput(in); err != nil {
 		return nil, err
@@ -80,6 +85,7 @@ func (rs *raftProjectStore) Create(in CreateProjectInput) (*Project, error) {
 		Name:      in.Name,
 		Workspace: in.Workspace,
 		Goal:      in.Goal,
+		Owner:     in.Owner,
 		Agents:    in.AgentNames,
 	})
 }
@@ -96,6 +102,14 @@ func (rs *raftProjectStore) AssignAgent(id, agentID, agentName string) (*Project
 
 func (rs *raftProjectStore) RemoveAgent(id, agentID string) (*Project, error) {
 	return rs.applyProject(&projectCommand{Op: opRemoveAgent, Now: time.Now().UTC(), ID: id, AgentID: agentID})
+}
+
+func (rs *raftProjectStore) AddUser(id, userID string) (*Project, error) {
+	return rs.applyProject(&projectCommand{Op: opAddUser, Now: time.Now().UTC(), ID: id, UserID: userID})
+}
+
+func (rs *raftProjectStore) RemoveUser(id, userID string) (*Project, error) {
+	return rs.applyProject(&projectCommand{Op: opRemoveUser, Now: time.Now().UTC(), ID: id, UserID: userID})
 }
 
 func (rs *raftProjectStore) Delete(id string) error {
@@ -143,7 +157,8 @@ func (rs *raftProjectStore) applyCommand(data []byte) (any, error) {
 	switch cmd.Op {
 	case opCreate:
 		return rs.mem.createLocked(CreateProjectInput{
-			Name: cmd.Name, Workspace: cmd.Workspace, Goal: cmd.Goal, AgentNames: cmd.Agents,
+			Name: cmd.Name, Workspace: cmd.Workspace, Goal: cmd.Goal,
+			Owner: cmd.Owner, AgentNames: cmd.Agents,
 		}, cmd.Now)
 	case opUpdateState:
 		return rs.mem.updateStateLocked(cmd.ID, cmd.State, cmd.Now)
@@ -151,6 +166,10 @@ func (rs *raftProjectStore) applyCommand(data []byte) (any, error) {
 		return rs.mem.assignAgentLocked(cmd.ID, cmd.AgentID, cmd.AgentName, cmd.Now)
 	case opRemoveAgent:
 		return rs.mem.removeAgentLocked(cmd.ID, cmd.AgentID, cmd.Now)
+	case opAddUser:
+		return rs.mem.addUserLocked(cmd.ID, cmd.UserID, cmd.Now)
+	case opRemoveUser:
+		return rs.mem.removeUserLocked(cmd.ID, cmd.UserID, cmd.Now)
 	case opDelete:
 		return nil, rs.mem.deleteLocked(cmd.ID)
 	default:

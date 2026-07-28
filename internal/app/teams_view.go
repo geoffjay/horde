@@ -15,7 +15,8 @@ func (m *Model) renderTeamsView() string {
 		return m.paint(lipgloss.NewStyle().Faint(true).Render, "  (no teams — teams are defined per project)\n")
 	}
 	var b strings.Builder
-	for i, p := range m.projects {
+	for i := range m.projects {
+		p := &m.projects[i]
 		line := fmt.Sprintf("  %-20s %s", p.Name, agentCountLabel(len(p.Team.Agents)))
 		if i == m.cursor && m.focus == focusDetail {
 			line = selStyle().Render(line)

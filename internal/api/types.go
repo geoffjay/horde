@@ -75,8 +75,19 @@ type projectView interface {
 	AssignAgent(ctx context.Context, projectID, agentName string) (*server.Project, error)
 	AttachAgent(projectID, agentID string) (*server.Project, error)
 	RemoveAgentFromProject(projectID, agentID string) (*server.Project, error)
+	AddUserToProject(projectID, userID string) (*server.Project, error)
+	RemoveUserFromProject(projectID, userID string) (*server.Project, error)
 	AgentActiveProject(agentID string) string
 	SessionKey(agentID string) string
+}
+
+// projectAuthView is the subset project mutation handlers need to resolve the
+// principal and authorize against the project's owner/team. It composes
+// projectView (for the project lookups + mutations) with authView (for the
+// auth-enabled state). *server.Server satisfies both.
+type projectAuthView interface {
+	projectView
+	authView
 }
 
 // projectForwarder is the subset of *server.Server needed to proxy project

@@ -1136,6 +1136,10 @@ func (s *Server) NodeID() string { return s.cfg.NodeID }
 // calls, or empty when cluster request auth is disabled.
 func (s *Server) ClusterAuthToken() string { return s.cfg.AuthToken }
 
+// SetClusterAuthTokenForTest sets the cluster auth token after construction
+// (tests only; production config comes via Config at New).
+func (s *Server) SetClusterAuthTokenForTest(token string) { s.cfg.AuthToken = token }
+
 // AuthEnabled reports whether per-user API-token auth is enabled. Auth is
 // opt-in: no configured users ⇒ auth disabled, the API stays unauthenticated.
 func (s *Server) AuthEnabled() bool { return len(s.cfg.Users) > 0 }

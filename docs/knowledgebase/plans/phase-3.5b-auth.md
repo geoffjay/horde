@@ -6,10 +6,9 @@ tags: [plan, auth, users, projects, teams, permissions, phase-3.5b, security]
 timestamp: 2026-07-22T00:00:00Z
 ---
 
-> **Status: in progress — slice 1 landed.** Identity plumbing (config, registry,
-> resolvePrincipal, X-Horde-User echo, GET /users, Client.SetAuth, TUI users
-> view) is implemented; no route rejects yet (disabled ⇒ no-op). Slices 2–5
-> remain. This plan completes the deferred half of the
+> **Status: in progress — slices 1–2 landed.** Identity plumbing (slice 1) +
+> ownership + project authz (slice 2) are implemented. Slices 3–5 remain.
+> This plan completes the deferred half of the
 > [project, team, and user model](../decisions/project-team-user-model.md) (the
 > "3.5b" split) and lights up the TUI Users group (previously a placeholder in
 > the [sidebar navigation](../patterns/tui-sidebar-navigation.md)).
@@ -173,7 +172,7 @@ scope on the session:
    TUI users view + token flag. No route rejects yet (disabled ⇒ no-op).
    **Done.**
 2. **Ownership + project authz** — thread `Owner`, membership endpoints + store
-   ops, `requireUser` + `authorizeProject` on project mutations.
+   ops, `requireUser` + `authorizeProject` on project mutations. **Done.**
 3. **Agent mutation gating** — `requireUser` on `POST /agents`, `DELETE
    /agents/{id}`, invoke, approvals.
 4. **Tool allowlist + advisory scope** — thread `userScope` to the AAP session,

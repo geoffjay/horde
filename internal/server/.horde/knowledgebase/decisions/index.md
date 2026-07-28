@@ -1,3 +1,0 @@
-# Decisions
-
-Records of Decisions.

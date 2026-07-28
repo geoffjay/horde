@@ -1,3 +1,0 @@
-# Concepts
-
-Records of Concepts.

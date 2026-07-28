@@ -16,11 +16,17 @@ type Project struct {
 	Goal      string      `json:"goal"`
 	State     string      `json:"state"`
 	Team      ProjectTeam `json:"team"`
+	// Owner is the id of the user who created the project (3.5b). Empty
+	// when auth is disabled.
+	Owner string `json:"owner,omitempty"`
 }
 
 // ProjectTeam is the team assigned to a project.
 type ProjectTeam struct {
 	Agents []TeamAgent `json:"agents"`
+	// Users are the user members of the team (3.5b). Empty when auth is
+	// disabled or the owner hasn't added any.
+	Users []TeamUser `json:"users,omitempty"`
 }
 
 // TeamAgent is one agent member of a project team.
@@ -28,6 +34,11 @@ type TeamAgent struct {
 	AgentID    string `json:"agent_id"`
 	Name       string `json:"name"`
 	AssignedAt string `json:"assigned_at"`
+}
+
+// TeamUser is one user member of a project team (3.5b).
+type TeamUser struct {
+	UserID string `json:"user_id"`
 }
 
 // CreateProjectRequest is the body for POST /api/v1/projects.
@@ -116,6 +127,29 @@ func (c *Client) RemoveAgent(ctx context.Context, projectID, agentID string) err
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("remove agent: %s", resp.Status)
+	}
+	return nil
+}
+
+// AddUser adds a user to a project's team (3.5b). Owner-only on the server.
+func (c *Client) AddUser(ctx context.Context, projectID, userID string) (Project, error) {
+	body, _ := json.Marshal(map[string]string{"user_id": userID})
+	var p Project
+	if err := c.postJSON(ctx, "/api/v1/projects/"+projectID+"/users", body, &p); err != nil {
+		return p, err
+	}
+	return p, nil
+}
+
+// RemoveUser removes a user from a project's team (3.5b). Owner-only.
+func (c *Client) RemoveUser(ctx context.Context, projectID, userID string) error {
+	resp, err := c.send(ctx, http.MethodDelete, "/api/v1/projects/"+projectID+"/users/"+userID, "", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("remove user: %s", resp.Status)
 	}
 	return nil
 }

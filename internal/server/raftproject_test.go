@@ -30,11 +30,12 @@ func TestRaftProjectStore_CRUDThroughLog(t *testing.T) {
 	rs := newRaftProjectStore()
 	wireLocalApply(rs)
 
-	// Create → deterministic id, active, team from names.
-	p, err := rs.Create(CreateProjectInput{Name: "alpha", Goal: "ship", AgentNames: []string{"greeter"}})
+	// Create → deterministic id, active, team from names, owner threaded.
+	p, err := rs.Create(CreateProjectInput{Name: "alpha", Goal: "ship", AgentNames: []string{"greeter"}, Owner: "alice"})
 	require.NoError(t, err)
 	assert.Equal(t, "proj-1", p.ID)
 	assert.Equal(t, ProjectActive, p.State)
+	assert.Equal(t, "alice", p.Owner)
 	require.Len(t, p.Team.Agents, 1)
 	assert.Equal(t, "greeter", p.Team.Agents[0].Name)
 
@@ -63,6 +64,20 @@ func TestRaftProjectStore_CRUDThroughLog(t *testing.T) {
 	rm, err := rs.RemoveAgent("proj-1", "a1")
 	require.NoError(t, err)
 	assert.Len(t, rm.Team.Agents, 1)
+
+	// AddUser / RemoveUser through the log (3.5b).
+	addU, err := rs.AddUser("proj-1", "bob")
+	require.NoError(t, err)
+	require.Len(t, addU.Team.Users, 1)
+	assert.Equal(t, "bob", addU.Team.Users[0].UserID)
+	// Idempotent.
+	addU, err = rs.AddUser("proj-1", "bob")
+	require.NoError(t, err)
+	assert.Len(t, addU.Team.Users, 1)
+	// Remove.
+	remU, err := rs.RemoveUser("proj-1", "bob")
+	require.NoError(t, err)
+	assert.Empty(t, remU.Team.Users)
 
 	// Delete.
 	require.NoError(t, rs.Delete("proj-2"))
