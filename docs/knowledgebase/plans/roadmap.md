@@ -231,3 +231,36 @@ elected leader comes up current. Default (static-master) behaviour is unchanged.
 **Phase 5 complete.** All four slices have landed; automatic raft leader failover
 is available as an opt-in mode. Requirements background: the
 [cluster leader failover](../concepts/cluster-failover.md) concept doc.
+
+# Phase 6 — Knowledgebase sync (the distributed shared brain) (planned)
+
+Detailed plan: [Phase 6 — Knowledgebase sync](phase-6-knowledgebase-sync.md).
+Spec: [Knowledgebase Sync Protocol v1](/docs/spec/knowledgebase-sync-protocol-v1.md).
+
+horde's central differentiator: every project has a per-project OKF
+knowledgebase, and this phase makes it a **live, cluster-synchronized shared
+brain** rather than a purely local tree. Today `scaffoldKnowledgebase`
+(`internal/server/knowledgebase.go`) seeds a local `.horde/knowledgebase/` per
+project, but nothing watches or replicates its *files*; the cluster replicates
+only project/team metadata + AAP resume tokens (raft), never file content. The
+[persistence-and-knowledgebase decision](../decisions/persistence-and-knowledgebase.md)
+§4 named KB sync "the hardest problem" and deferred it — this phase builds it.
+
+* Opt-in `kb.sync` config; disabled ⇒ byte-for-byte current (local, git-backed)
+  behavior.
+* Leader-authoritative, file-based, last-writer-wins by server-assigned version
+  (timestamp only a tiebreak, so clock skew can't reorder history). File content
+  travels over new project-scoped HTTP endpoints — never the raft log.
+* Slices: (1) local fsnotify watch + KB read API; (2) push to leader + canonical
+  store; (3) fan-out via the event bus + pull (with loop-suppression, the
+  correctness gate); (4) join/rejoin manifest reconciliation; (5) conflicts +
+  tombstone deletes + hardening; (6) docs/KB. Optional later, tied to Phase 5:
+  replicate the KB manifest (not bytes) through the raft log for instant
+  post-failover authority.
+* Reuses the leader-forward pattern (`ForwardProjectRequest`), the `EventBus`
+  cluster fan-out (`forwardEvents`), and the `X-Horde-User` echo-trust seam for
+  change attribution.
+
+Not blocked by (and does not block) mTLS or OS-level sandboxing; it does unblock
+external agents *participating in* a shared knowledgebase, which is why it comes
+before deepening the external-agent path.
