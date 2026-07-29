@@ -51,7 +51,7 @@ func scanManifest(root string, policy KBScopePolicy, authority string, scope KBS
 	var entries []KBEntry
 	maxSize := policy.MaxFileSize
 	if maxSize == 0 {
-		maxSize = defaultKBMaxFileSize
+		maxSize = DefaultKBMaxFileSize
 	}
 
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {

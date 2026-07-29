@@ -6,7 +6,7 @@ tags: [plan, knowledgebase, sync, distributed, cluster, projects]
 timestamp: 2026-07-28T00:00:00Z
 ---
 
-> **Status: stage 1, slices 1–3 landed.** Roadmap phase 6. This builds
+> **Status: stage 1 complete (slices 1–4).** Roadmap phase 6. This builds
 > horde's central differentiator — the per-project knowledgebase as a
 > *cluster-shared* brain — which the
 > [persistence-and-knowledgebase decision](../decisions/persistence-and-knowledgebase.md)
@@ -195,7 +195,7 @@ have to be migrated later.
    preserved to the conflict area rather than overwritten (KSP §5.2). Verify a
    fetched manifest's scope matches the one requested. Serves local reads labeled
    `X-KSP-Authority: participant`. **The KB is now shared across hosts.**
-4. **CAS writes.** `PUT`/`DELETE /api/v1/kb/{kind}/{id}/file` with mandatory
+4. **CAS writes.** ✅ `PUT`/`DELETE /api/v1/kb/{kind}/{id}/file` with mandatory
    `If-Match`/`If-None-Match: *`, per-path serialization on the authority,
    temp+rename, digest verification; participant-node writes forward to the
    authority and return `412` verbatim. Every node is a write entry point.

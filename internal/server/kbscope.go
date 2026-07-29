@@ -38,9 +38,9 @@ const (
 	kbScopeKindProject = "project"
 )
 
-// defaultKBMaxFileSize is the default per-file size cap (1 MiB) when the
+// DefaultKBMaxFileSize is the default per-file size cap (1 MiB) when the
 // config does not set one.
-const defaultKBMaxFileSize = 1048576
+const DefaultKBMaxFileSize = 1048576
 
 // KBScopePolicy is the authority's size and ignore policy, published on the
 // manifest (KSP §2.5) so a node can detect a mismatched local config.
@@ -111,6 +111,13 @@ type ScopeResolver interface {
 	// InvalidateCache forces the next manifest scan to re-read the tree for
 	// the given scope id.
 	InvalidateCache(id string)
+	// WriteFile writes a file to the canonical tree (authority only) via
+	// temp+rename, returning the new digest. Per-path serialization is the
+	// caller's responsibility.
+	WriteFile(id, relPath string, data []byte) (digest string, err error)
+	// DeleteFile removes a file from the canonical tree (authority only).
+	// Returns ErrKBFileNotFound if the path doesn't exist.
+	DeleteFile(id, relPath string) error
 }
 
 // projectScope implements ScopeResolver for the project kind. The authority is
@@ -278,6 +285,57 @@ func (ps *projectScope) InvalidateCache(id string) {
 		return
 	}
 	ps.srv.kbManifestCache.invalidate(root)
+}
+
+// WriteFile writes a file to the canonical tree via temp+rename (KSP §4.3:
+// the authority MUST write via temp-file + rename). Only meaningful on the
+// authority; a participant forwards writes instead. Per-path serialization
+// is the caller's responsibility (kbWriteMutex).
+func (ps *projectScope) WriteFile(id, relPath string, data []byte) (string, error) {
+	if !ps.IsAuthority(id) {
+		return "", ErrKBForbidden
+	}
+	root, err := ps.AuthorityTree(id)
+	if err != nil {
+		return "", err
+	}
+	cleaned, err := kbValidatePath(relPath)
+	if err != nil {
+		return "", err
+	}
+	full := filepath.Join(root, cleaned)
+	if err := atomicWriteFile(full, data); err != nil {
+		return "", err
+	}
+	digest, err := hashFile(full)
+	if err != nil {
+		return "", err
+	}
+	return digest, nil
+}
+
+// DeleteFile removes a file from the canonical tree (KSP §4.4). Returns
+// ErrKBFileNotFound if the path doesn't exist. Only meaningful on the authority.
+func (ps *projectScope) DeleteFile(id, relPath string) error {
+	if !ps.IsAuthority(id) {
+		return ErrKBForbidden
+	}
+	root, err := ps.AuthorityTree(id)
+	if err != nil {
+		return err
+	}
+	cleaned, err := kbValidatePath(relPath)
+	if err != nil {
+		return err
+	}
+	full := filepath.Join(root, cleaned)
+	if err := os.Remove(full); err != nil {
+		if os.IsNotExist(err) {
+			return ErrKBFileNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 // servingTree returns the tree path this node serves reads from for the given

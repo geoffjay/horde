@@ -163,11 +163,15 @@ type eventView interface {
 }
 
 // kbView is the subset of *server.Server the KB handlers need: the sync-enabled
-// flag, the scope resolver, and the node id for the authority label.
+// flag, the scope resolver, the node id for the authority label, and write
+// forwarding for participants (PUT/DELETE forward to the authority with CAS
+// headers preserved — KSP §4.3, §4.4).
 type kbView interface {
 	KBSyncEnabled() bool
 	KBResolveScope(kind string) server.ScopeResolver
 	NodeID() string
+	LeaderAddr() string
+	ForwardKBRequest(ctx context.Context, method, path string, body []byte, headers http.Header, forwardedUser string) (int, http.Header, []byte, error)
 }
 
 // compile-time: *server.Server satisfies the handler interfaces.

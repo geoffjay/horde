@@ -24,7 +24,7 @@ func TestKBWatcher_RealEditInvalidatesCache(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(kbRoot, "index.md"), []byte("# Original\n"), 0o644))
 
 	cache := newKBManifestCache()
-	policy := KBScopePolicy{MaxFileSize: defaultKBMaxFileSize, Ignore: kbIgnoreGlobs()}
+	policy := KBScopePolicy{MaxFileSize: DefaultKBMaxFileSize, Ignore: kbIgnoreGlobs()}
 	scope := KBScopeRef{Kind: "project", ID: "p-test"}
 
 	// Initial scan — populates the cache.
@@ -80,7 +80,7 @@ func TestKBWatcher_NewFileAppearsInManifest(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(kbRoot, "index.md"), []byte("# Index\n"), 0o644))
 
 	cache := newKBManifestCache()
-	policy := KBScopePolicy{MaxFileSize: defaultKBMaxFileSize, Ignore: kbIgnoreGlobs()}
+	policy := KBScopePolicy{MaxFileSize: DefaultKBMaxFileSize, Ignore: kbIgnoreGlobs()}
 	scope := KBScopeRef{Kind: "project", ID: "p-test"}
 
 	manifest1, err := cache.cachedScan(kbRoot, policy, "node-a", scope)
@@ -128,7 +128,7 @@ func TestKBWatcher_EditorWriteTempRename(t *testing.T) {
 	require.NoError(t, os.WriteFile(target, []byte("# Original\n"), 0o644))
 
 	cache := newKBManifestCache()
-	policy := KBScopePolicy{MaxFileSize: defaultKBMaxFileSize, Ignore: kbIgnoreGlobs()}
+	policy := KBScopePolicy{MaxFileSize: DefaultKBMaxFileSize, Ignore: kbIgnoreGlobs()}
 	scope := KBScopeRef{Kind: "project", ID: "p-test"}
 
 	manifest1, err := cache.cachedScan(kbRoot, policy, "node-a", scope)
@@ -183,7 +183,7 @@ func TestKBWatcher_FileDeletionInvalidatesCache(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(kbRoot, "extra.md"), []byte("# Extra\n"), 0o644))
 
 	cache := newKBManifestCache()
-	policy := KBScopePolicy{MaxFileSize: defaultKBMaxFileSize, Ignore: kbIgnoreGlobs()}
+	policy := KBScopePolicy{MaxFileSize: DefaultKBMaxFileSize, Ignore: kbIgnoreGlobs()}
 	scope := KBScopeRef{Kind: "project", ID: "p-test"}
 
 	manifest1, err := cache.cachedScan(kbRoot, policy, "node-a", scope)
@@ -231,7 +231,7 @@ func TestKBWatcher_NewSubdirWatched(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(kbRoot, "index.md"), []byte("# Index\n"), 0o644))
 
 	cache := newKBManifestCache()
-	policy := KBScopePolicy{MaxFileSize: defaultKBMaxFileSize, Ignore: kbIgnoreGlobs()}
+	policy := KBScopePolicy{MaxFileSize: DefaultKBMaxFileSize, Ignore: kbIgnoreGlobs()}
 	scope := KBScopeRef{Kind: "project", ID: "p-test"}
 
 	manifest1, err := cache.cachedScan(kbRoot, policy, "node-a", scope)
@@ -287,7 +287,7 @@ func TestKBWatcher_RemoveTreeStopsWatching(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(kbRoot, "index.md"), []byte("# Index\n"), 0o644))
 
 	cache := newKBManifestCache()
-	policy := KBScopePolicy{MaxFileSize: defaultKBMaxFileSize, Ignore: kbIgnoreGlobs()}
+	policy := KBScopePolicy{MaxFileSize: DefaultKBMaxFileSize, Ignore: kbIgnoreGlobs()}
 	scope := KBScopeRef{Kind: "project", ID: "p-test"}
 
 	manifest1, err := cache.cachedScan(kbRoot, policy, "node-a", scope)

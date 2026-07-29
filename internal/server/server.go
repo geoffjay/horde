@@ -17,6 +17,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -303,6 +304,10 @@ type Server struct {
 	// kbConflict is the node-local conflict area for preserving dirty local
 	// files before convergence overwrites them (KSP §6.1). nil when disabled.
 	kbConflict *kbConflictArea
+	// kbWriteMutex serializes concurrent writes per path on the authority
+	// (KSP §4.3). Keyed by "<kind>/<id>/<path>".
+	kbWriteMu    sync.Mutex // guards kbWriteLocks map
+	kbWriteLocks map[string]*sync.Mutex
 
 	// now returns the current time. A field so tests can inject a clock when
 	// exercising slave staleness; defaults to time.Now.
@@ -487,6 +492,7 @@ func (s *Server) setupKBSync(cfg Config) { //nolint:gocritic // hugeParam: match
 	s.kbManifestCache = newKBManifestCache()
 	s.kbSyncMgr = newKBSyncStoreManager(cfg.StateDir)
 	s.kbConflict = newKBConflictArea(cfg.DataDir)
+	s.kbWriteLocks = make(map[string]*sync.Mutex)
 }
 
 // raftApply replicates a command through this node's raft log and returns the
@@ -1200,6 +1206,50 @@ func (s *Server) ForwardProjectRequest(ctx context.Context, method, path string,
 	return s.leader.forwardRequest(ctx, method, path, body, forwardedUser)
 }
 
+// ForwardKBRequest forwards a KB API request (PUT/DELETE) to the authority node,
+// carrying the CAS headers (If-Match, If-None-Match, Content-Digest) and the
+// body content-type. Unlike ForwardProjectRequest (which hardcodes
+// Content-Type: application/json), this passes through the original headers so
+// CAS semantics are preserved across the forward (KSP §4.3, §4.4).
+//
+//nolint:gocritic // unnamedResult: result types are clear from context
+func (s *Server) ForwardKBRequest(ctx context.Context, method, path string, body []byte, headers http.Header, forwardedUser string) (int, http.Header, []byte, error) {
+	if s.leader == nil {
+		return 0, nil, nil, fmt.Errorf("no leader configured")
+	}
+	leader, err := s.leader.resolve(ctx)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("resolve leader: %w", err)
+	}
+	url := fmt.Sprintf("http://%s%s", leader, path)
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	// Copy CAS and content headers from the original request.
+	for _, h := range []string{"If-Match", "If-None-Match", "Content-Digest", "Content-Type"} {
+		if v := headers.Get(h); v != "" {
+			req.Header.Set(h, v)
+		}
+	}
+	SetClusterAuth(req.Header, s.cfg.AuthToken)
+	if forwardedUser != "" {
+		req.Header.Set("X-Horde-User", forwardedUser)
+	}
+
+	resp, err := s.leader.client.Do(req)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("forward KB request to leader: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("read leader response: %w", err)
+	}
+	return resp.StatusCode, resp.Header, respBody, nil
+}
+
 // Port returns the TCP port the node API listens on.
 func (s *Server) Port() int { return s.cfg.Port }
 
@@ -1726,6 +1776,21 @@ func (s *Server) startKBConvergence(ctx context.Context) {
 	}
 	go conv.run(ctx)
 	logrus.Debug("kb convergence loop started")
+}
+
+// kbWriteLock returns the per-path mutex for serializing concurrent writes on
+// the authority (KSP §4.3). The lock is keyed by "<kind>/<id>/<path>" and
+// lazily created; it is never removed (paths are bounded by the KB tree).
+func (s *Server) KBWriteLock(kind, id, path string) *sync.Mutex {
+	key := fmt.Sprintf("%s/%s/%s", kind, id, path)
+	s.kbWriteMu.Lock()
+	defer s.kbWriteMu.Unlock()
+	mu, ok := s.kbWriteLocks[key]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.kbWriteLocks[key] = mu
+	}
+	return mu
 }
 
 // pollAgentHealths polls every running agent's /health endpoint.
