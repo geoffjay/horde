@@ -90,6 +90,17 @@ type projectAuthView interface {
 	authView
 }
 
+// projectAuthorizer is the minimal surface authorizeProject needs: the
+// auth-enabled flag, the project lookup, and the user table (to re-derive a
+// forwarded user's admin flag). Both projectAuthView (project mutation
+// handlers) and invokeView (the invoke path) satisfy it, so authz stays a
+// single helper across project mutations and agent invocation.
+type projectAuthorizer interface {
+	AuthEnabled() bool
+	GetProject(id string) (*server.Project, error)
+	Users() []server.UserAuth
+}
+
 // projectForwarder is the subset of *server.Server needed to proxy project
 // requests to the master. A slave node with a leader returns a non-empty
 // LeaderAddr; the API layer forwards project reads and mutations to the
@@ -105,6 +116,15 @@ type projectForwarder interface {
 // with session-key derivation, project-state checking, and AAP streaming).
 type invokeView interface {
 	agentView
+	// AuthEnabled, GetProject, Users, and AgentActiveProject let the invoke
+	// handler authorize a caller against the agent's active project
+	// (levelInvoke: owner OR team member). Standalone agents (no active
+	// project) stay open to any authenticated user; the requireUser gate on
+	// the route already rejects anonymous callers when auth is enabled.
+	AuthEnabled() bool
+	GetProject(id string) (*server.Project, error)
+	Users() []server.UserAuth
+	AgentActiveProject(agentID string) string
 	SessionKey(agentID string) string
 	AgentProjectState(agentID string) string
 	// AAPInvoke runs one AAP turn against the agent's adapter session and
@@ -144,12 +164,13 @@ type eventView interface {
 
 // compile-time: *server.Server satisfies the handler interfaces.
 var (
-	_ nodeView         = (*server.Server)(nil)
-	_ agentView        = (*server.Server)(nil)
-	_ clusterView      = (*server.Server)(nil)
-	_ projectView      = (*server.Server)(nil)
-	_ projectForwarder = (*server.Server)(nil)
-	_ invokeView       = (*server.Server)(nil)
-	_ eventView        = (*server.Server)(nil)
-	_ authView         = (*server.Server)(nil)
+	_ nodeView          = (*server.Server)(nil)
+	_ agentView         = (*server.Server)(nil)
+	_ clusterView       = (*server.Server)(nil)
+	_ projectView       = (*server.Server)(nil)
+	_ projectForwarder  = (*server.Server)(nil)
+	_ projectAuthorizer = (*server.Server)(nil)
+	_ invokeView        = (*server.Server)(nil)
+	_ eventView         = (*server.Server)(nil)
+	_ authView          = (*server.Server)(nil)
 )

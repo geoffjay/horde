@@ -105,8 +105,12 @@ view, and the `X-Horde-User` cross-node echo. Slice 2 (ownership + project
 authz) is complete: projects record an `Owner`, `authorizeProject` (owner +
 team members) gates project mutations, `requireUser` rejects anonymous
 mutations, and team membership endpoints (`POST/DELETE /projects/{id}/users`)
-are wired with raft-replicated `AddUser`/`RemoveUser` ops. Slices 3–5 (agent
-mutation gating, AAP tool allowlist, docs) remain.
+are wired with raft-replicated `AddUser`/`RemoveUser` ops. Slice 3 (agent
+mutation gating) is complete: `requireUser` guards `POST /agents`, `DELETE
+/agents/{id}`, `POST /agents/{id}/invoke`, and
+`POST /agents/{id}/approvals/{requestID}` — anonymous mutations are rejected
+at the edge (401), node principals pass, and disabled-by-default is a no-op.
+Slices 4–5 (AAP tool allowlist, docs/KB) remain.
 
 # Phase 3.6 — AAP host (external coding agents) (complete)
 

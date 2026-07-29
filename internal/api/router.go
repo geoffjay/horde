@@ -33,17 +33,24 @@ func Router(srv *server.Server) http.Handler {
 		r.Get("/health", getHealth)
 		r.Get("/ready", getReady(srv))
 
-		// Agents
+		// Agents — reads stay open (origin-redacted as 3.5a).
 		r.Get("/agents", listAgents(srv))
-		r.Post("/agents", createAgent(srv))
 		r.Get("/agents/available", listAvailableAgents(srv))
 		r.Get("/agents/context", listAgentContexts(srv))
 		r.Get("/agents/{id}", getAgent(srv))
-		r.Delete("/agents/{id}", deleteAgent(srv))
-		r.Post("/agents/{id}/invoke", invokeAgent(srv))
 		r.Get("/agents/{id}/context", getAgentContext(srv))
 		r.Get("/agents/{id}/context/stream", streamAgentContext(srv))
-		r.Post("/agents/{id}/approvals/{requestID}", respondApproval(srv))
+		// Agent mutations: requireUser rejects anonymous mutations when
+		// auth is enabled (disabled ⇒ no-op; node ⇒ pass for cross-node
+		// traffic). The handler does the actual work — this is the
+		// anonymous-gate layer, not project-level authz.
+		r.Group(func(r chi.Router) {
+			r.Use(requireUser(srv))
+			r.Post("/agents", createAgent(srv))
+			r.Delete("/agents/{id}", deleteAgent(srv))
+			r.Post("/agents/{id}/invoke", invokeAgent(srv))
+			r.Post("/agents/{id}/approvals/{requestID}", respondApproval(srv))
+		})
 
 		// Cluster (slave ↔ master). The node→node ingest endpoints require the
 		// shared cluster auth token (when configured); the read endpoints below

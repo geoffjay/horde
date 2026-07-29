@@ -156,7 +156,7 @@ func getProject(srv projectView) http.HandlerFunc {
 func pauseProject(srv projectAuthView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		if _, err := authorizeProject(srv, r, id, levelOwn); err != nil {
+		if err := authorizeProject(srv, r, id, levelOwn); err != nil {
 			writeAuthzError(w, err)
 			return
 		}
@@ -177,7 +177,7 @@ func pauseProject(srv projectAuthView) http.HandlerFunc {
 func resumeProject(srv projectAuthView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		if _, err := authorizeProject(srv, r, id, levelOwn); err != nil {
+		if err := authorizeProject(srv, r, id, levelOwn); err != nil {
 			writeAuthzError(w, err)
 			return
 		}
@@ -198,7 +198,7 @@ func resumeProject(srv projectAuthView) http.HandlerFunc {
 func finishProject(srv projectAuthView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		if _, err := authorizeProject(srv, r, id, levelOwn); err != nil {
+		if err := authorizeProject(srv, r, id, levelOwn); err != nil {
 			writeAuthzError(w, err)
 			return
 		}
@@ -219,7 +219,7 @@ func finishProject(srv projectAuthView) http.HandlerFunc {
 func assignAgentToProject(srv projectAuthView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		if _, err := authorizeProject(srv, r, id, levelOwn); err != nil {
+		if err := authorizeProject(srv, r, id, levelOwn); err != nil {
 			writeAuthzError(w, err)
 			return
 		}
@@ -260,7 +260,7 @@ func removeAgentFromProject(srv projectAuthView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "id")
 		agentID := chi.URLParam(r, "agentID")
-		if _, err := authorizeProject(srv, r, projectID, levelOwn); err != nil {
+		if err := authorizeProject(srv, r, projectID, levelOwn); err != nil {
 			writeAuthzError(w, err)
 			return
 		}
@@ -286,7 +286,7 @@ type addProjectUserRequest struct {
 func addProjectUser(srv projectAuthView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "id")
-		if _, err := authorizeProject(srv, r, projectID, levelOwn); err != nil {
+		if err := authorizeProject(srv, r, projectID, levelOwn); err != nil {
 			writeAuthzError(w, err)
 			return
 		}
@@ -317,7 +317,7 @@ func removeProjectUser(srv projectAuthView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "id")
 		userID := chi.URLParam(r, "userID")
-		if _, err := authorizeProject(srv, r, projectID, levelOwn); err != nil {
+		if err := authorizeProject(srv, r, projectID, levelOwn); err != nil {
 			writeAuthzError(w, err)
 			return
 		}

@@ -249,13 +249,55 @@ func TestProjectDTO_SurfacesOwnerAndUsers(t *testing.T) {
 	assert.Equal(t, "bob", got.Team.Users[0].UserID)
 }
 
+// reqAs builds a request whose context carries the principal resolved for the
+// given bearer token, exactly as the resolvePrincipal middleware would stash it.
+func reqAs(srv *server.Server, token string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/agents/x/invoke", nil)
+	if token != "" {
+		r.Header.Set("Authorization", "Bearer "+token)
+	}
+	return r.WithContext(context.WithValue(r.Context(), principalKey{}, resolvePrincipalRequest(srv, r)))
+}
+
+func TestAuthorizeProject_LevelInvoke(t *testing.T) {
+	// alice owns the project; bob is a team member; carol is a stranger.
+	srv := newAuthServer(t,
+		server.UserAuth{ID: "alice", Token: "tok-a"},
+		server.UserAuth{ID: "bob", Token: "tok-b"},
+		server.UserAuth{ID: "carol", Token: "tok-c"},
+	)
+	p := createProjectAs(t, srv, "tok-a", "owned")
+	_, err := srv.AddUserToProject(p.ID, "bob")
+	require.NoError(t, err)
+
+	t.Run("owner allowed to invoke", func(t *testing.T) {
+		err := authorizeProject(srv, reqAs(srv, "tok-a"), p.ID, levelInvoke)
+		assert.NoError(t, err)
+	})
+	t.Run("team member allowed to invoke", func(t *testing.T) {
+		err := authorizeProject(srv, reqAs(srv, "tok-b"), p.ID, levelInvoke)
+		assert.NoError(t, err)
+	})
+	t.Run("stranger forbidden to invoke", func(t *testing.T) {
+		err := authorizeProject(srv, reqAs(srv, "tok-c"), p.ID, levelInvoke)
+		assert.ErrorIs(t, err, errForbidden)
+	})
+	t.Run("member may invoke but not own-level (level distinction)", func(t *testing.T) {
+		// Same member, different level: invoke ok, own forbidden.
+		errInvoke := authorizeProject(srv, reqAs(srv, "tok-b"), p.ID, levelInvoke)
+		errOwn := authorizeProject(srv, reqAs(srv, "tok-b"), p.ID, levelOwn)
+		assert.NoError(t, errInvoke)
+		assert.ErrorIs(t, errOwn, errForbidden)
+	})
+}
+
 func TestAuthorizeProject_DisabledIsNoOp(t *testing.T) {
-	// Auth disabled: authorizeProject returns (nil, nil) — no project lookup.
+	// Auth disabled: authorizeProject returns nil — no project lookup, so an
+	// unknown id does not even 404 (the handler's own check runs unchanged).
 	srv := newTestServer(t)
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/projects/x/pause", nil)
-	p, err := authorizeProject(srv, r, "nonexistent", levelOwn)
-	assert.Nil(t, err)
-	assert.Nil(t, p, "disabled authz does not look up the project")
+	err := authorizeProject(srv, r, "nonexistent", levelOwn)
+	assert.NoError(t, err, "disabled authz is a no-op and does not look up the project")
 }
 
 func TestRequireUser_DisabledPasses(t *testing.T) {

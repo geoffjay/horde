@@ -6,9 +6,9 @@ tags: [plan, auth, users, projects, teams, permissions, phase-3.5b, security]
 timestamp: 2026-07-22T00:00:00Z
 ---
 
-> **Status: in progress — slices 1–2 landed.** Identity plumbing (slice 1) +
-> ownership + project authz (slice 2) are implemented. Slices 3–5 remain.
-> This plan completes the deferred half of the
+> **Status: in progress — slices 1–3 landed.** Identity plumbing (slice 1) +
+> ownership + project authz (slice 2) + agent mutation gating (slice 3) are
+> implemented. Slices 4–5 remain. This plan completes the deferred half of the
 > [project, team, and user model](../decisions/project-team-user-model.md) (the
 > "3.5b" split) and lights up the TUI Users group (previously a placeholder in
 > the [sidebar navigation](../patterns/tui-sidebar-navigation.md)).
@@ -174,7 +174,9 @@ scope on the session:
 2. **Ownership + project authz** — thread `Owner`, membership endpoints + store
    ops, `requireUser` + `authorizeProject` on project mutations. **Done.**
 3. **Agent mutation gating** — `requireUser` on `POST /agents`, `DELETE
-   /agents/{id}`, invoke, approvals.
+   /agents/{id}`, invoke, approvals; plus `authorizeProject` at `levelInvoke`
+   on the invoke path (owner OR team member; non-member 403), enforced on the
+   agent's owning node. **Done.**
 4. **Tool allowlist + advisory scope** — thread `userScope` to the AAP session,
    gate in `resolveApproval`.
 5. **Docs/KB** + optional `invoked_by` attribution field (logging only, not the

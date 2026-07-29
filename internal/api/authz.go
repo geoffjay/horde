@@ -24,53 +24,48 @@ var errForbidden = errors.New("forbidden")
 
 // authorizeProject checks whether the resolved principal may perform an
 // action on the project at the given level. Returns nil when allowed;
-// otherwise a non-nil error the handler maps to a 403 (forbidden).
+// otherwise a non-nil error the handler maps to a response (403 forbidden,
+// 404 for an unknown project).
 //
-//   - disabled (no auth.users) ⇒ no-op (returns nil, nil — the handler's own
+//   - disabled (no auth.users) ⇒ no-op (returns nil — the handler's own
 //     existence check + error mapping runs unchanged; authz never precedes
 //     the existence check when auth is off)
-//   - node principal ⇒ allow (cross-node traffic; the origin enforced)
 //   - admin user ⇒ allow
 //   - levelOwn ⇒ principal.UserID == project.Owner
 //   - levelView/levelInvoke ⇒ owner OR principal.UserID ∈ project.Team.Users
 //   - else ⇒ forbidden
 //
 // The project is looked up by id; an unknown project yields ErrProjectNotFound
-// so the handler returns 404.
-//
-//nolint:unparam // level is always levelOwn in slice 2; slice 3 wires levelInvoke.
-func authorizeProject(srv projectAuthView, r *http.Request, projectID string, level authLevel) (*server.Project, error) {
-	// When auth is disabled, authorization is a no-op. Return nil (no project
-	// lookup) so the handler's own existence check + error mapping runs
-	// unchanged — the authz check never precedes the existence check in the
-	// response when auth is off.
+// so the handler returns 404. Project mutations call it at levelOwn; the
+// invoke path calls it at levelInvoke (owner OR team member).
+func authorizeProject(srv projectAuthorizer, r *http.Request, projectID string, level authLevel) error {
+	// When auth is disabled, authorization is a no-op — no project lookup, so
+	// the handler's own existence check + error mapping runs unchanged.
 	if !srv.AuthEnabled() {
-		//nolint:nilnil // intentional: no project, no error (disabled ⇒ no-op)
-		return nil, nil
+		return nil
 	}
 	p, err := srv.GetProject(projectID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	prin := principalFrom(r)
 	switch prin.kind {
 	case principalUser:
-		return p, authorizeUser(p, prin.userID, prin.admin, level)
+		return authorizeUser(p, prin.userID, prin.admin, level)
 	case principalNode:
-		// A node principal on a project mutation route is a slave→master
-		// forward. Enforce the echoed user (X-Horde-User), re-deriving admin
-		// from local config — do NOT blanket-trust the node. The origin slave
-		// rejects anonymous mutations before forwarding (requireUser runs
-		// before the forward middleware), so a forwarded mutation always
-		// carries a user once auth is enabled; a node request without one is
-		// denied.
+		// A node principal is a slave→master (or master→owning-node) forward.
+		// Enforce the echoed user (X-Horde-User), re-deriving admin from local
+		// config — do NOT blanket-trust the node. The origin slave rejects
+		// anonymous mutations before forwarding (requireUser runs before the
+		// forward middleware), so a forwarded request always carries a user
+		// once auth is enabled; a node request without one is denied.
 		uid, ok := resolveForwardedUser(r)
 		if !ok {
-			return p, errForbidden
+			return errForbidden
 		}
-		return p, authorizeUser(p, uid, forwardedUserIsAdmin(srv, uid), level)
+		return authorizeUser(p, uid, forwardedUserIsAdmin(srv, uid), level)
 	}
-	return p, errForbidden
+	return errForbidden
 }
 
 // authorizeUser applies the owner/admin/team-membership rules for a concrete
@@ -92,7 +87,7 @@ func authorizeUser(p *server.Project, userID string, admin bool, level authLevel
 // forwardedUserIsAdmin reports whether the given user id is an admin per local
 // config. resolveForwardedUser yields only the id, so the master re-derives
 // admin from its own (identical, config-defined) user table.
-func forwardedUserIsAdmin(srv authView, userID string) bool {
+func forwardedUserIsAdmin(srv projectAuthorizer, userID string) bool {
 	for _, u := range srv.Users() {
 		if u.ID == userID {
 			return u.Admin

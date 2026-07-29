@@ -40,6 +40,20 @@ func invokeAgent(srv invokeView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 
+		// Authorize the invoke against the agent's active project: the owner
+		// or a team member may invoke; a non-member is forbidden (403). A
+		// no-op when auth is disabled or the agent is standalone (no active
+		// project). On a slave the agent is not local so AgentActiveProject is
+		// empty here and this is skipped; the owning node (which hosts the
+		// agent) runs the check on the forwarded request, re-deriving the
+		// X-Horde-User — mirroring the project-mutation cross-node model.
+		if projectID := srv.AgentActiveProject(id); projectID != "" {
+			if err := authorizeProject(srv, r, projectID, levelInvoke); err != nil {
+				writeAuthzError(w, err)
+				return
+			}
+		}
+
 		// Reject invokes on paused projects. Finished projects clear the
 		// agent's active-project binding (FinishProject), so the agent
 		// falls through to the no-project path (empty state) and is
