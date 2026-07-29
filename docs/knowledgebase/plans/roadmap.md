@@ -85,19 +85,23 @@ Detailed plan: [Projects, teams, and multi-turn context](projects-teams.md).
 
 ## Deferred to 3.5b
 
-* Per-user authentication on the node API.
-* Per-user project ownership and permission scopes.
-* Per-user tool restrictions.
-* OS-level filesystem sandboxing.
+* Per-user authentication on the node API — **landed in 3.5b** (see below).
+* Per-user project ownership and permission scopes — **landed in 3.5b**.
+* Per-user tool restrictions — **landed in 3.5b** (the per-user AAP tool
+  allowlist).
+* OS-level filesystem sandboxing — **still deferred** (per-user filesystem
+  scope is advisory, enforced via the AAP tool gate, not at `initialize`).
 
-This split lets us build the project/team model and execution context
-without committing to an auth mechanism. When 3.5b lands, the project/team
-model already has the right shape — it just gains an `owner` field and
-access control.
+This split let us build the project/team model and execution context
+without committing to an auth mechanism. 3.5b then landed the per-user half —
+the project/team model already had the right shape, so it just gained an
+`owner` field and access control (see [Phase 3.5b](#phase-35b--per-user-auth-ownership-and-permissions-complete)
+below).
 
-# Phase 3.5b — Per-user auth, ownership, and permissions (in progress)
+# Phase 3.5b — Per-user auth, ownership, and permissions (complete)
 
 Detailed plan: [Phase 3.5b — Per-user auth](phase-3.5b-auth.md).
+Decision: [Per-user API-token auth, ownership, and permissions](../decisions/per-user-token-auth.md).
 
 Slice 1 (identity plumbing) is complete: opt-in per-user API-token auth,
 `resolvePrincipal` middleware, `GET /users`, `Client.SetAuth`, the TUI Users
@@ -117,7 +121,18 @@ through `AAPInvoke` → `runAAPTurn` → `sendPrompt`, and the host session's
 `resolveApproval` denies any tool not in the user's `AllowedTools`
 (advisory: the per-user filesystem scope is enforced via the tool gate, not
 `initialize.permissions`, since the adapter is created before any user is
-known). Slice 5 (docs/KB) remains.
+known). Slice 5 (docs/KB) is complete: the
+[per-user-token-auth decision](../decisions/per-user-token-auth.md), the
+[principal-middleware-and-echo-trust pattern](../patterns/principal-middleware-and-echo-trust.md),
+and the 3.5b half of the
+[project/team/user model decision](../decisions/project-team-user-model.md)
+are recorded; `docs/environment.md` and `concepts/environment.md` already
+carried the `auth.users` block, `HORDE_USER_TOKEN`, and `--token` from
+slice 1. The optional `invoked_by` attribution field was not added (the
+invoke path has no logging today and the field was explicitly optional).
+
+**Phase 3.5b complete.** All five slices have landed; per-user auth,
+ownership, and permissions are available as an opt-in mode.
 
 # Phase 3.6 — AAP host (external coding agents) (complete)
 

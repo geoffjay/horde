@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Project, team, and user model
-description: What a project, team, and user are in horde; how they relate; and the 3.5a/3.5b split that defers per-user auth.
+description: What a project, team, and user are in horde; how they relate; the 3.5a/3.5b split (3.5a deferred per-user auth; 3.5b landed it — see per-user-token-auth).
 tags: [decision, architecture, agents, projects, teams, users, phase-3.5]
 timestamp: 2026-07-11T00:00:00Z
 ---
@@ -46,7 +46,9 @@ A project is the unit of work. It has:
   below).
 
 Projects are owned by the node in 3.5a (no per-user ownership). Per-user
-ownership comes with 3.5b.
+ownership landed in 3.5b — `Project.Owner` is the creating user's id (empty
+when auth is disabled, backward compatible). See
+[per-user-token-auth](per-user-token-auth.md).
 
 # 2. What is a team?
 
@@ -105,18 +107,49 @@ Phase 3.5 is split into two slices:
 * This is enough to build the project/team model, multi-turn context, and
   execution context without committing to an auth mechanism.
 
-## 3.5b — Per-user auth (later)
+## 3.5b — Per-user auth (landed)
 
-* Per-user authentication on the node API.
-* Per-user project ownership (the `owner` field on a project).
-* Per-user permission scopes (tool restrictions, workspace access).
-* The full user/permission model that the execution context plan references
-  as "a separate phase."
+Phase 3.5b is complete (five slices). The project/team model gained its
+per-user half without reshaping the 3.5a API. See
+[Per-user API-token auth, ownership, and permissions](per-user-token-auth.md)
+for the full decision; the summary:
 
-This split lets us build the project/team model and the execution context
-without choosing an auth mechanism (API keys, JWT, OAuth, etc.). When 3.5b
-lands, the project/team model already has the right shape — it just gains
-an `owner` field and access control.
+* **Per-user API-token auth** (opt-in): `auth.users` config block, presented
+  as `Authorization: Bearer <token>`. Empty disables auth — the API stays
+  unauthenticated (3.5a behavior byte-for-byte). No login endpoint, no
+  password hashing.
+* **Project ownership**: `Project.Owner` (the creating user's id; empty when
+  auth disabled — backward compatible). Threaded through the raft log
+  (deterministic string resolved on the leader, like `Now`).
+* **Authorization = owner + team members**: `authorizeProject(level{view|
+  invoke|own})` — owner-only for lifecycle/membership; owner OR team member
+  for invoke; admin bypasses; disabled is a no-op. `Team.Users` is writable
+  via owner-only `POST/DELETE /projects/{id}/users` (raft-replicated
+  `AddUser`/`RemoveUser` ops).
+* **Per-user AAP tool allowlist + advisory scope**: per-user tool
+  restriction enforced at AAP approval time (the host denies a tool not in
+  the user's `AllowedTools`). Filesystem scope is advisory-via-tool-gate only
+  — `initialize.permissions` keeps the per-agent-def scope (the adapter is
+  created before any user is known; AAP v1 has no per-turn permission-update
+  frame). `buildInitialize` is the future hook for per-user init scope
+  (deferred — would need per-user agent instances).
+* **Cross-node identity**: `X-Horde-User` is echoed on forwarded
+  project-mutation and invoke requests (already authenticated by the cluster
+  token) and honored by the receiver **only when the caller is a node
+  principal**; the user's scope/admin is re-derived from local config. Safe
+  because an external client cannot forge it without the cluster token.
+* **No replicated user store**: users are config-defined and identical on
+  every node. Only `Project.Owner`/`Team.Users` (already raft-replicated)
+  change.
+* **ADK runner `userID` stays `"local"`**: it is the ADK conversation key
+  `(userID, sessionID=agent:project)`; making it per-user would fracture the
+  shared team conversation. Authz identity is separate from the ADK session
+  key.
+
+This split let us build the project/team model and execution context in 3.5a
+without choosing an auth mechanism. When 3.5b landed, the project/team model
+already had the right shape — it just gained an `owner` field, access
+control, and a per-user tool gate.
 
 # 4. Permissions
 
@@ -127,13 +160,18 @@ For 3.5a:
   within it **by convention** — no OS-level enforcement (no chroot, seatbelt,
   or landlock). Enforcement is a much larger lift and is not needed in 3.5a
   where there is no per-user auth.
-* **Tool allowlist** = deferred. All agents on a project have the same tool
-  access. Per-user tool restrictions come with 3.5b.
+* **Tool allowlist** = per-user (3.5b). Each user may declare an
+  `allowed_tools` list (empty = all tools, no gating). The AAP host's
+  `resolveApproval` denies a tool not in the active turn's user allowlist,
+  regardless of `auto_approve`. This is the enforcement point for the
+  advisory per-user filesystem scope.
 * **Agent-to-agent messaging** = deferred (see above).
 
-OS-level sandboxing can be revisited when per-user auth lands (3.5b) and
-the risk model changes. For now, advisory scope is sufficient — the agent
-is told the workspace path and operates within it.
+OS-level sandboxing remains deferred even after 3.5b. The per-user filesystem
+scope is enforced via the tool gate (a disallowed tool can't touch the
+workspace), not via `initialize.permissions` (the adapter is created before
+any user is known). `buildInitialize` is the future hook for true per-user
+init scope.
 
 When external coding agents arrive via the [AAP host (Phase 3.6)](/docs/knowledgebase/plans/roadmap.md),
 this workspace maps onto AAP's `workspace.cwd` and the optional
@@ -212,8 +250,11 @@ it in the invoke request body to the agent subprocess, alongside the Phase 3
 * `invocation_id` — identifies *one* `/invoke` call, driving the Phase 3
   `Last-Event-ID` resume broker. Unchanged from Phase 3.
 
-The `userID` passed to `runner.Run` stays a fixed value (`"local"`) in 3.5a;
-per-user identity is 3.5b. No URL change — the existing
+The `userID` passed to `runner.Run` stays a fixed value (`"local"`) even after
+3.5b — it is the ADK conversation key `(userID, sessionID=agent:project)`,
+and making it per-user would fracture the shared team conversation. Authz
+identity is separate from the ADK session key; see
+[per-user-token-auth](per-user-token-auth.md). No URL change — the existing
 `POST /api/v1/agents/{id}/invoke` endpoint is unchanged. This keeps the API
 simple and matches the Phase 3 shape.
 
@@ -231,10 +272,15 @@ simple and matches the Phase 3 shape.
    (create/list/pause/finish), agent-to-project assignment, and the
    session-key derivation for multi-turn context.
 
-Building slice A first means the execution context (queryable per-agent
-work-state) is available before projects/teams land, giving observability
-into agents from the start. Slice B then adds the project/team structure
+Building slice A first meant the execution context (queryable per-agent
+work-state) was available before projects/teams landed, giving observability
+into agents from the start. Slice B then added the project/team structure
 on top.
+
+Phase 3.5b (per-user auth, ownership, and permissions) was built in five
+slices after 3.5a was complete; see the
+[3.5b plan](/docs/knowledgebase/plans/phase-3.5b-auth.md) and the
+[per-user-token-auth decision](per-user-token-auth.md).
 
 # Consequences
 
@@ -243,12 +289,17 @@ on top.
 * A team includes both users and agents; agents are peers with no roles.
 * An agent can participate in multiple projects but is active in one at a
   time.
-* No per-user auth in 3.5a — the node API stays unauthenticated. Per-user
-  auth, ownership, and permission scopes are 3.5b.
-* Filesystem scope is advisory (no OS-level sandboxing in 3.5a).
-* Multi-turn context uses a private session per `(agent_id, project_id)`.
+* Per-user auth, ownership, and permission scopes landed in 3.5b (opt-in,
+  backward compatible): a project records an `Owner`, mutations are gated
+  by `requireUser` + `authorizeProject` (owner + team members), and a
+  per-user AAP tool allowlist is enforced at approval time. See
+  [per-user-token-auth](per-user-token-auth.md).
+* Filesystem scope is advisory (no OS-level sandboxing); per-user filesystem
+  scope is enforced via the AAP tool gate, not `initialize.permissions`.
+* Multi-turn context uses a private session per `(agent_id, project_id)`;
+  the ADK `userID` stays `"local"` so team conversations stay shared.
 * The invocation payload is unchanged from Phase 3 (project implicit at
   spawn; session_id derived by the node).
 * Agent-to-agent messaging is deferred.
-* The agent execution context (slice A) can be built first, independent of
+* The agent execution context (slice A) was built first, independent of
   the project/team model.

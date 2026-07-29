@@ -71,7 +71,8 @@ every edit.
 * [HTTP over unix domain sockets for agent invocation](decisions/agent-invocation-transport.md) - agent subprocess serves a local HTTP API on a unix socket; the node reverse-proxies invoke requests.
 * [The TUI consumes the node API](decisions/tui-uses-node-api.md) - the TUI always goes over the API; it does not start a node and retries with a 60s countdown.
 * [Adopt the Agent Adapter Protocol (AAP)](decisions/agent-adapter-protocol.md) - own a vendor-neutral, agentd-compatible NDJSON host↔adapter protocol for external coding agents; permissions/multi-user stay above it.
-* [Project, team, and user model](decisions/project-team-user-model.md) - what a project, team, and user are; the 3.5a/3.5b split that defers per-user auth.
+* [Project, team, and user model](decisions/project-team-user-model.md) - what a project, team, and user are; how they relate; the 3.5a/3.5b split (3.5a deferred per-user auth; 3.5b landed it).
+* [Per-user API-token auth, ownership, and permissions](decisions/per-user-token-auth.md) - opt-in per-user API tokens; project ownership + owner/team authz; the per-user AAP tool allowlist; the X-Horde-User cross-node echo-trust seam; no replicated user store; advisory-only filesystem scope at initialize.
 * [Data persistence and per-project knowledgebase](decisions/persistence-and-knowledgebase.md) - XDG on-disk layout, JSON KV / database / per-project split, and the OKF knowledgebase as a project's synchronized shared brain.
 * [AUR packaging for Arch Linux](decisions/aur-packaging.md) - distribute via AUR `horde-bin`, automated by goreleaser.
 
@@ -81,8 +82,10 @@ every edit.
 * [Config extension pattern](patterns/config-extension.md) - embedding generic config + app-specific sections.
 * [Subprocess agent hosting](patterns/subprocess-agent-hosting.md) - the binary hosts its own agents.
 * [TUI status line and command palette](patterns/tui-status-line-and-palette.md) - configurable status blocks + a ctrl+p palette over a dimmed background.
+* [TUI sidebar navigation](patterns/tui-sidebar-navigation.md) - full-height left sidebar of expandable groups + a detail pane; the flattened-row model, focus zones, and `applySelection`.
 * [No phase/milestone references in code](patterns/no-phase-references.md) - name and describe code by what it is, not by the phase/plan/issue that introduced it (file names, comments, identifiers).
 * [Unit / integration test split via build tags](patterns/unit-integration-test-split.md) - `task test` stays unit-only + deterministic; subprocess/network/timing tests are `//go:build integration`, run via `task test:integration`.
+* [Principal middleware + X-Horde-User echo-trust seam](patterns/principal-middleware-and-echo-trust.md) - `resolvePrincipal` labels every request anon/user/node (never rejects); `requireUser` + `authorizeProject` gate mutations; cross-node identity is echoed as `X-Horde-User` and honored only for a node principal. Opt-in — disabled is a true no-op.
 
 ## Plans
 

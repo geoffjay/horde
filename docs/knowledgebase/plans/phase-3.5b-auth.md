@@ -6,10 +6,10 @@ tags: [plan, auth, users, projects, teams, permissions, phase-3.5b, security]
 timestamp: 2026-07-22T00:00:00Z
 ---
 
-> **Status: in progress — slices 1–4 landed.** Identity plumbing (slice 1) +
+> **Status: complete — all five slices landed.** Identity plumbing (slice 1) +
 > ownership + project authz (slice 2) + agent mutation gating (slice 3) +
-> AAP tool allowlist + advisory scope (slice 4) are implemented. Slice 5
-> (docs/KB) remains. This plan completes the deferred half of the
+> AAP tool allowlist + advisory scope (slice 4) + docs/KB (slice 5) are
+> implemented. This plan completes the deferred half of the
 > [project, team, and user model](../decisions/project-team-user-model.md) (the
 > "3.5b" split) and lights up the TUI Users group (previously a placeholder in
 > the [sidebar navigation](../patterns/tui-sidebar-navigation.md)).
@@ -181,7 +181,9 @@ scope on the session:
 4. **Tool allowlist + advisory scope** — thread `userScope` to the AAP session,
    gate in `resolveApproval`. **Done.**
 5. **Docs/KB** + optional `invoked_by` attribution field (logging only, not the
-   ADK session key).
+   ADK session key). **Done** (the optional `invoked_by` field was not added —
+   the invoke path has no logging today and the field was explicitly optional;
+   the plan's primary deliverable, the docs/KB, is complete).
 
 # Tests (respect the `//go:build integration` split)
 
