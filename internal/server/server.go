@@ -157,6 +157,10 @@ type Config struct {
 	// disables auth (the API stays unauthenticated). Populated from config
 	// by cmd/serve.go via buildServerUsers.
 	Users []UserAuth
+	// KBSync configures knowledgebase synchronization (KSP v1). When
+	// KBSync.Enabled is false (the default) the knowledgebase stays purely
+	// local. Populated from config by cmd/serve.go.
+	KBSync KBSyncConfig
 }
 
 // UserAuth is the server-layer per-user authentication identity. Mirrors
@@ -283,6 +287,16 @@ type Server struct {
 	// AAP agents use this; ADK agents keep their buffer in the agentapi
 	// subprocess.
 	aapInvokes *aapInvocationRegistry
+	// kbScopes holds the registered KB scope resolvers, keyed by kind.
+	// Populated in New when sync is enabled; nil when disabled.
+	kbScopes map[string]ScopeResolver
+	// kbManifestCache caches KB manifest scans per tree root, invalidated by
+	// mtime. Makes the steady-state poll nearly free.
+	kbManifestCache *kbManifestCache
+	// kbWatcher watches the canonical KB trees on the authority for filesystem
+	// changes and invalidates the manifest cache on edits (slice 2). nil when
+	// sync is disabled or this node is not the authority.
+	kbWatcher *kbWatcher
 
 	// now returns the current time. A field so tests can inject a clock when
 	// exercising slave staleness; defaults to time.Now.
@@ -444,6 +458,15 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 		s.resume.apply = s.raftApply
 		s.resume.isLeader = s.isMaster
 	}
+
+	// Register KB scope resolvers when sync is enabled. The project scope
+	// is the only kind registered in v1; an unregistered kind returns 404.
+	if cfg.KBSync.Enabled {
+		s.kbScopes = map[string]ScopeResolver{
+			kbScopeKindProject: newProjectScope(s),
+		}
+		s.kbManifestCache = newKBManifestCache()
+	}
 	return s, nil
 }
 
@@ -488,6 +511,12 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Start background health polling for agent subprocesses.
 	s.startHealthPolling(ctx)
+
+	// Start the KB tree watcher on the authority (slice 2). The watcher
+	// invalidates the manifest cache on tree changes so the read API serves
+	// fresh data without a manual invalidate call. No-op when sync is
+	// disabled or on a participant (no canonical tree to watch locally).
+	s.startKBWatcher(ctx)
 
 	return nil
 }
@@ -1165,6 +1194,11 @@ func (s *Server) SetClusterAuthTokenForTest(token string) { s.cfg.AuthToken = to
 // opt-in: no configured users ⇒ auth disabled, the API stays unauthenticated.
 func (s *Server) AuthEnabled() bool { return len(s.cfg.Users) > 0 }
 
+// KBSyncEnabled reports whether knowledgebase sync (KSP v1) is enabled. Sync
+// is opt-in: Knowledgebase.Sync.Enabled must be set true (the default is
+// false). When disabled, KB routes return 501 and no watcher/convergence runs.
+func (s *Server) KBSyncEnabled() bool { return s.cfg.KBSync.Enabled }
+
 // Users returns the configured user identities (id + admin + tools + scope)
 // for the read-only /users endpoint and the TUI users view. Tokens are
 // intentionally excluded from the returned value — they are never surfaced
@@ -1576,6 +1610,81 @@ func (s *Server) startHealthPolling(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// startKBWatcher starts the KB tree watcher (slice 2) when sync is enabled
+// and this node is the authority. The watcher observes canonical KB trees for
+// all active projects, debounces filesystem events, and invalidates the
+// manifest cache so the read API serves fresh data. It exits on ctx cancel,
+// closing the underlying fsnotify watcher and freeing its fds.
+func (s *Server) startKBWatcher(ctx context.Context) {
+	if !s.cfg.KBSync.Enabled || s.kbManifestCache == nil {
+		return
+	}
+	w, err := newKBWatcher(s.kbManifestCache, s.cfg.KBSync.Debounce)
+	if err != nil {
+		logrus.WithError(err).Warn("kb watcher: failed to create; edits will rely on mtime cache")
+		return
+	}
+	s.kbWatcher = w
+
+	// Watch the canonical tree of every active project. Only the authority
+	// has the canonical tree; a participant watches its local tree in slice 5.
+	if s.isMaster() {
+		projects := s.projects.List(ProjectActive)
+		for i := range projects {
+			root, err := s.kbCanonicalTreePtr(&projects[i])
+			if err != nil {
+				logrus.WithError(err).WithField(logKeyProject, projects[i].ID).
+					Warn("kb watcher: resolve canonical tree failed")
+				continue
+			}
+			w.addTree(root)
+		}
+	}
+
+	go w.run(ctx)
+	logrus.WithField("authority", s.isMaster()).Debug("kb watcher started")
+}
+
+// kbCanonicalTreePtr returns the canonical KB tree path for a project (the
+// authority's serving tree): <workspace>/.horde/knowledgebase/.
+func (s *Server) kbCanonicalTreePtr(p *Project) (string, error) {
+	resolver := s.kbScopes[kbScopeKindProject]
+	if resolver == nil {
+		return "", ErrKBFileNotFound
+	}
+	return resolver.(*projectScope).AuthorityTree(p.ID)
+}
+
+// kbWatchProject adds the project's canonical KB tree to the watcher. Called
+// after a project is created (on the authority). No-op when the watcher is
+// not running (sync disabled or participant).
+func (s *Server) kbWatchProject(p *Project) {
+	if s.kbWatcher == nil || !s.isMaster() {
+		return
+	}
+	root, err := s.kbCanonicalTreePtr(p)
+	if err != nil {
+		logrus.WithError(err).WithField(logKeyProject, p.ID).
+			Warn("kb watcher: add watch failed")
+		return
+	}
+	s.kbWatcher.addTree(root)
+}
+
+// kbUnwatchProject removes the project's canonical KB tree from the watcher.
+// Called when a project is finished or deleted. No-op when the watcher is
+// not running.
+func (s *Server) kbUnwatchProject(p *Project) {
+	if s.kbWatcher == nil {
+		return
+	}
+	root, err := s.kbCanonicalTreePtr(p)
+	if err != nil {
+		return
+	}
+	s.kbWatcher.removeTree(root)
 }
 
 // pollAgentHealths polls every running agent's /health endpoint.

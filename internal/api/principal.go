@@ -71,7 +71,16 @@ func resolvePrincipal(srv authView) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			p := resolvePrincipalRequest(srv, r)
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
+			// Stash the server-readable principal adapter so KB scope resolvers
+			// (internal/server) can authorize without importing internal/api.
+			kbp := server.KBPrincipal{
+				Kind:   server.KBPrincipalKind(p.kind),
+				UserID: p.userID,
+				Admin:  p.admin,
+			}
+			ctx := context.WithValue(r.Context(), principalKey{}, p)
+			ctx = context.WithValue(ctx, server.KBPrincipalCtxKey{}, kbp)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }

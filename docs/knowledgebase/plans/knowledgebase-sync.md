@@ -6,7 +6,7 @@ tags: [plan, knowledgebase, sync, distributed, cluster, projects]
 timestamp: 2026-07-28T00:00:00Z
 ---
 
-> **Status: planned.** No slice has landed. Roadmap phase 6. This builds
+> **Status: stage 1, slices 1–2 landed.** Roadmap phase 6. This builds
 > horde's central differentiator — the per-project knowledgebase as a
 > *cluster-shared* brain — which the
 > [persistence-and-knowledgebase decision](../decisions/persistence-and-knowledgebase.md)
@@ -180,13 +180,13 @@ have to be migrated later.
 
 ## Stage 1 — shared, readable, writable by API
 
-1. **Authority manifest + read API.** The `scopeResolver` seam with its single
+1. **Authority manifest + read API.** ✅ The `scopeResolver` seam with its single
    `projectScope` implementation; digest-based manifest over a scope's canonical
    tree; `GET /api/v1/kb/{kind}/{id}/manifest` (with `If-None-Match`/`304`) and
    `GET …/file`; authorization per KSP §9. Scan on request, cache by mtime.
    Unregistered kinds `404`. Ships value alone: the KB becomes readable over the
    API and the TUI.
-2. **Authority watcher.** fsnotify on the canonical tree, debounced, maintaining
+2. **Authority watcher.** ✅ fsnotify on the canonical tree, debounced, maintaining
    the manifest incrementally. Editing a file on the authority now shows up
    through the API. *This watcher component is reused verbatim in slice 5.*
 3. **Participant convergence.** Node-local workspace root; persisted

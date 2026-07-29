@@ -162,6 +162,14 @@ type eventView interface {
 	PublishClusterEvent(ev server.Event)
 }
 
+// kbView is the subset of *server.Server the KB handlers need: the sync-enabled
+// flag, the scope resolver, and the node id for the authority label.
+type kbView interface {
+	KBSyncEnabled() bool
+	KBResolveScope(kind string) server.ScopeResolver
+	NodeID() string
+}
+
 // compile-time: *server.Server satisfies the handler interfaces.
 var (
 	_ nodeView          = (*server.Server)(nil)
@@ -173,4 +181,5 @@ var (
 	_ invokeView        = (*server.Server)(nil)
 	_ eventView         = (*server.Server)(nil)
 	_ authView          = (*server.Server)(nil)
+	_ kbView            = (*server.Server)(nil)
 )

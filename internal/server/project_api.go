@@ -53,6 +53,10 @@ func (s *Server) CreateProject(_ context.Context, in CreateProjectInput) (*Proje
 		spawned = append(spawned, agentID)
 	}
 
+	// Start watching the project's canonical KB tree (slice 2). No-op when
+	// the watcher is not running (sync disabled or participant).
+	s.kbWatchProject(p)
+
 	return p, nil
 }
 
@@ -111,6 +115,10 @@ func (s *Server) FinishProject(id string) (*Project, error) {
 		agentIDs = append(agentIDs, ta.AgentID)
 	}
 	s.mu.Unlock()
+
+	// Stop watching the project's canonical KB tree (slice 2). No-op when
+	// the watcher is not running.
+	s.kbUnwatchProject(p)
 
 	// Trigger context retention/eviction for each agent. The context store's
 	// setLifecycle schedules eviction after the configured retention period.
@@ -208,13 +216,23 @@ func (s *Server) AddUserToProject(projectID, userID string) (*Project, error) {
 }
 
 // CreateProjectForTest creates a project directly via the store, bypassing the
-// agent-spawn path of CreateProject. Test-only: the API CreateProject spawns
-// agents by name, which requires a built binary; unit tests use this to set
-// up authz fixtures without spawning.
+// agent-spawn path of CreateProject, and scaffolds its knowledgebase. Test-only:
+// the API CreateProject spawns agents by name, which requires a built binary;
+// unit tests use this to set up authz + KB fixtures without spawning.
 //
 //nolint:gocritic // hugeParam: test-only helper mirrors CreateProject
 func (s *Server) CreateProjectForTest(in CreateProjectInput) (*Project, error) {
-	return s.projects.Create(in)
+	p, err := s.projects.Create(in)
+	if err != nil {
+		return nil, err
+	}
+	workspace := in.Workspace
+	if workspace == "" {
+		workspace = s.cfg.ProjectWorkspaceDir
+	}
+	_ = scaffoldKnowledgebase(workspace, p.Name)
+	s.kbWatchProject(p)
+	return p, nil
 }
 
 // RemoveUserFromProject removes a user from the project's team (3.5b).
