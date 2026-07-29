@@ -95,24 +95,27 @@ func (s *kbSyncRecordStore) load() {
 		return // corrupt = fresh (not fatal; convergence re-derives)
 	}
 	s.records = records
+	if s.records == nil {
+		s.records = make(map[string]string)
+	}
 }
 
-// save writes records to disk. Best-effort: a failure is logged but does not
-// block convergence — the next successful save is authoritative.
+// save writes records to disk atomically (KSP §4.3: temp-file + rename so a
+// reader never observes a torn file). The lock is held across marshal + write
+// so concurrent Sets cannot interleave or write out of order. Best-effort: a
+// failure is logged but does not block convergence — the next successful save
+// is authoritative.
 func (s *kbSyncRecordStore) save() {
 	if s.path == "" {
 		return
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	data, err := json.Marshal(s.records)
-	s.mu.Unlock()
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), kbDirPerm); err != nil {
-		return
-	}
-	_ = os.WriteFile(s.path, data, kbFilePerm) //#nosec G306 // standard sync record permissions
+	_ = atomicWriteFile(s.path, data)
 }
 
 // kbSyncStoreManager creates and caches per-scope sync record stores. Each

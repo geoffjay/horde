@@ -295,7 +295,7 @@ type Server struct {
 	// mtime. Makes the steady-state poll nearly free.
 	kbManifestCache *kbManifestCache
 	// kbWatcher watches the canonical KB trees on the authority for filesystem
-	// changes and invalidates the manifest cache on edits (slice 2). nil when
+	// changes and invalidates the manifest cache on edits. nil when
 	// sync is disabled or this node is not the authority.
 	kbWatcher *kbWatcher
 	// kbSyncMgr manages per-scope sync record stores (synced_digest, KSP §2.4).
@@ -537,13 +537,13 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start background health polling for agent subprocesses.
 	s.startHealthPolling(ctx)
 
-	// Start the KB tree watcher on the authority (slice 2). The watcher
+	// Start the KB tree watcher on the authority. The watcher
 	// invalidates the manifest cache on tree changes so the read API serves
 	// fresh data without a manual invalidate call. No-op when sync is
 	// disabled or on a participant (no canonical tree to watch locally).
 	s.startKBWatcher(ctx)
 
-	// Start the KB convergence loop on participants (slice 3). A participant
+	// Start the KB convergence loop on participants. A participant
 	// polls the authority's manifest and converges its local tree. No-op on
 	// the authority (it IS the canonical state) or when sync is disabled.
 	s.startKBConvergence(ctx)
@@ -1686,13 +1686,18 @@ func (s *Server) startHealthPolling(ctx context.Context) {
 	}()
 }
 
-// startKBWatcher starts the KB tree watcher (slice 2) when sync is enabled
+// startKBWatcher starts the KB tree watcher when sync is enabled
 // and this node is the authority. The watcher observes canonical KB trees for
 // all active projects, debounces filesystem events, and invalidates the
 // manifest cache so the read API serves fresh data. It exits on ctx cancel,
 // closing the underlying fsnotify watcher and freeing its fds.
 func (s *Server) startKBWatcher(ctx context.Context) {
 	if !s.cfg.KBSync.Enabled || s.kbManifestCache == nil {
+		return
+	}
+	// Only the authority watches the canonical tree. A participant has no
+	// canonical tree to watch locally until local-edit propagation is enabled.
+	if !s.isMaster() {
 		return
 	}
 	w, err := newKBWatcher(s.kbManifestCache, s.cfg.KBSync.Debounce)
@@ -1703,7 +1708,7 @@ func (s *Server) startKBWatcher(ctx context.Context) {
 	s.kbWatcher = w
 
 	// Watch the canonical tree of every active project. Only the authority
-	// has the canonical tree; a participant watches its local tree in slice 5.
+	// has the canonical tree; a participant watches its local tree for local-edit propagation.
 	if s.isMaster() {
 		projects := s.projects.List(ProjectActive)
 		for i := range projects {
@@ -1728,7 +1733,7 @@ func (s *Server) kbCanonicalTreePtr(p *Project) (string, error) {
 	if resolver == nil {
 		return "", ErrKBFileNotFound
 	}
-	return resolver.(*projectScope).AuthorityTree(p.ID)
+	return resolver.AuthorityTree(p.ID)
 }
 
 // kbWatchProject adds the project's canonical KB tree to the watcher. Called
@@ -1761,9 +1766,9 @@ func (s *Server) kbUnwatchProject(p *Project) {
 	s.kbWatcher.removeTree(root)
 }
 
-// startKBConvergence starts the periodic KB convergence loop on participants
-// (slice 3). A participant polls the authority's manifest and converges its
-// local tree: pulls remote changes, deletes locally when upstream deletes,
+// startKBConvergence starts the periodic KB convergence loop on participants.
+// A participant polls the authority's manifest and converges its local tree:
+// pulls remote changes, deletes locally when upstream deletes,
 // and preserves dirty local files to the conflict area before overwriting
 // (KSP §5.1, §5.2). No-op on the authority or when sync is disabled.
 func (s *Server) startKBConvergence(ctx context.Context) {

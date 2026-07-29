@@ -159,6 +159,24 @@ func getKBFile(srv kbView) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: errKBMissingPath})
 			return
 		}
+		// Validate the path before any tree access (KSP §2.2).
+		if _, err := server.ValidateKBPath(relPath); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: errKBInvalidPath})
+			return
+		}
+		// Gate on manifest membership (KSP §4.2: 404 if the path is not in
+		// the serving node's manifest). This prevents serving files excluded
+		// by the ignore/size policy and mitigates symlink attacks.
+		scope := server.KBScopeRef{Kind: kind, ID: id}
+		manifest, err := resolver.CachedManifest(scope)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "scan manifest: " + err.Error()})
+			return
+		}
+		if server.KBFindEntry(manifest, relPath) == nil {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: errKBFileNotFound})
+			return
+		}
 
 		// Read the file from the serving tree.
 		data, digest, modTime, err := resolver.ReadFile(id, relPath)
@@ -167,7 +185,7 @@ func getKBFile(srv kbView) http.HandlerFunc {
 				writeJSON(w, http.StatusNotFound, errorResponse{Error: errKBFileNotFound})
 				return
 			}
-			if strings.Contains(err.Error(), "kb: invalid path") {
+			if errors.Is(err, server.ErrKBInvalidPath) {
 				writeJSON(w, http.StatusBadRequest, errorResponse{Error: errKBInvalidPath})
 				return
 			}
@@ -351,7 +369,7 @@ func putKBFile(srv kbView) http.HandlerFunc {
 		// Write via temp+rename (KSP §4.3).
 		newDigest, err := resolver.WriteFile(id, relPath, body)
 		if err != nil {
-			if strings.Contains(err.Error(), "kb: invalid path") {
+			if errors.Is(err, server.ErrKBInvalidPath) {
 				writeJSON(w, http.StatusBadRequest, errorResponse{Error: errKBInvalidPath})
 				return
 			}
@@ -456,7 +474,7 @@ func deleteKBFile(srv kbView) http.HandlerFunc {
 				writeJSON(w, http.StatusNotFound, errorResponse{Error: errKBFileNotFound})
 				return
 			}
-			if strings.Contains(err.Error(), "kb: invalid path") {
+			if errors.Is(err, server.ErrKBInvalidPath) {
 				writeJSON(w, http.StatusBadRequest, errorResponse{Error: errKBInvalidPath})
 				return
 			}

@@ -16,7 +16,9 @@ import (
 type KBSyncConfig struct {
 	// Enabled is the opt-in switch for KSP synchronization.
 	Enabled bool
-	// WatchLocal is the stage-2 switch (participant watches its own tree).
+	// WatchLocal is the local-edit switch: when true a participant watches its
+	// own tree and pushes local file edits to the authority. Default false
+	// (a read-only participant converges and reads only).
 	WatchLocal bool
 	// WorkspaceRoot is the node-local root for participant KB materialization.
 	// Empty defaults to <data_dir>/workspaces.
@@ -223,7 +225,7 @@ func (ps *projectScope) Authorize(r *http.Request, id string, w bool) error {
 		// A node principal performing convergence may read without a user
 		// identity (KSP §9). Writes are never permitted on this path.
 		if w {
-			return errKBForbidden
+			return ErrKBForbidden
 		}
 		return nil
 	case KBPrincipalKindUser:
@@ -233,15 +235,18 @@ func (ps *projectScope) Authorize(r *http.Request, id string, w bool) error {
 		return authorizeKBRead(ps.srv, id, prin.UserID, prin.Admin)
 	}
 
-	return errKBForbidden
+	return ErrKBForbidden
 }
 
 // Policy returns the authority's size and ignore policy for the project scope.
+// The ignore policy is resolved the same way scanManifest resolves it: an
+// empty config Ignore defaults to kbIgnoreGlobs(), so what the manifest
+// publishes matches what the tree scan enforces (KSP §2.5).
 func (ps *projectScope) Policy() KBScopePolicy {
 	cfg := ps.srv.cfg.KBSync
 	ignore := cfg.Ignore
-	if ignore == nil {
-		ignore = []string{}
+	if len(ignore) == 0 {
+		ignore = kbIgnoreGlobs()
 	}
 	return KBScopePolicy{
 		MaxFileSize: cfg.MaxFileSize,
@@ -299,7 +304,7 @@ func (ps *projectScope) WriteFile(id, relPath string, data []byte) (string, erro
 	if err != nil {
 		return "", err
 	}
-	cleaned, err := kbValidatePath(relPath)
+	cleaned, err := ValidateKBPath(relPath)
 	if err != nil {
 		return "", err
 	}
@@ -324,7 +329,7 @@ func (ps *projectScope) DeleteFile(id, relPath string) error {
 	if err != nil {
 		return err
 	}
-	cleaned, err := kbValidatePath(relPath)
+	cleaned, err := ValidateKBPath(relPath)
 	if err != nil {
 		return err
 	}
@@ -391,9 +396,6 @@ func resolvePrincipalFromRequest(r *http.Request) KBPrincipal {
 // ErrKBForbidden is the sentinel for KB authorization denial (mapped to 403).
 var ErrKBForbidden = errors.New("kb: forbidden")
 
-// errKBForbidden is the internal alias used by the scope resolver methods.
-var errKBForbidden = ErrKBForbidden
-
 // ErrKBFileNotFound is the sentinel for a KB file not found in the tree
 // (mapped to 404).
 var ErrKBFileNotFound = errors.New("kb: file not found")
@@ -413,7 +415,7 @@ func authorizeKBRead(srv *Server, projectID, userID string, admin bool) error {
 			return nil
 		}
 	}
-	return errKBForbidden
+	return ErrKBForbidden
 }
 
 // authorizeKBWrite checks write authority for a user. The host's project write
@@ -426,7 +428,7 @@ func authorizeKBWrite(srv *Server, projectID, userID string, admin bool) error {
 	if admin || userID == p.Owner {
 		return nil
 	}
-	return errKBForbidden
+	return ErrKBForbidden
 }
 
 // KBResolveScope looks up a registered scope resolver by kind. Returns nil
@@ -498,18 +500,29 @@ func kbMatchSegments(path, pattern []string) bool {
 	return kbMatchSegments(path[1:], pattern[1:])
 }
 
-// kbValidatePath checks that a path is normalized and does not escape the KB
+// ErrKBInvalidPath is the sentinel for a KB path that fails validation
+// (mapped to 400).
+var ErrKBInvalidPath = errors.New("kb: invalid path")
+
+// ValidateKBPath checks that a path is normalized and does not escape the KB
 // root (KSP §2.2). Returns the cleaned path, or an error for any ".."
-// component, absolute path, or symlink resolving outside the root.
-func kbValidatePath(path string) (string, error) {
+// path component, absolute path, or backslash separator.
+func ValidateKBPath(path string) (string, error) {
 	cleaned := filepath.Clean("/" + path)
 	cleaned = strings.TrimPrefix(cleaned, "/")
-	if strings.HasPrefix(path, "/") || strings.Contains(path, "..") {
-		return "", errors.New("kb: invalid path")
+	if strings.HasPrefix(path, "/") {
+		return "", ErrKBInvalidPath
+	}
+	// Reject ".." as a path component (not substring) so legitimate filenames
+	// like "notes..md" or "v1..v2.md" are allowed.
+	for _, seg := range strings.Split(filepath.ToSlash(path), "/") {
+		if seg == ".." {
+			return "", ErrKBInvalidPath
+		}
 	}
 	// Reject backslash-separated paths on all platforms (KSP uses "/" only).
 	if strings.Contains(path, "\\") {
-		return "", errors.New("kb: invalid path")
+		return "", ErrKBInvalidPath
 	}
 	return cleaned, nil
 }

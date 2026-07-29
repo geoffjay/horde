@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -80,24 +81,5 @@ func (ca *kbConflictArea) PreserveMissing(_ KBScopeRef, _ string) {
 // escapePath replaces path separators with underscores so a conflict copy
 // filename is flat (no subdirectories).
 func escapePath(p string) string {
-	return replaceAll(p, "/", "_")
-}
-
-// replaceAll replaces all occurrences of old in s with replacement. A lightweight
-// alternative to strings.ReplaceAll to avoid adding a "strings" import.
-func replaceAll(s, old, replacement string) string {
-	if old == "" {
-		return s
-	}
-	var b []byte
-	for i := 0; i < len(s); {
-		if i+len(old) <= len(s) && s[i:i+len(old)] == old {
-			b = append(b, replacement...)
-			i += len(old)
-		} else {
-			b = append(b, s[i])
-			i++
-		}
-	}
-	return string(b)
+	return strings.ReplaceAll(p, "/", "_")
 }

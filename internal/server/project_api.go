@@ -53,7 +53,7 @@ func (s *Server) CreateProject(_ context.Context, in CreateProjectInput) (*Proje
 		spawned = append(spawned, agentID)
 	}
 
-	// Start watching the project's canonical KB tree (slice 2). No-op when
+	// Start watching the project's canonical KB tree. No-op when
 	// the watcher is not running (sync disabled or participant).
 	s.kbWatchProject(p)
 
@@ -116,7 +116,7 @@ func (s *Server) FinishProject(id string) (*Project, error) {
 	}
 	s.mu.Unlock()
 
-	// Stop watching the project's canonical KB tree (slice 2). No-op when
+	// Stop watching the project's canonical KB tree. No-op when
 	// the watcher is not running.
 	s.kbUnwatchProject(p)
 
@@ -222,13 +222,16 @@ func (s *Server) AddUserToProject(projectID, userID string) (*Project, error) {
 //
 //nolint:gocritic // hugeParam: test-only helper mirrors CreateProject
 func (s *Server) CreateProjectForTest(in CreateProjectInput) (*Project, error) {
-	p, err := s.projects.Create(in)
-	if err != nil {
-		return nil, err
-	}
+	// Resolve the default workspace before creating the project, so the
+	// project record carries the resolved value (mirrors CreateProject).
 	workspace := in.Workspace
 	if workspace == "" {
 		workspace = s.cfg.ProjectWorkspaceDir
+	}
+	in.Workspace = workspace
+	p, err := s.projects.Create(in)
+	if err != nil {
+		return nil, err
 	}
 	_ = scaffoldKnowledgebase(workspace, p.Name)
 	s.kbWatchProject(p)

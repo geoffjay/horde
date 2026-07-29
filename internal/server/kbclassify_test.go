@@ -27,7 +27,7 @@ func TestClassifyPath_AllRows(t *testing.T) {
 		// Remote change, clean local
 		{"A=y S=x D=x → pull", y, x, x, kbActPull},
 
-		// Local edit only (stage 2: push)
+		// Local edit only (push path: push)
 		{"A=x S=x D=z → push", x, x, z, kbActPush},
 
 		// Concurrent remote + local change
@@ -39,13 +39,15 @@ func TestClassifyPath_AllRows(t *testing.T) {
 		// Deleted upstream, edited locally
 		{"A=— S=x D=z → conflict", "", x, z, kbActConflict},
 
-		// Deleted locally (stage 2: push-delete)
+		// Deleted locally (push path: push-delete)
 		{"A=x S=x D=— → push-delete", x, x, "", kbActPushDelete},
+		// Deleted locally, changed upstream → pull (re-materialize)
+		{"A=y S=x D=— → pull", y, x, "", kbActPull},
 
 		// Exists upstream, untracked local file
 		{"A=x S=— D=z → conflict", x, "", z, kbActConflict},
 
-		// New local file (stage 2: push-new)
+		// New local file (push path: push-new)
 		{"A=— S=— D=z → push-new", "", "", z, kbActPushNew},
 
 		// New upstream file
@@ -63,8 +65,8 @@ func TestClassifyPath_AllRows(t *testing.T) {
 	}
 }
 
-// TestClassifyStage1_MapsPushToConflict verifies that stage 1 maps push actions
-// to conflicts (KSP §5.2: a stage-1 node does not push).
+// TestClassifyStage1_MapsPushToConflict verifies that a non-pushing node maps
+// push actions to conflicts (KSP §5.2: a read-only participant does not push).
 func TestClassifyStage1_MapsPushToConflict(t *testing.T) {
 	const x, z = "sha256:x", "sha256:z"
 
@@ -85,13 +87,13 @@ func TestClassifyStage1_MapsPushToConflict(t *testing.T) {
 			assert.Equal(t, tc.rawWant, raw.Action, "raw classification")
 
 			stage1 := classifyStage1(tc.a, tc.s, tc.d)
-			assert.Equal(t, tc.stage1Want, stage1.Action, "stage-1 classification")
+			assert.Equal(t, tc.stage1Want, stage1.Action, "non-pushing classification")
 		})
 	}
 }
 
 // TestClassifyStage1_CleanRowsUnchanged verifies the non-push rows are
-// identical between raw and stage-1 classification.
+// identical between raw and non-pushing classification.
 func TestClassifyStage1_CleanRowsUnchanged(t *testing.T) {
 	const x, y, z = "sha256:x", "sha256:y", "sha256:z"
 
@@ -101,6 +103,7 @@ func TestClassifyStage1_CleanRowsUnchanged(t *testing.T) {
 	}{
 		{x, x, x, kbActNone},
 		{y, x, x, kbActPull},
+		{y, x, "", kbActPull}, // deleted locally, changed upstream
 		{y, x, z, kbActConflict},
 		{"", x, x, kbActDeleteLocal},
 		{"", x, z, kbActConflict},
@@ -112,6 +115,6 @@ func TestClassifyStage1_CleanRowsUnchanged(t *testing.T) {
 		raw := classifyPath(tc.a, tc.s, tc.d)
 		stage1 := classifyStage1(tc.a, tc.s, tc.d)
 		assert.Equal(t, raw.Action, stage1.Action,
-			"stage-1 should not remap non-push rows (A=%q S=%q D=%q)", tc.a, tc.s, tc.d)
+			"non-pushing should not remap non-push rows (A=%q S=%q D=%q)", tc.a, tc.s, tc.d)
 	}
 }

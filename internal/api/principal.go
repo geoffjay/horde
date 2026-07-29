@@ -15,7 +15,7 @@ type principalKind string
 const (
 	// principalAnonymous is the absence of a recognized identity (no token, or
 	// auth disabled and no token).
-	principalAnonymous principalKind = "anon"
+	principalAnonymous principalKind = "anonymous"
 	// principalUser is a recognized per-user identity resolved from a bearer
 	// token in the auth.users config block.
 	principalUser principalKind = "user"
@@ -24,11 +24,21 @@ const (
 	principalNode principalKind = "node"
 )
 
+// Compile-time assertion that the api-layer principalKind string values
+// match the server-layer KBPrincipalKind constants. resolvePrincipal casts
+// principalKind → server.KBPrincipalKind directly (principal.go:77), so a
+// mismatch would silently misclassify callers in KB authorization.
+const (
+	_ principalKind = principalKind(server.KBPrincipalKindUser)
+	_ principalKind = principalKind(server.KBPrincipalKindNode)
+	_ principalKind = principalKind(server.KBPrincipalKindAnonymous)
+)
+
 // principal is the resolved caller identity stashed on the request context by
 // resolvePrincipal. It carries the per-user scope (tools + advisory
 // filesystem permissions) needed by authorization and the AAP tool gate.
-// Slice 1 wires resolution + the context stash; route guards and authz land
-// in later slices.
+// Resolution stashes the principal on the request context; route guards
+// and authz read it from there.
 type principal struct {
 	kind         principalKind
 	userID       string

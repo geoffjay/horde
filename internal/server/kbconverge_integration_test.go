@@ -105,7 +105,7 @@ func newKBIntegrationEnv(t *testing.T) *kbIntegrationEnv {
 }
 
 // TestKBConvergence_EditOnAuthorityAppearsOnParticipant verifies the core
-// slice-3 deliverable: editing a file on the authority shows up on the
+// convergence behavior: editing a file on the authority shows up on the
 // participant through convergence (poll → classify → pull).
 func TestKBConvergence_EditOnAuthorityAppearsOnParticipant(t *testing.T) {
 	env := newKBIntegrationEnv(t)
@@ -340,11 +340,11 @@ func TestKBConvergence_ScopeMismatchRejected(t *testing.T) {
 	hs := httptest.NewServer(router)
 	t.Cleanup(hs.Close)
 
-	client := newKBClient(hs.Listener.Addr().String(), "")
+	client := newKBClient("")
 
 	// Fetch manifest for the correct scope — should succeed.
 	scope := KBScopeRef{Kind: "project", ID: p.ID}
-	manifest, status, err := client.fetchManifest(context.Background(), scope, "")
+	manifest, status, err := client.fetchManifest(context.Background(), hs.Listener.Addr().String(), scope, "")
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, status)
 	assert.Equal(t, "project", manifest.Scope.Kind)
@@ -352,7 +352,7 @@ func TestKBConvergence_ScopeMismatchRejected(t *testing.T) {
 
 	// Fetch manifest for a wrong scope id — should fail with scope mismatch.
 	wrongScope := KBScopeRef{Kind: "project", ID: "different-id"}
-	_, _, err = client.fetchManifest(context.Background(), wrongScope, "")
+	_, _, err = client.fetchManifest(context.Background(), hs.Listener.Addr().String(), wrongScope, "")
 	// This will fail because the project doesn't exist (404), not scope mismatch.
 	// The scope mismatch check only fires when the authority returns a manifest
 	// for a different scope than requested. In practice this is a defense

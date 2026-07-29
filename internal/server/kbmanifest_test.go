@@ -28,7 +28,7 @@ func TestKBValidatePath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := kbValidatePath(tt.input)
+			got, err := ValidateKBPath(tt.input)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -249,7 +249,7 @@ func TestKBFindEntry(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
-			e := kbFindEntry(manifest, tt.path)
+			e := KBFindEntry(manifest, tt.path)
 			if tt.want == "" {
 				assert.Nil(t, e)
 			} else {

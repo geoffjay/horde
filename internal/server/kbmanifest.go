@@ -8,24 +8,30 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
 
 // kbManifestCache holds the last-scanned manifest for a scope, keyed by the
-// canonical tree path. The cache is invalidated by mtime comparison: a scan
-// is only re-run when the root's modtime has changed since the last scan.
-// This makes the steady-state GET manifest (If-None-Match hit) nearly free.
+// canonical tree path. The cache is invalidated by a tree-wide signature
+// (max mtime + file count): a scan is only re-run when the latest mtime
+// across all files and subdirectories, or the total file count, has changed
+// since the last scan. This detects in-place edits at any depth (directory
+// mtime alone misses content changes) and makes the steady-state GET
+// manifest (If-None-Match hit) nearly free.
 type kbManifestCache struct {
 	mu    sync.Mutex
 	scans map[string]*kbCachedManifest
 }
 
-// kbCachedManifest is a cached manifest scan for one tree, with the root's
-// modtime at scan time (the cache invalidation key).
+// kbCachedManifest is a cached manifest scan for one tree, with the tree-wide
+// signature at scan time (the cache invalidation key): the latest mtime across
+// all files and subdirectories, plus the total file count.
 type kbCachedManifest struct {
 	manifest  *KBManifest
-	rootMtime time.Time
+	maxMtime  time.Time
+	fileCount int
 }
 
 // newKBManifestCache creates an empty manifest cache.
@@ -134,7 +140,7 @@ func computeManifestDigest(entries []KBEntry) string {
 
 // hashFile reads and SHA-256 hashes a file, returning "sha256:<hex>".
 func hashFile(path string) (string, error) {
-	data, err := os.ReadFile(path) //#nosec G304 // path is KB-internal, validated by kbValidatePath or derived from a WalkDir of the KB root
+	data, err := os.ReadFile(path) //#nosec G304 // path is KB-internal, validated by ValidateKBPath or derived from a WalkDir of the KB root
 	if err != nil {
 		return "", err
 	}
@@ -143,21 +149,21 @@ func hashFile(path string) (string, error) {
 }
 
 // cachedScan returns a cached manifest for the given tree, re-scanning only
-// when the root's modtime has changed since the last scan. This makes the
-// steady-state poll (If-None-Match hit) nearly free — the scan is only re-run
-// when the tree actually changed.
+// when the tree-wide signature (max mtime across all files and subdirectories
+// + total file count) has changed since the last scan. This detects in-place
+// edits at any depth — directory mtime alone misses content changes — and
+// makes the steady-state poll (If-None-Match hit) nearly free.
 func (c *kbManifestCache) cachedScan(root string, policy KBScopePolicy, authority string, scope KBScopeRef) (*KBManifest, error) {
-	info, err := os.Stat(root)
+	maxMtime, fileCount, err := kbTreeSignature(root)
 	if err != nil {
 		return nil, fmt.Errorf("stat kb root: %w", err)
 	}
-	rootMtime := info.ModTime()
 
 	c.mu.Lock()
 	cached, ok := c.scans[root]
 	c.mu.Unlock()
 
-	if ok && cached.rootMtime.Equal(rootMtime) {
+	if ok && cached.maxMtime.Equal(maxMtime) && cached.fileCount == fileCount {
 		return cached.manifest, nil
 	}
 
@@ -167,14 +173,46 @@ func (c *kbManifestCache) cachedScan(root string, policy KBScopePolicy, authorit
 	}
 
 	c.mu.Lock()
-	c.scans[root] = &kbCachedManifest{manifest: manifest, rootMtime: rootMtime}
+	c.scans[root] = &kbCachedManifest{manifest: manifest, maxMtime: maxMtime, fileCount: fileCount}
 	c.mu.Unlock()
 
 	return manifest, nil
 }
 
+// kbTreeSignature walks the tree and returns the latest mtime across all
+// files and subdirectories plus the total file count. This is the cache
+// invalidation key: if either value changes, the manifest is re-scanned.
+// Unlike the root-directory mtime alone, this detects in-place content edits
+// at any depth (KSP §2.5).
+func kbTreeSignature(root string) (time.Time, int, error) {
+	var maxMtime time.Time
+	var fileCount int
+
+	walkErr := filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil //nolint:nilerr // walk continues past the errored entry
+		}
+		if info.ModTime().After(maxMtime) {
+			maxMtime = info.ModTime()
+		}
+		if info.Mode().IsRegular() {
+			fileCount++
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return time.Time{}, 0, walkErr
+	}
+
+	return maxMtime, fileCount, nil
+}
+
 // invalidate removes the cached manifest for a tree, forcing the next scan to
-// re-read. Called after a write lands (slice 4) or when the watcher fires.
+// re-read. Called after a write lands or when the watcher fires.
 func (c *kbManifestCache) invalidate(root string) {
 	c.mu.Lock()
 	delete(c.scans, root)
@@ -186,21 +224,35 @@ func (c *kbManifestCache) invalidate(root string) {
 //
 //nolint:gocritic // unnamedResult: results are clear from context
 func kbReadFile(root, relPath string) ([]byte, string, time.Time, error) {
-	cleaned, err := kbValidatePath(relPath)
+	cleaned, err := ValidateKBPath(relPath)
 	if err != nil {
 		return nil, "", time.Time{}, err
 	}
 	full := filepath.Join(root, cleaned)
 
-	info, err := os.Stat(full)
+	// Reject symlinks: Lstat does not follow them, so a symlink inside the
+	// KB tree is caught here (KSP §2.2, §10). A symlink pointing outside the
+	// root would otherwise leak arbitrary file bytes.
+	info, err := os.Lstat(full)
 	if err != nil {
 		return nil, "", time.Time{}, err
 	}
-	if !isKBFile(info) {
+	if !info.Mode().IsRegular() {
 		return nil, "", time.Time{}, fmt.Errorf("not a regular file: %s", relPath)
 	}
 
-	data, err := os.ReadFile(full) //#nosec G304 // full is filepath.Join(root, cleaned) where cleaned passed kbValidatePath
+	// Resolve symlinks on the full path and verify the resolved path is
+	// still inside the root (defense in depth — Lstat already rejected the
+	// direct symlink case, but a component of the path could be a symlink).
+	resolved, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		return nil, "", time.Time{}, err
+	}
+	if !isPathInsideRoot(resolved, root) {
+		return nil, "", time.Time{}, fmt.Errorf("kb: path escapes root: %s", relPath)
+	}
+
+	data, err := os.ReadFile(full) //#nosec G304 // full is validated inside root by ValidateKBPath + EvalSymlinks + isPathInsideRoot
 	if err != nil {
 		return nil, "", time.Time{}, err
 	}
@@ -213,13 +265,37 @@ func kbReadFile(root, relPath string) ([]byte, string, time.Time, error) {
 	return data, digest, info.ModTime().UTC(), nil
 }
 
-// kbFindEntry looks up an entry in a manifest by path. Returns nil when the
+// isPathInsideRoot reports whether resolved is contained within root after
+// both are cleaned and made absolute. Used after EvalSymlinks to verify a
+// resolved path did not escape the KB root (KSP §2.2, §10).
+func isPathInsideRoot(resolved, root string) bool {
+	// Resolve symlinks on root too — on macOS /tmp is a symlink to
+	// /private/tmp, so an un-resolved root would fail the containment check
+	// against a resolved file path.
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		resolvedRoot = root // fallback to the un-resolved root
+	}
+	absRoot, err := filepath.Abs(filepath.Clean(resolvedRoot))
+	if err != nil {
+		return false
+	}
+	absResolved, err := filepath.Abs(filepath.Clean(resolved))
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absRoot, absResolved)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+// KBFindEntry looks up an entry in a manifest by path. Returns nil when the
 // path is not in the manifest (KSP §4.2: 404). Used by the file handler to
 // verify a path is in the serving manifest before reading.
-//
-//nolint:unused // used by kbmanifest_test.go (lint run.tests=false) + slice 4
-func kbFindEntry(m *KBManifest, path string) *KBEntry {
-	cleaned, err := kbValidatePath(path)
+func KBFindEntry(m *KBManifest, path string) *KBEntry {
+	cleaned, err := ValidateKBPath(path)
 	if err != nil {
 		return nil
 	}

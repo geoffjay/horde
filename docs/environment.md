@@ -69,6 +69,13 @@ environment variable (any extension: `yaml`, `yml`, `json`, `toml`).
 | `log.output`                     | `stderr`            | `HORDE_LOG_OUTPUT`                     | Log destination for `serve`/`agent`: `stderr`, `stdout`, or `file`. The TUI ignores this for its own display (it always captures logs into an in-memory buffer shown on its logs page), but honors `file` to additionally tee those lines to disk. |
 | `log.file`                       | _(empty)_           | `HORDE_LOG_FILE`                      | File path written to when `log.output` is `file`. Empty falls back to `stderr` (with a warning). |
 | `service.id`                     | `org.horde.Horde`   | `HORDE_SERVICE_ID`                      | Service identifier.                      |
+| `knowledgebase.sync.enabled`       | `false`             | `HORDE_KNOWLEDGEBASE_SYNC_ENABLED`       | Opt-in knowledgebase synchronization (KSP v1). When false (the default) KB routes return 501 and no convergence runs. |
+| `knowledgebase.sync.watch_local`   | `false`             | `HORDE_KNOWLEDGEBASE_SYNC_WATCH_LOCAL`   | When true a participant watches its own tree and pushes local edits to the authority. Default false (read-only convergence). |
+| `knowledgebase.sync.workspace_root`| *(empty)*           | `HORDE_KNOWLEDGEBASE_SYNC_WORKSPACE_ROOT`| Node-local root for participant KB materialization (`<root>/<kind>/<id>/.horde/knowledgebase/`). Empty defaults to `<data_dir>/workspaces`. |
+| `knowledgebase.sync.poll_interval` | `30s`               | `HORDE_KNOWLEDGEBASE_SYNC_POLL_INTERVAL` | How often a participant polls the authority's manifest for convergence. |
+| `knowledgebase.sync.debounce`     | `500ms`             | `HORDE_KNOWLEDGEBASE_SYNC_DEBOUNCE`      | Watcher debounce window for coalescing file events. |
+| `knowledgebase.sync.max_file_size` | `1048576`          | `HORDE_KNOWLEDGEBASE_SYNC_MAX_FILE_SIZE` | Per-file size cap in bytes (1 MiB default). Files exceeding this are excluded from the manifest. |
+| `knowledgebase.sync.ignore`       | `["*.tmp","*.swp","*~",".git/**"]` | `HORDE_KNOWLEDGEBASE_SYNC_IGNORE` | KB-root-relative globs to skip during manifest scans. Empty defaults to editor swap files and git metadata. |
 
 ### AAP agent declarations (`agents.<name>.*`)
 

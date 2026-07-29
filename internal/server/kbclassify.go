@@ -1,13 +1,9 @@
 package server
 
-// kbDigestAbsent represents "no entry" in the three-way comparison (a path
-// absent from the authority's manifest, or absent from local disk). It is
-// distinct from any real digest value.
-const kbDigestAbsent = "" //nolint:unused // used by kbclassify_test.go (lint run.tests=false)
-
 // kbClassifyAction is the convergence action for one path from the three-way
-// comparison (KSP §5.1). Stage 1 executes the clean rows and handles the dirty
-// rows by preserving the local file to the conflict area (KSP §5.2).
+// comparison (KSP §5.1). A read-only participant executes the clean rows and
+// handles the dirty rows by preserving the local file to the conflict area
+// (KSP §5.2).
 type kbClassifyAction int
 
 const (
@@ -23,20 +19,25 @@ const (
 	kbActDeleteLocal
 	// kbActConflict: D ≠ S — a local edit that conflicts with remote state
 	// (concurrent edit, or edited-locally-then-deleted-upstream, or an
-	// untracked local file at a path that exists upstream). Stage 1: preserve
-	// to the conflict area, then converge to canonical.
+	// untracked local file at a path that exists upstream). A non-pushing
+	// node preserves to the conflict area, then converges to canonical.
 	kbActConflict
-	// kbActPush: local edit only, clean upstream — push If-Match: S. Stage 2
-	// only; stage 1 treats this as a conflict (preserve, then converge).
+	// kbActPush: local edit only, clean upstream — push If-Match: S. Push path
+	// only; a non-pushing node treats this as a conflict (preserve, then
+	// converge).
 	kbActPush
-	// kbActPushNew: new local file — push If-None-Match: *. Stage 2 only;
-	// stage 1 treats this as a conflict.
+	// kbActPushNew: new local file — push If-None-Match: *. Push path only;
+	// a non-pushing node treats this as a conflict.
 	kbActPushNew
-	// kbActPushDelete: deleted locally, exists upstream — push DELETE If-Match: S.
-	// Stage 2 only; stage 1 treats this as a conflict (preserve nothing to
-	// delete, but the missing local file means the authority's version is
-	// canonical, so pull it).
+	// kbActPushDelete: deleted locally, exists upstream — push DELETE
+	// If-Match: S. Push path only; a non-pushing node treats this as a
+	// conflict (preserve nothing to delete, but the missing local file means
+	// the authority's version is canonical, so pull it).
 	kbActPushDelete
+	// kbActDropRecord: the authority deleted the file and the node already
+	// removed it from disk, but a stale sync record remains. Drop the record
+	// without touching the filesystem (KSP §5.1: A=—, S=x, D=—).
+	kbActDropRecord
 )
 
 // kbClassifyResult is the three-way classification for one path.
@@ -55,8 +56,8 @@ type kbClassifyResult struct {
 // digest (D), and returns the convergence action. Empty string = absent.
 //
 // This is the correctness core of KSP — it is a pure function, exhaustively
-// covered by the table-driven test. The stage-1 caller maps push actions to
-// conflicts (KSP §5.2: a stage-1 node does not push).
+// covered by the table-driven test. A non-pushing caller maps push actions to
+// conflicts (KSP §5.2: a read-only participant does not push).
 //
 //nolint:gocyclo // exhaustive KSP §5.1 table — one case per row
 func classifyPath(authority, synced, disk string) kbClassifyResult {
@@ -80,6 +81,11 @@ func classifyPath(authority, synced, disk string) kbClassifyResult {
 	case a && s && d && match(authority, synced) && disk != synced:
 		return kbClassifyResult{Action: kbActPush, AuthorityDigest: authority, SyncedDigest: synced, DiskDigest: disk}
 
+	// A=y, S=x, D=y — local edit matches the new upstream (authority == disk).
+	// The local change converges to the same content as the remote, so this
+	// is a clean pull: set S=A, the file already matches (no-op write).
+	case a && s && d && match(authority, disk):
+		return kbClassifyResult{Action: kbActPull, AuthorityDigest: authority, SyncedDigest: synced, DiskDigest: disk}
 	// A=y, S=x, D=z — concurrent remote + local change
 	case a && s && d && authority != synced && disk != synced && !match(synced, disk):
 		return kbClassifyResult{Action: kbActConflict, AuthorityDigest: authority, SyncedDigest: synced, DiskDigest: disk}
@@ -96,11 +102,26 @@ func classifyPath(authority, synced, disk string) kbClassifyResult {
 	case a && s && !d && match(authority, synced):
 		return kbClassifyResult{Action: kbActPushDelete, AuthorityDigest: authority, SyncedDigest: synced, DiskDigest: ""}
 
-	// A=x, S=—, D=z — exists upstream, untracked local file
+	// A=y, S=x, D=— — deleted locally, changed upstream. The file was
+	// deleted locally but the authority's version changed; pull the new
+	// version (re-materialize from authority). Without this case the path
+	// falls through to default → none, never converging.
+	case a && s && !d && authority != synced:
+		return kbClassifyResult{Action: kbActPull, AuthorityDigest: authority, SyncedDigest: synced, DiskDigest: ""}
+
+		// A=x, S=—, D=z — exists upstream, untracked local file. If the content
+		// matches, record it as synced (no-op write); otherwise it's a conflict.
+	case a && !s && d && match(authority, disk):
+		return kbClassifyResult{Action: kbActPullNew, AuthorityDigest: authority, SyncedDigest: "", DiskDigest: disk}
 	case a && !s && d:
 		return kbClassifyResult{Action: kbActConflict, AuthorityDigest: authority, SyncedDigest: "", DiskDigest: disk}
 
 	// A=—, S=—, D=z — new local file
+	// A=—, S=x, D=— — deleted upstream and locally; stale sync record remains.
+	// Drop the record without touching the filesystem.
+	case !a && s && !d:
+		return kbClassifyResult{Action: kbActDropRecord, AuthorityDigest: "", SyncedDigest: synced, DiskDigest: ""}
+
 	case !a && !s && d:
 		return kbClassifyResult{Action: kbActPushNew, AuthorityDigest: "", SyncedDigest: "", DiskDigest: disk}
 
@@ -114,20 +135,21 @@ func classifyPath(authority, synced, disk string) kbClassifyResult {
 	}
 }
 
-// classifyStage1 maps the raw three-way result to a stage-1 action. Stage 1
-// does not push (KSP §5.2): any push action becomes a conflict (preserve the
-// local file, then converge to canonical). The only actions stage 1 executes
-// are: none, pull (including pull-new), delete-local, and conflict (preserve).
+// classifyStage1 maps the raw three-way result to an action for a
+// non-pushing node. A read-only participant does not push (KSP §5.2): any
+// push action becomes a conflict (preserve the local file, then converge to
+// canonical). The only actions it executes are: none, pull (including
+// pull-new), delete-local, and conflict (preserve).
 func classifyStage1(authority, synced, disk string) kbClassifyResult {
 	r := classifyPath(authority, synced, disk)
 	switch r.Action {
 	case kbActPush, kbActPushNew:
-		// A local edit a stage-1 node cannot propagate. Preserve to the
-		// conflict area, then pull the authority's version (KSP §5.2).
+		// A local edit a non-pushing node cannot propagate. Preserve to
+		// the conflict area, then pull the authority's version (KSP §5.2).
 		r.Action = kbActConflict
 	case kbActPushDelete:
-		// Deleted locally but exists upstream. Stage 1: the authority's
-		// version is canonical — pull it back (re-materialize).
+		// Deleted locally but exists upstream. A non-pushing node: the
+		// authority's version is canonical — pull it back (re-materialize).
 		r.Action = kbActPull
 	}
 	return r

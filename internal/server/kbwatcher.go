@@ -17,10 +17,10 @@ import (
 // invalidates the manifest cache so the read API serves fresh data without a
 // manual InvalidateCache call.
 //
-// The watcher is the slice-2 deliverable: editing a file on the authority now
-// shows up through the API immediately (within the debounce window) rather than
-// waiting for the next poll-driven mtime check. The same component is reused
-// verbatim in slice 5 for the participant's tree (KSP §11).
+// The watcher makes editing a file on the authority show up through the API
+// immediately (within the debounce window) rather than waiting for the next
+// poll-driven mtime check. The same component is reused for local-edit
+// propagation on the participant's tree (KSP §11).
 //
 // Lifecycle is ctx-driven (no Stop()): the goroutine started by run exits when
 // ctx is canceled, closing the underlying fsnotify watcher and freeing its fds.
@@ -67,10 +67,12 @@ const defaultKBDebounce = 500 * time.Millisecond
 // Add is goroutine-safe.
 func (w *kbWatcher) addTree(root string) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	if w.watched[root] {
+		w.mu.Unlock()
 		return
 	}
+	w.mu.Unlock()
+
 	// Watch the root directory. fsnotify on Linux delivers events for files
 	// within a watched directory; on macOS (kqueue) each file needs its own
 	// watch, but the KB tree is small (OKF docs are kilobytes, tens of files),
@@ -85,10 +87,7 @@ func (w *kbWatcher) addTree(root string) {
 		if err != nil {
 			return nil //nolint:nilerr // walk continues past the errored entry
 		}
-		if !d.IsDir() {
-			return nil
-		}
-		if path == root {
+		if !d.IsDir() || path == root {
 			return nil
 		}
 		if err := w.fsw.Add(path); err != nil {
@@ -96,7 +95,11 @@ func (w *kbWatcher) addTree(root string) {
 		}
 		return nil
 	})
+
+	// Lock only to update the watched map, not across WalkDir.
+	w.mu.Lock()
 	w.watched[root] = true
+	w.mu.Unlock()
 }
 
 // removeTree stops watching a tree root. Called when a project is finished or

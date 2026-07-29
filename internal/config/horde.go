@@ -128,9 +128,9 @@ type KBSyncConfig struct {
 	// Enabled is the opt-in switch for KSP synchronization. Default false:
 	// the knowledgebase stays purely local.
 	Enabled bool `mapstructure:"enabled"`
-	// WatchLocal is the stage-2 switch: when true a participant watches its
-	// own tree and pushes local file edits to the authority. Default false
-	// (stage 1: converge and read only).
+	// WatchLocal is the local-edit switch: when true a participant watches
+	// its own tree and pushes local file edits to the authority. Default
+	// false (a read-only participant converges and reads only).
 	WatchLocal bool `mapstructure:"watch_local"`
 	// WorkspaceRoot is the node-local root under which a participant
 	// materializes synced scopes: <root>/<kind>/<id>/.horde/knowledgebase/.
