@@ -297,6 +297,12 @@ type Server struct {
 	// changes and invalidates the manifest cache on edits (slice 2). nil when
 	// sync is disabled or this node is not the authority.
 	kbWatcher *kbWatcher
+	// kbSyncMgr manages per-scope sync record stores (synced_digest, KSP §2.4).
+	// Populated in New when sync is enabled; nil when disabled.
+	kbSyncMgr *kbSyncStoreManager
+	// kbConflict is the node-local conflict area for preserving dirty local
+	// files before convergence overwrites them (KSP §6.1). nil when disabled.
+	kbConflict *kbConflictArea
 
 	// now returns the current time. A field so tests can inject a clock when
 	// exercising slave staleness; defaults to time.Now.
@@ -321,6 +327,9 @@ const logKeyAgent = "agent"
 
 // logKeyProject is the logrus field key for a project id.
 const logKeyProject = "project"
+
+// logKeyPath is the logrus field key for a KB path.
+const logKeyPath = "path"
 
 // AgentState is the lifecycle state of a spawned agent subprocess.
 type AgentState string
@@ -461,13 +470,23 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 
 	// Register KB scope resolvers when sync is enabled. The project scope
 	// is the only kind registered in v1; an unregistered kind returns 404.
-	if cfg.KBSync.Enabled {
-		s.kbScopes = map[string]ScopeResolver{
-			kbScopeKindProject: newProjectScope(s),
-		}
-		s.kbManifestCache = newKBManifestCache()
-	}
+	s.setupKBSync(cfg)
 	return s, nil
+}
+
+// setupKBSync wires the KB scope resolver, manifest cache, sync record store,
+// and conflict area when KB sync is enabled (KSP v1). The project scope is the
+// only kind registered in v1; an unregistered kind returns 404.
+func (s *Server) setupKBSync(cfg Config) { //nolint:gocritic // hugeParam: matches New's value-receiver convention
+	if !cfg.KBSync.Enabled {
+		return
+	}
+	s.kbScopes = map[string]ScopeResolver{
+		kbScopeKindProject: newProjectScope(s),
+	}
+	s.kbManifestCache = newKBManifestCache()
+	s.kbSyncMgr = newKBSyncStoreManager(cfg.StateDir)
+	s.kbConflict = newKBConflictArea(cfg.DataDir)
 }
 
 // raftApply replicates a command through this node's raft log and returns the
@@ -517,6 +536,11 @@ func (s *Server) Start(ctx context.Context) error {
 	// fresh data without a manual invalidate call. No-op when sync is
 	// disabled or on a participant (no canonical tree to watch locally).
 	s.startKBWatcher(ctx)
+
+	// Start the KB convergence loop on participants (slice 3). A participant
+	// polls the authority's manifest and converges its local tree. No-op on
+	// the authority (it IS the canonical state) or when sync is disabled.
+	s.startKBConvergence(ctx)
 
 	return nil
 }
@@ -1685,6 +1709,23 @@ func (s *Server) kbUnwatchProject(p *Project) {
 		return
 	}
 	s.kbWatcher.removeTree(root)
+}
+
+// startKBConvergence starts the periodic KB convergence loop on participants
+// (slice 3). A participant polls the authority's manifest and converges its
+// local tree: pulls remote changes, deletes locally when upstream deletes,
+// and preserves dirty local files to the conflict area before overwriting
+// (KSP §5.1, §5.2). No-op on the authority or when sync is disabled.
+func (s *Server) startKBConvergence(ctx context.Context) {
+	if !s.cfg.KBSync.Enabled {
+		return
+	}
+	conv := newKBConverger(s)
+	if conv == nil {
+		return // no leader address (master mode or not yet connected)
+	}
+	go conv.run(ctx)
+	logrus.Debug("kb convergence loop started")
 }
 
 // pollAgentHealths polls every running agent's /health endpoint.

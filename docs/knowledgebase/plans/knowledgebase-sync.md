@@ -6,7 +6,7 @@ tags: [plan, knowledgebase, sync, distributed, cluster, projects]
 timestamp: 2026-07-28T00:00:00Z
 ---
 
-> **Status: stage 1, slices 1–2 landed.** Roadmap phase 6. This builds
+> **Status: stage 1, slices 1–3 landed.** Roadmap phase 6. This builds
 > horde's central differentiator — the per-project knowledgebase as a
 > *cluster-shared* brain — which the
 > [persistence-and-knowledgebase decision](../decisions/persistence-and-knowledgebase.md)
@@ -189,7 +189,7 @@ have to be migrated later.
 2. **Authority watcher.** ✅ fsnotify on the canonical tree, debounced, maintaining
    the manifest incrementally. Editing a file on the authority now shows up
    through the API. *This watcher component is reused verbatim in slice 5.*
-3. **Participant convergence.** Node-local workspace root; persisted
+3. **Participant convergence.** ✅ Node-local workspace root; persisted
    scope-keyed sync records (`synced_digest`); periodic manifest poll →
    three-way classify (KSP §5.1) → pull / delete-locally; dirty local files
    preserved to the conflict area rather than overwritten (KSP §5.2). Verify a
