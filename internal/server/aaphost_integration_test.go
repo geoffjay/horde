@@ -45,7 +45,7 @@ func TestSpawnAAPAgent_MockBinary(t *testing.T) {
 
 	// Invoke a turn through the AAPInvoke path and assert a token event
 	// arrives with the mock's reply.
-	evCh, errCh := srv.AAPInvoke(ctx, id, "", "", "hi")
+	evCh, errCh := srv.AAPInvoke(ctx, id, "", "", "hi", nil)
 	var events []AAPStreamEvent
 	for ev := range evCh {
 		events = append(events, ev)
@@ -165,7 +165,7 @@ func TestAAPInvoke_SecondInvokeReplaysBuffer(t *testing.T) {
 	srv.mu.Unlock()
 
 	// First invoke runs the turn.
-	evCh, errCh := srv.AAPInvoke(ctx, "fake", "", "inv-1", "hello")
+	evCh, errCh := srv.AAPInvoke(ctx, "fake", "", "inv-1", "hello", nil)
 	var first []AAPStreamEvent
 	for ev := range evCh {
 		first = append(first, ev)
@@ -175,7 +175,7 @@ func TestAAPInvoke_SecondInvokeReplaysBuffer(t *testing.T) {
 
 	// Second invoke with the same invocation id replays the buffer without
 	// starting a new turn.
-	evCh2, errCh2 := srv.AAPInvoke(ctx, "fake", "", "inv-1", "hello")
+	evCh2, errCh2 := srv.AAPInvoke(ctx, "fake", "", "inv-1", "hello", nil)
 	var replayed []AAPStreamEvent
 	for ev := range evCh2 {
 		replayed = append(replayed, ev)
@@ -216,7 +216,7 @@ func TestAAPInvoke_StreamsBeforeTurnCompletes(t *testing.T) {
 	require.NoError(t, err)
 	injectAAPProc(t, srv, "fake", s)
 
-	evCh, errCh := srv.AAPInvoke(ctx, "fake", "", "inv-live", "run tool")
+	evCh, errCh := srv.AAPInvoke(ctx, "fake", "", "inv-live", "run tool", nil)
 
 	// The message token must arrive before we resolve the approval; otherwise
 	// this loop times out (the old buffer-at-end behavior).
@@ -261,7 +261,7 @@ func TestAAPInvoke_TurnSurvivesClientDisconnect(t *testing.T) {
 	injectAAPProc(t, srv, "fake", s)
 
 	clientCtx, clientCancel := context.WithCancel(ctx)
-	evCh, errCh := srv.AAPInvoke(clientCtx, "fake", "", "inv-dc", "run tool")
+	evCh, errCh := srv.AAPInvoke(clientCtx, "fake", "", "inv-dc", "run tool", nil)
 
 	// Wait until the turn is mid-flight (approval pending).
 	require.Eventually(t, func() bool {
@@ -284,7 +284,7 @@ func TestAAPInvoke_TurnSurvivesClientDisconnect(t *testing.T) {
 	// reconnecting client sees it through to done.
 	require.NoError(t, s.resolvePending("req-inv-dc", aap.DecisionAllow))
 
-	ev2, err2 := srv.AAPInvoke(ctx, "fake", "", "inv-dc", "run tool")
+	ev2, err2 := srv.AAPInvoke(ctx, "fake", "", "inv-dc", "run tool", nil)
 	var sawDone bool
 	for ev := range ev2 {
 		if ev.Typ == "done" {

@@ -220,6 +220,27 @@ type PermissionScope struct {
 	DenyPaths     []string
 }
 
+// AAPUserScope is the per-user scope applied to a single AAP turn. It is
+// resolved by the API layer from the request's principal (the recognized
+// user's allowlist, re-derived from local config on a cross-node forward) and
+// threaded through AAPInvoke → runAAPTurn → sendPrompt so the host session
+// can gate tool approvals on the active turn's user. A nil scope means "no
+// per-user restriction" — the turn uses the agent-def-level policy as before.
+//
+// The filesystem PermissionScope is advisory-only at initialize time (the
+// adapter subprocess is created before any user is known); the per-user
+// filesystem scope is enforced via the tool gate in resolveApproval, not via
+// initialize.permissions (see buildInitialize).
+type AAPUserScope struct {
+	// AllowedTools is the per-user tool allowlist. Empty ⇒ all tools
+	// allowed (current behavior). Non-empty ⇒ a tool not in the list is
+	// denied at approval time.
+	AllowedTools []string
+	// UserID is the identity the scope belongs to (for logging/attribution
+	// only; not the ADK session key).
+	UserID string
+}
+
 // Server is the horde node. It owns a set of agent subprocesses and, when
 // Run is called, blocks until the supplied context is canceled. In slave
 // mode it additionally attempts to connect to a leader in the background.

@@ -110,7 +110,14 @@ mutation gating) is complete: `requireUser` guards `POST /agents`, `DELETE
 /agents/{id}`, `POST /agents/{id}/invoke`, and
 `POST /agents/{id}/approvals/{requestID}` — anonymous mutations are rejected
 at the edge (401), node principals pass, and disabled-by-default is a no-op.
-Slices 4–5 (AAP tool allowlist, docs/KB) remain.
+Slice 4 (AAP tool allowlist + advisory scope) is complete: the invoke path
+resolves a per-user `AAPUserScope` from the request principal (re-derived
+from local config on a cross-node forward via `X-Horde-User`), threads it
+through `AAPInvoke` → `runAAPTurn` → `sendPrompt`, and the host session's
+`resolveApproval` denies any tool not in the user's `AllowedTools`
+(advisory: the per-user filesystem scope is enforced via the tool gate, not
+`initialize.permissions`, since the adapter is created before any user is
+known). Slice 5 (docs/KB) remains.
 
 # Phase 3.6 — AAP host (external coding agents) (complete)
 

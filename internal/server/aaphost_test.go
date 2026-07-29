@@ -117,7 +117,7 @@ func TestAAPHostSession_PromptAndTurnComplete(t *testing.T) {
 	s, cleanup := newTestAAPSession(t, ctx, "fake", AgentDef{Kind: AgentKindAAP, Command: "test"}, false)
 	defer cleanup()
 
-	out, done, err := s.sendPrompt("t1", "hello")
+	out, done, err := s.sendPrompt("t1", "hello", nil)
 	require.NoError(t, err)
 
 	var sawMessage bool
@@ -146,7 +146,7 @@ func TestAAPHostSession_ContextFidelity(t *testing.T) {
 	s, cleanup := newTestAAPSession(t, ctx, "fake", AgentDef{Kind: AgentKindAAP, Command: "test"}, false)
 	defer cleanup()
 
-	_, done, err := s.sendPrompt("t-ctx", "work")
+	_, done, err := s.sendPrompt("t-ctx", "work", nil)
 	require.NoError(t, err)
 	<-done
 
@@ -168,7 +168,7 @@ func TestAAPHostSession_AutoApprove(t *testing.T) {
 	s, cleanup := newTestAAPSession(t, ctx, "fake", def, true)
 	defer cleanup()
 
-	_, done, err := s.sendPrompt("t-appr", "run tool")
+	_, done, err := s.sendPrompt("t-appr", "run tool", nil)
 	require.NoError(t, err)
 	// The fake adapter waits for the approval_response before completing; a
 	// timeout here means auto-approve did not fire.
@@ -184,6 +184,129 @@ func TestAAPHostSession_AutoApprove(t *testing.T) {
 	assert.Empty(t, ctxSnapshot.PendingApprovals, "pending approval should have cleared after allow")
 }
 
+// TestAAPHostSession_ToolGateDeniesDisallowedTool asserts that a per-user
+// allowlist on the active turn denies a tool not in the list, even with
+// auto_approve=true. The fake adapter requests "Bash"; a scope allowing only
+// "Read" denies it, the host writes a deny decision, and the turn completes
+// (the fake adapter treats the deny like any approval_response and proceeds
+// to turn_complete).
+func TestAAPHostSession_ToolGateDeniesDisallowedTool(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	def := AgentDef{Kind: AgentKindAAP, Command: "test", AutoApprove: true}
+	s, cleanup := newTestAAPSession(t, ctx, "fake", def, true)
+	defer cleanup()
+
+	// Scope allows only "Read"; the fake adapter requests "Bash".
+	scope := &AAPUserScope{AllowedTools: []string{"Read"}, UserID: "alice"}
+	_, done, err := s.sendPrompt("t-gate", "run tool", scope)
+	require.NoError(t, err)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err, "turn should complete after the denied approval")
+	case <-time.After(5 * time.Second):
+		t.Fatal("tool-gate deny did not unblock the turn")
+	}
+
+	// The pending approval should have cleared (respondApproval clears it).
+	ctxSnapshot := s.ctxStore.get("fake")
+	require.NotNil(t, ctxSnapshot)
+	assert.Empty(t, ctxSnapshot.PendingApprovals, "denied approval should have cleared")
+}
+
+// TestAAPHostSession_ToolGateAllowsListedTool asserts a tool in the per-user
+// allowlist is allowed (auto_approve=true ⇒ allow as before, the gate is a
+// no-op for a listed tool).
+func TestAAPHostSession_ToolGateAllowsListedTool(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	def := AgentDef{Kind: AgentKindAAP, Command: "test", AutoApprove: true}
+	s, cleanup := newTestAAPSession(t, ctx, "fake", def, true)
+	defer cleanup()
+
+	// "Bash" is in the list; the fake adapter requests "Bash".
+	scope := &AAPUserScope{AllowedTools: []string{"Bash", "Read"}, UserID: "alice"}
+	_, done, err := s.sendPrompt("t-allow", "run tool", scope)
+	require.NoError(t, err)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("listed tool should have been allowed and the turn completed")
+	}
+	assert.Empty(t, s.ctxStore.get("fake").PendingApprovals, "allowed approval should clear")
+}
+
+// TestAAPHostSession_ToolGateNilScopeIsNoOp asserts a nil scope (no per-user
+// restriction) preserves the agent-def policy: auto_approve=true allows the
+// tool as before. This is the backward-compatibility guard.
+func TestAAPHostSession_ToolGateNilScopeIsNoOp(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	def := AgentDef{Kind: AgentKindAAP, Command: "test", AutoApprove: true}
+	s, cleanup := newTestAAPSession(t, ctx, "fake", def, true)
+	defer cleanup()
+
+	_, done, err := s.sendPrompt("t-nil", "run tool", nil)
+	require.NoError(t, err)
+	select {
+	case err := <-done:
+		require.NoError(t, err, "nil scope ⇒ auto_approve applies as before")
+	case <-time.After(5 * time.Second):
+		t.Fatal("nil scope should not gate the approval")
+	}
+}
+
+// TestAAPHostSession_ToolGateEmptyAllowlistAllowsAll asserts a non-nil scope
+// with an empty AllowedTools means "all tools allowed" (the config default
+// for a user without an explicit allowlist). The gate's empty-list path runs.
+func TestAAPHostSession_ToolGateEmptyAllowlistAllowsAll(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	def := AgentDef{Kind: AgentKindAAP, Command: "test", AutoApprove: true}
+	s, cleanup := newTestAAPSession(t, ctx, "fake", def, true)
+	defer cleanup()
+
+	scope := &AAPUserScope{AllowedTools: nil, UserID: "alice"} // empty ⇒ all
+	_, done, err := s.sendPrompt("t-empty", "run tool", scope)
+	require.NoError(t, err)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("empty allowlist should allow all tools")
+	}
+}
+
+// TestAAPHostSession_ToolGateClearsAfterTurn asserts the turnUser is cleared
+// in endTurn so a subsequent turn without a scope is not gated by the prior
+// turn's allowlist.
+func TestAAPHostSession_ToolGateClearsAfterTurn(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	def := AgentDef{Kind: AgentKindAAP, Command: "test", AutoApprove: true}
+	s, cleanup := newTestAAPSession(t, ctx, "fake", def, true)
+	defer cleanup()
+
+	// First turn: scope denies "Bash".
+	scope := &AAPUserScope{AllowedTools: []string{"Read"}, UserID: "alice"}
+	_, done, err := s.sendPrompt("t-first", "run tool", scope)
+	require.NoError(t, err)
+	<-done
+
+	// Second turn: nil scope ⇒ the prior turn's allowlist must not linger.
+	_, done2, err := s.sendPrompt("t-second", "run tool", nil)
+	require.NoError(t, err)
+	select {
+	case err := <-done2:
+		require.NoError(t, err, "second turn should not be gated by the first turn's scope")
+	case <-time.After(5 * time.Second):
+		t.Fatal("turnUser leaked across turns")
+	}
+}
+
 // TestAAPHostSession_NoAutoApproveStaysPending asserts that without
 // auto_approve the approval_request stays pending in the context store.
 func TestAAPHostSession_NoAutoApproveStaysPending(t *testing.T) {
@@ -193,7 +316,7 @@ func TestAAPHostSession_NoAutoApproveStaysPending(t *testing.T) {
 	s, cleanup := newTestAAPSession(t, ctx, "fake", def, true)
 	defer cleanup()
 
-	_, _, err := s.sendPrompt("t-pending", "run tool")
+	_, _, err := s.sendPrompt("t-pending", "run tool", nil)
 	require.NoError(t, err)
 	// Give the adapter a moment to emit the approval_request.
 	time.Sleep(200 * time.Millisecond)
@@ -215,7 +338,7 @@ func TestAAPHostSession_ManualApproveCompletesTurn(t *testing.T) {
 	s, cleanup := newTestAAPSession(t, ctx, "fake", def, true)
 	defer cleanup()
 
-	_, done, err := s.sendPrompt("t-manual", "run tool")
+	_, done, err := s.sendPrompt("t-manual", "run tool", nil)
 	require.NoError(t, err)
 	// Let the approval_request go pending before deciding.
 	time.Sleep(200 * time.Millisecond)
@@ -478,7 +601,7 @@ func TestSpawnAAPAgent_UnknownName(t *testing.T) {
 func TestAAPInvoke_NotAnAAPAgent(t *testing.T) {
 	srv, err := New(Config{Mode: ModeMaster, SpawnDefaultAgent: false})
 	require.NoError(t, err)
-	evCh, errCh := srv.AAPInvoke(context.Background(), "ghost", "", "", "x")
+	evCh, errCh := srv.AAPInvoke(context.Background(), "ghost", "", "", "x", nil)
 	for range evCh {
 	}
 	require.Error(t, <-errCh)
@@ -535,7 +658,7 @@ func TestAAPHostSession_GracefulDegradationNoExecContext(t *testing.T) {
 
 	assert.False(t, s.hasCapability(aap.CapExecutionContext), "mock does not advertise execution_context")
 
-	_, done, err := s.sendPrompt("t1", "hi")
+	_, done, err := s.sendPrompt("t1", "hi", nil)
 	require.NoError(t, err)
 	<-done
 
@@ -611,7 +734,7 @@ func TestAAPHostSession_UnknownFrameSkipped(t *testing.T) {
 	require.NoError(t, s.handshake(".", 5*time.Second))
 	defer func() { _ = s.shutdown(); cancel(); _ = hostStdinW.Close(); _ = hostStdoutR.Close() }()
 
-	out, turnDone, err := s.sendPrompt("t1", "go")
+	out, turnDone, err := s.sendPrompt("t1", "go", nil)
 	require.NoError(t, err)
 	var sawReply bool
 	for {
@@ -675,7 +798,7 @@ func TestAAPHostSession_FatalError(t *testing.T) {
 	require.NoError(t, s.handshake(".", 5*time.Second))
 	defer func() { _ = s.shutdown(); cancel(); _ = hostStdinW.Close(); _ = hostStdoutR.Close() }()
 
-	_, turnDone, err := s.sendPrompt("t1", "go")
+	_, turnDone, err := s.sendPrompt("t1", "go", nil)
 	require.NoError(t, err)
 	select {
 	case err := <-turnDone:

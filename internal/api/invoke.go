@@ -194,6 +194,11 @@ func invokeAAPAgent(srv invokeView, w http.ResponseWriter, r *http.Request, id s
 	if sessionKey != "" {
 		req.SessionID = sessionKey
 	}
+	// Resolve the per-user scope for this turn so the AAP session's tool
+	// gate can deny disallowed tools at approval time. nil when no per-user
+	// restriction applies (auth disabled, anonymous, or a forwarded user
+	// not in local config).
+	userScope := resolveAAPUserScope(srv, r)
 
 	flusher, _ := w.(http.Flusher)
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -207,7 +212,7 @@ func invokeAAPAgent(srv invokeView, w http.ResponseWriter, r *http.Request, id s
 		flusher.Flush()
 	}
 
-	events, errCh := srv.AAPInvoke(r.Context(), id, req.SessionID, req.InvocationID, req.Message)
+	events, errCh := srv.AAPInvoke(r.Context(), id, req.SessionID, req.InvocationID, req.Message, userScope)
 
 	// Track the last written SSE id so a reconnecting client's Last-Event-ID
 	// can resume from the buffer. The server's AAPInvoke replay path uses

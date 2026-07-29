@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -204,4 +205,115 @@ func TestListUsersEndpoint(t *testing.T) {
 		assert.True(t, out[1].Admin)
 		assert.True(t, out[1].You)
 	})
+}
+
+// TestResolveAAPUserScope exercises the per-turn AAP scope derivation for the
+// invoke tool gate: disabled ⇒ nil, anonymous ⇒ nil, user ⇒ its allowlist,
+// forwarded node ⇒ re-derived from local config, unknown forwarded user ⇒ nil.
+func TestResolveAAPUserScope(t *testing.T) {
+	alice := server.UserAuth{ID: "alice", Token: "tok-a", AllowedTools: []string{"Read"}}
+	bob := server.UserAuth{ID: "bob", Token: "tok-b", Admin: true} // no allowlist ⇒ all
+
+	newReq := func(p principal, xUser string) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/agents/x/invoke", nil)
+		if xUser != "" {
+			r.Header.Set(xHordeUserHeader, xUser)
+		}
+		return r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
+	}
+
+	t.Run("disabled ⇒ nil", func(t *testing.T) {
+		srv := fakeAuthView{} // enabled=false
+		r := newReq(principal{kind: principalUser, userID: "alice"}, "")
+		assert.Nil(t, resolveAAPUserScope(srv, r))
+	})
+
+	t.Run("anonymous ⇒ nil", func(t *testing.T) {
+		srv := fakeAuthView{enabled: true, users: []server.UserAuth{alice}}
+		r := newReq(principal{kind: principalAnonymous}, "")
+		assert.Nil(t, resolveAAPUserScope(srv, r))
+	})
+
+	t.Run("user ⇒ its allowlist", func(t *testing.T) {
+		srv := fakeAuthView{enabled: true, users: []server.UserAuth{alice, bob}}
+		r := newReq(principal{kind: principalUser, userID: "alice", allowedTools: []string{"Read"}}, "")
+		scope := resolveAAPUserScope(srv, r)
+		require.NotNil(t, scope)
+		assert.Equal(t, "alice", scope.UserID)
+		assert.Equal(t, []string{"Read"}, scope.AllowedTools)
+	})
+
+	t.Run("user with empty allowlist ⇒ non-nil, all allowed", func(t *testing.T) {
+		srv := fakeAuthView{enabled: true, users: []server.UserAuth{bob}}
+		r := newReq(principal{kind: principalUser, userID: "bob"}, "")
+		scope := resolveAAPUserScope(srv, r)
+		require.NotNil(t, scope, "unrestricted user gets a non-nil scope for attribution")
+		assert.Empty(t, scope.AllowedTools, "empty ⇒ gate's allow-all path runs")
+		assert.Equal(t, "bob", scope.UserID)
+	})
+
+	t.Run("node forwards a known user ⇒ re-derives from local config", func(t *testing.T) {
+		srv := fakeAuthView{enabled: true, users: []server.UserAuth{alice}}
+		r := newReq(principal{kind: principalNode}, "alice")
+		scope := resolveAAPUserScope(srv, r)
+		require.NotNil(t, scope)
+		assert.Equal(t, "alice", scope.UserID)
+		assert.Equal(t, []string{"Read"}, scope.AllowedTools, "allowlist re-derived from local config")
+	})
+
+	t.Run("node forwards an unknown user ⇒ nil (no restriction, not a block)", func(t *testing.T) {
+		srv := fakeAuthView{enabled: true, users: []server.UserAuth{alice}}
+		r := newReq(principal{kind: principalNode}, "charlie")
+		assert.Nil(t, resolveAAPUserScope(srv, r), "unknown forwarded user ⇒ no restriction")
+	})
+
+	t.Run("node without X-Horde-User ⇒ nil", func(t *testing.T) {
+		srv := fakeAuthView{enabled: true, users: []server.UserAuth{alice}}
+		r := newReq(principal{kind: principalNode}, "")
+		assert.Nil(t, resolveAAPUserScope(srv, r))
+	})
+}
+
+// TestResolveAAPUserScope_ThroughMiddleware exercises the full
+// resolvePrincipal → resolveAAPUserScope path, mirroring the invoke handler.
+// The security-critical seam: an external user cannot forge a different
+// identity's allowlist via X-Horde-User (it's honored only for a node caller).
+func TestResolveAAPUserScope_ThroughMiddleware(t *testing.T) {
+	srv := fakeAuthView{
+		clusterToken: "ct",
+		enabled:      true,
+		users: []server.UserAuth{
+			{ID: "alice", Token: "tok-a", AllowedTools: []string{"Read"}},
+			{ID: "bob", Token: "tok-b", AllowedTools: []string{"Bash"}},
+		},
+	}
+	handler := resolvePrincipal(srv)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		scope := resolveAAPUserScope(srv, r)
+		if scope == nil {
+			w.Header().Set("X-Scope", "-")
+			return
+		}
+		w.Header().Set("X-Scope", scope.UserID+":"+strings.Join(scope.AllowedTools, ","))
+	}))
+	run := func(auth, xUser string) string {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/agents/x/invoke", nil)
+		if auth != "" {
+			r.Header.Set("Authorization", auth)
+		}
+		if xUser != "" {
+			r.Header.Set(xHordeUserHeader, xUser)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, r)
+		return rec.Header().Get("X-Scope")
+	}
+
+	// Alice's own token ⇒ her own scope, ignoring a forged X-Horde-User.
+	assert.Equal(t, "alice:Read", run("Bearer tok-a", "bob"), "user token ⇒ own scope; forged header ignored")
+
+	// Anonymous ⇒ no scope.
+	assert.Equal(t, "-", run("", "bob"))
+
+	// Node forwarding for bob ⇒ bob's allowlist re-derived from local config.
+	assert.Equal(t, "bob:Bash", run("Bearer ct", "bob"))
 }

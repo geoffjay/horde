@@ -64,6 +64,11 @@ type aapHostSession struct {
 	turnOut  chan aap.AgentMessage
 	turnDone chan error // closed when the active turn's turn_complete arrives or the turn fails
 	turnID   string
+	// turnUser is the per-user scope stashed for the active turn, set under
+	// turnMu in sendPrompt and cleared in endTurn. The tool gate in
+	// resolveApproval reads it. nil ⇒ no per-user restriction (the agent
+	// def's AutoApprove policy applies as before).
+	turnUser *AAPUserScope
 
 	// pendingApprovals tracks request_id → decision channels. The approval
 	// policy resolves a decision when auto_approve is set; otherwise the
@@ -224,6 +229,16 @@ func (s *aapHostSession) readReadyFrame(r *bufio.Reader) (aap.AgentMessage, erro
 // goroutine is started. On any failure the subprocess is torn down.
 // buildInitialize assembles the initialize frame from the agent definition
 // and any persisted resume token. Optional fields are set only when configured.
+//
+// Per-user filesystem scope (3.5b slice 4): buildInitialize runs at spawn,
+// before any user is known, and AAP v1 has no per-turn permission-update
+// frame — so per-user filesystem scope is enforced via the tool gate in
+// resolveApproval (advisory, best-effort: a disallowed tool can't touch the
+// workspace), not via initialize.permissions. The agent-def-level
+// Permissions field is sent here as-is. True per-user init scope would need
+// per-user agent instances (deferred); buildInitialize is the future hook
+// for that — a per-turn re-initialize frame, or a per-user session, would
+// land here.
 func (s *aapHostSession) buildInitialize(workspace string) aap.Initialize {
 	init := aap.Initialize{
 		ProtocolVersion: aap.ProtocolVersion,
@@ -426,13 +441,16 @@ func (s *aapHostSession) deliverTurn(msg aap.AgentMessage) {
 // startTurn begins a new turn, returning the channel the invoke bridge
 // drains. Only one turn is active at a time; the caller serializes prompts.
 // turnDone is closed when the turn completes (turn_complete) or fails.
-func (s *aapHostSession) startTurn(turnID string) (frames <-chan aap.AgentMessage, done <-chan error) {
+// user is the per-user scope for this turn (nil ⇒ no per-user restriction);
+// it is stashed under turnMu so resolveApproval's tool gate can read it.
+func (s *aapHostSession) startTurn(turnID string, user *AAPUserScope) (frames <-chan aap.AgentMessage, done <-chan error) {
 	out := make(chan aap.AgentMessage, 1)
 	doneCh := make(chan error, 1)
 	s.turnMu.Lock()
 	s.turnOut = out
 	s.turnDone = doneCh
 	s.turnID = turnID
+	s.turnUser = user
 	s.turnMu.Unlock()
 	return out, doneCh
 }
@@ -447,6 +465,7 @@ func (s *aapHostSession) endTurn(err error) {
 	s.turnDone = nil
 	s.turnOut = nil
 	s.turnID = ""
+	s.turnUser = nil
 	s.turnMu.Unlock()
 	if done == nil {
 		return
@@ -474,9 +493,12 @@ func (s *aapHostSession) endTurn(err error) {
 
 // sendPrompt writes a prompt frame and returns the turn output channel. The
 // caller derives the session key above this layer (the project binding) and
-// uses turnID as the AAP turn_id.
-func (s *aapHostSession) sendPrompt(turnID, message string) (frames <-chan aap.AgentMessage, done <-chan error, err error) {
-	out, doneCh := s.startTurn(turnID)
+// uses turnID as the AAP turn_id. user is the per-user scope for this turn
+// (nil ⇒ no per-user restriction; the agent def's AutoApprove policy applies
+// as before). It is stashed under turnMu so resolveApproval's tool gate can
+// read it; cleared in endTurn.
+func (s *aapHostSession) sendPrompt(turnID, message string, user *AAPUserScope) (frames <-chan aap.AgentMessage, done <-chan error, err error) {
+	out, doneCh := s.startTurn(turnID, user)
 	if err := aap.WriteMessage(s.stdin, aap.Prompt{
 		TurnID:  turnID,
 		Content: aap.TextPrompt(message),
@@ -501,7 +523,22 @@ func (s *aapHostSession) cancel(turnID string) {
 // auto_approve the host immediately allows the call and clears the pending
 // ref; otherwise the request stays pending (recorded in the ctxStore) until
 // an external decision arrives via respondApproval or the turn ends.
+//
+// Per-user tool gate (3.5b slice 4): if the active turn carries an AAPUserScope
+// with a non-empty AllowedTools and the requested tool is not in it, the host
+// denies the call immediately (DecisionDeny) regardless of auto_approve. This
+// is the enforcement point for the per-user advisory filesystem scope — a
+// disallowed tool can't touch the workspace. A nil or empty-scope turnUser
+// means "no per-user restriction" — the agent-def policy applies as before.
 func (s *aapHostSession) resolveApproval(req aap.ApprovalRequest) {
+	if s.toolDenied(req.ToolName) {
+		logrus.WithField(logKeyAgent, s.name).
+			WithField("tool", req.ToolName).
+			WithField("request_id", req.RequestID).
+			Info("aap: tool denied by per-user allowlist")
+		s.respondApproval(req.RequestID, aap.DecisionDeny)
+		return
+	}
 	if !s.def.AutoApprove {
 		// Record a pending decision channel so a future respondApproval can
 		// resolve it; no auto-decision is made.
@@ -512,6 +549,25 @@ func (s *aapHostSession) resolveApproval(req aap.ApprovalRequest) {
 		return
 	}
 	s.respondApproval(req.RequestID, aap.DecisionAllow)
+}
+
+// toolDenied reports whether the given tool is disallowed by the active
+// turn's per-user allowlist. Returns false when no per-user scope is in
+// effect (nil scope or empty AllowedTools ⇒ all tools allowed), so the
+// agent-def-level policy applies as before.
+func (s *aapHostSession) toolDenied(toolName string) bool {
+	s.turnMu.Lock()
+	user := s.turnUser
+	s.turnMu.Unlock()
+	if user == nil || len(user.AllowedTools) == 0 {
+		return false
+	}
+	for _, t := range user.AllowedTools {
+		if t == toolName {
+			return false
+		}
+	}
+	return true
 }
 
 // resolvePending resolves a pending approval by request id with an explicit

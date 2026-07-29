@@ -161,13 +161,18 @@ type AAPStreamEvent struct {
 // shape (token/done/error) the ADK path produces, so the invoke URL and SSE
 // response shape are unchanged across agent kinds.
 //
-// The session key (agent_id, project_id) is accepted for signature parity with
-// the ADK invoke path but is unused here: AAP session continuity is carried by
-// the persistent adapter subprocess, not per-invocation. invocationID drives
-// Last-Event-ID resume. The events channel is closed when the turn's buffered
-// events are fully delivered; the err channel receives a terminal error (nil
-// for a normal turn_complete).
-func (s *Server) AAPInvoke(ctx context.Context, agentID, _, invocationID, message string) (events <-chan AAPStreamEvent, errs <-chan error) {
+// user is the per-user scope for this turn (nil ⇒ no per-user restriction).
+// The API layer resolves it from the request's principal — the recognized
+// user's allowlist, re-derived from local config on a cross-node forward —
+// and the host session's tool gate reads it to deny disallowed tools at
+// approval time. The session key (agent_id, project_id) is accepted for
+// signature parity with the ADK invoke path but is unused here: AAP session
+// continuity is carried by the persistent adapter subprocess, not
+// per-invocation. invocationID drives Last-Event-ID resume. The events
+// channel is closed when the turn's buffered events are fully delivered;
+// the err channel receives a terminal error (nil for a normal
+// turn_complete).
+func (s *Server) AAPInvoke(ctx context.Context, agentID, _, invocationID, message string, user *AAPUserScope) (events <-chan AAPStreamEvent, errs <-chan error) {
 	// Resolve the AAP session. Unknown / non-AAP agent returns an error
 	// stream rather than blocking the caller.
 	s.mu.Lock()
@@ -205,7 +210,7 @@ func (s *Server) AAPInvoke(ctx context.Context, agentID, _, invocationID, messag
 		// turn is bounded by the agent lifetime: StopAgent kills the session,
 		// closing the frame channels and ending runAAPTurn.
 		//nolint:gosec // G118: using a request-independent context is the point — the turn must outlive any single client's request.
-		go s.runAAPTurn(context.Background(), session, inv, turnID, invocationID, message)
+		go s.runAAPTurn(context.Background(), session, inv, turnID, invocationID, message, user)
 	}
 
 	// Every client — the primary caller and any reconnecting one — reads the
@@ -223,7 +228,9 @@ func (s *Server) AAPInvoke(ctx context.Context, agentID, _, invocationID, messag
 //
 // turnCtx is a turn-scoped context (not a request): it is canceled on server /
 // agent shutdown, which also kills the session and closes the frame channels.
-func (s *Server) runAAPTurn(turnCtx context.Context, session *aapHostSession, inv *aapInvocation, turnID, invocationID, message string) {
+// user is the per-user scope for this turn (nil ⇒ no per-user restriction);
+// it is stashed on the session so resolveApproval's tool gate can read it.
+func (s *Server) runAAPTurn(turnCtx context.Context, session *aapHostSession, inv *aapInvocation, turnID, invocationID, message string, user *AAPUserScope) {
 	// Announcement event (mirrors the ADK "invocation" event shape: an id +
 	// agent name so the client can correlate).
 	ann, _ := json.Marshal(map[string]string{
@@ -232,7 +239,7 @@ func (s *Server) runAAPTurn(turnCtx context.Context, session *aapHostSession, in
 	})
 	inv.add("invocation", ann)
 
-	out, done, err := session.sendPrompt(turnID, message)
+	out, done, err := session.sendPrompt(turnID, message, user)
 	if err != nil {
 		s.addAAPError(inv, invocationID, err)
 		inv.finish(err)

@@ -133,7 +133,7 @@ type invokeView interface {
 	// closed when the turn is done; the err channel delivers a terminal
 	// error (nil for a normal turn_complete). invocationID drives
 	// Last-Event-ID resume against the per-invocation ring buffer.
-	AAPInvoke(ctx context.Context, agentID, sessionKey, invocationID, message string) (<-chan server.AAPStreamEvent, <-chan error)
+	AAPInvoke(ctx context.Context, agentID, sessionKey, invocationID, message string, user *server.AAPUserScope) (<-chan server.AAPStreamEvent, <-chan error)
 	// IsAAPAgent reports whether the agent is an AAP adapter (vs a native
 	// ADK agent). The invoke handler branches on this: ADK uses the
 	// reverse proxy; AAP uses AAPInvoke.

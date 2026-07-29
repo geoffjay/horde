@@ -125,3 +125,61 @@ func resolveForwardedUser(r *http.Request) (string, bool) {
 	}
 	return "", false
 }
+
+// aapScopeResolver is the minimal surface resolveAAPUserScope needs: the
+// auth-enabled flag and the user table (to re-derive a forwarded user's
+// allowlist). Both authView and invokeView satisfy it.
+type aapScopeResolver interface {
+	AuthEnabled() bool
+	Users() []server.UserAuth
+}
+
+// resolveAAPUserScope builds the per-user AAP turn scope from the request's
+// principal, for the invoke tool gate. Returns nil when no per-user
+// restriction applies:
+//   - auth disabled ⇒ nil (no users configured — backward compatible)
+//   - anonymous ⇒ nil (an anonymous caller has no allowlist; the agent-def
+//     policy applies as before)
+//   - user principal ⇒ the resolved user's allowlist (empty AllowedTools
+//     ⇒ all tools allowed, returned as a non-nil scope with an empty list so
+//     the gate's "empty ⇒ allow all" path runs)
+//   - node principal (cross-node forward) ⇒ re-derive the allowlist from
+//     local config via the echoed X-Horde-User; nil when the header is
+//     absent (no forwarded user) or the id is not in local config
+//     (forwarded from a node with a different user table — treated as no
+//     restriction rather than blocking the turn).
+//
+// A non-nil scope with an empty AllowedTools means "all tools allowed" — the
+// gate's "empty ⇒ allow all" path runs — so an admin or unrestricted user
+// behaves identically to nil. The distinction matters only for attribution
+// (the scope carries the UserID for logging).
+func resolveAAPUserScope(srv aapScopeResolver, r *http.Request) *server.AAPUserScope {
+	if !srv.AuthEnabled() {
+		return nil
+	}
+	p := principalFrom(r)
+	switch p.kind {
+	case principalUser:
+		// An empty AllowedTools on a user principal means "all tools allowed"
+		// (the config default). Return a non-nil scope so the UserID is
+		// available for attribution; the gate's empty-list path runs.
+		return &server.AAPUserScope{
+			AllowedTools: p.allowedTools,
+			UserID:       p.userID,
+		}
+	case principalNode:
+		uid, ok := resolveForwardedUser(r)
+		if !ok {
+			return nil
+		}
+		u, ok := lookupForwardedUser(srv, uid)
+		if !ok {
+			return nil
+		}
+		return &server.AAPUserScope{
+			AllowedTools: u.AllowedTools,
+			UserID:       uid,
+		}
+	}
+	return nil
+}

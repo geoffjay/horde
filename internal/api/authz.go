@@ -84,16 +84,33 @@ func authorizeUser(p *server.Project, userID string, admin bool, level authLevel
 	return errForbidden
 }
 
+// userTable is the minimal surface for looking up a user by id in local
+// config. Both projectAuthorizer (project authz) and aapScopeResolver (the
+// AAP invoke tool gate) satisfy it; the lookup is shared.
+type userTable interface {
+	Users() []server.UserAuth
+}
+
+// lookupForwardedUser looks up a forwarded user id in local config, returning
+// the matching UserAuth and true. resolveForwardedUser yields only the id, so
+// the receiving node re-derives the user's admin flag + tool allowlist from
+// its own (identical, config-defined) user table. Used by
+// forwardedUserIsAdmin (project authz) and the invoke tool-gate scope (AAP).
+func lookupForwardedUser(srv userTable, userID string) (server.UserAuth, bool) {
+	for _, u := range srv.Users() {
+		if u.ID == userID {
+			return u, true
+		}
+	}
+	return server.UserAuth{}, false
+}
+
 // forwardedUserIsAdmin reports whether the given user id is an admin per local
 // config. resolveForwardedUser yields only the id, so the master re-derives
 // admin from its own (identical, config-defined) user table.
-func forwardedUserIsAdmin(srv projectAuthorizer, userID string) bool {
-	for _, u := range srv.Users() {
-		if u.ID == userID {
-			return u.Admin
-		}
-	}
-	return false
+func forwardedUserIsAdmin(srv userTable, userID string) bool {
+	u, ok := lookupForwardedUser(srv, userID)
+	return ok && u.Admin
 }
 
 // requireUser is the mutation-route guard. disabled ⇒ pass; node ⇒ pass
