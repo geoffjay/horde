@@ -99,7 +99,7 @@ every edit.
 * [AAP host — driving external coding agents](plans/aap-host.md) - Phase 3.6: the node spawns AAP adapters over stdio, bridges turns to the invoke SSE stream, wires node-as-approval-authority, and consumes context/error/approval frames at full fidelity.
 * [Phase 4 — Distributed](plans/phase-4-distributed.md) - making a cluster act across nodes, in slices; **complete**: cross-node invoke routing (1), agent placement (2), dns discovery (3), cross-node event fan-out (4), and gossip discovery (5). Automatic leader failover landed as Phase 5 — see [leader failover](plans/leader-failover.md).
 * [Leader failover](plans/leader-failover.md) - Phase 5 (**complete**): opt-in raft election on the gossip ring, master-only state replicated through the raft log, and a stable entry point that survives a leader change.
-* [Knowledgebase sync](plans/phase-6-knowledgebase-sync.md) - Phase 6 (planned): synchronize each project's `.horde/knowledgebase/` across cluster nodes — fsnotify watch, leader-authoritative file-content replication over HTTP, join/leave reconciliation, and LWW conflict resolution. Opt-in; wire format in [KSP v1](/docs/spec/knowledgebase-sync-protocol-v1.md).
+* [Knowledgebase sync](plans/knowledgebase-sync.md) - Phase 6 (planned): share each project's `.horde/knowledgebase/` across the cluster, reaching **symmetric multi-writer** (every node's tree watched) in two stages — authority-serialized writes, content-digest identity, three-way convergence (`synced_digest` vs disk), and compare-and-swap. Opt-in; wire format in [KSP v1](/docs/spec/knowledgebase-sync-protocol-v1.md).
 
 ## References
 

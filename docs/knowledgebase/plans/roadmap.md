@@ -234,32 +234,46 @@ is available as an opt-in mode. Requirements background: the
 
 # Phase 6 — Knowledgebase sync (the distributed shared brain) (planned)
 
-Detailed plan: [Phase 6 — Knowledgebase sync](phase-6-knowledgebase-sync.md).
+Detailed plan: [Knowledgebase sync](knowledgebase-sync.md).
 Spec: [Knowledgebase Sync Protocol v1](/docs/spec/knowledgebase-sync-protocol-v1.md).
 
 horde's central differentiator: every project has a per-project OKF
-knowledgebase, and this phase makes it a **live, cluster-synchronized shared
-brain** rather than a purely local tree. Today `scaffoldKnowledgebase`
+knowledgebase, and this phase makes it a **cluster-shared** brain rather than a
+purely local tree. Today `scaffoldKnowledgebase`
 (`internal/server/knowledgebase.go`) seeds a local `.horde/knowledgebase/` per
 project, but nothing watches or replicates its *files*; the cluster replicates
 only project/team metadata + AAP resume tokens (raft), never file content. The
 [persistence-and-knowledgebase decision](../decisions/persistence-and-knowledgebase.md)
 §4 named KB sync "the hardest problem" and deferred it — this phase builds it.
 
-* Opt-in `kb.sync` config; disabled ⇒ byte-for-byte current (local, git-backed)
-  behavior.
-* Leader-authoritative, file-based, last-writer-wins by server-assigned version
-  (timestamp only a tiebreak, so clock skew can't reorder history). File content
-  travels over new project-scoped HTTP endpoints — never the raft log.
-* Slices: (1) local fsnotify watch + KB read API; (2) push to leader + canonical
-  store; (3) fan-out via the event bus + pull (with loop-suppression, the
-  correctness gate); (4) join/rejoin manifest reconciliation; (5) conflicts +
-  tombstone deletes + hardening; (6) docs/KB. Optional later, tied to Phase 5:
-  replicate the KB manifest (not bytes) through the raft log for instant
-  post-failover authority.
-* Reuses the leader-forward pattern (`ForwardProjectRequest`), the `EventBus`
-  cluster fan-out (`forwardEvents`), and the `X-Horde-User` echo-trust seam for
-  change attribution.
+* Goal: **symmetric multi-writer** — every participating node watches its own
+  `.horde/knowledgebase/`, and an edit on *any* node propagates to the others.
+* Opt-in `knowledgebase.sync` config; disabled ⇒ byte-for-byte current (local,
+  git-backed) behavior.
+* **Authority-serialized writes, content-digest identity, three-way
+  convergence, compare-and-swap.** Digests are authority-independent, so a
+  leader change cannot regress ordering (no version counters, no terms); the
+  manifest is complete rather than incremental (a node that misses any number of
+  updates converges on its next poll); each node tracks `synced_digest`
+  separately from disk, which is how it tells "changed because I pulled it" from
+  "changed because a user edited it" — the pivot that makes multi-writer safe;
+  deletion is absence from the manifest (no tombstones); a write conflict is an
+  explicit `412`, never a silent merge or an arbitrary tiebreak.
+* Delivered in **two stages on one wire protocol** — a stage-2 watcher calls the
+  same CAS endpoint a stage-1 API client calls. *Stage 1*: (1) authority
+  manifest + read API; (2) authority watcher; (3) participant convergence — the
+  KB becomes shared across hosts; (4) CAS writes from any node. *Stage 2*: (5)
+  participant watcher + push — local file edits propagate, the goal; (6) offline
+  replay queue + conflict area. Then (7) docs/KB.
+* **Pull, not event-push**, deliberately: the event bus fans *in* not out
+  (`forwardEvents` is slave→master; there is no outbound push), it drops on slow
+  subscribers by design, and `server.Event` is a closed struct whose "carries no
+  sensitive payload" comment is load-bearing. Polling keeps every call in the
+  node→leader direction the codebase already supports.
+* The one limitation that persists past stage 2: simultaneous edits to the *same
+  file* cannot be auto-merged — the loser gets a preserved copy in a conflict
+  area outside the tree. That is intrinsic to file-granular sync; only
+  structured/CRDT merge avoids it.
 
 Not blocked by (and does not block) mTLS or OS-level sandboxing; it does unblock
 external agents *participating in* a shared knowledgebase, which is why it comes
