@@ -1,7 +1,7 @@
 ---
 type: Plan
 title: Knowledgebase sync — the distributed shared brain
-description: Plan for sharing each project's per-project OKF knowledgebase across the cluster, reaching symmetric multi-writer (every node's tree watched) in two stages — an authority-serialized canonical tree, content-digest identity, three-way convergence, and compare-and-swap writes. Opt-in and backward-compatible; the wire format is KSP v1.
+description: Plan for sharing each project's per-project OKF knowledgebase across the cluster, reaching symmetric multi-writer (every node's tree watched) in two stages — an authority-serialized canonical tree, content-digest identity, three-way convergence, and compare-and-swap writes. Scope-parameterized so team/user/cluster knowledgebases are later extensions, not a protocol revision; project scope ships first. Opt-in and backward-compatible; the wire format is KSP v1.
 tags: [plan, knowledgebase, sync, distributed, cluster, projects]
 timestamp: 2026-07-28T00:00:00Z
 ---
@@ -25,6 +25,14 @@ writable-by-API on every node; stage 2 turns on each node's watcher so local
 file edits propagate. **The wire protocol is the same for both** — a stage-2
 watcher calls the identical CAS write endpoint a stage-1 API client calls — so
 stage 1 is genuinely stage one of the destination, not a detour.
+
+**Scoped, and parameterized on scope.** The long-term intent is knowledgebases
+at several levels — a user's own, a project's, a team's tribal knowledge, the
+cluster's organizational knowledge. Only the **project** scope ships here, but
+the protocol and the code are built around a scope key from day one (KSP §2.1,
+§12) so a further scope is a registration, not a protocol revision or a route
+migration. What is *not* built now is any of the other three: see
+[Future scopes](#future-scopes) for what each is actually blocked on.
 
 # Context
 
@@ -55,15 +63,21 @@ the model below, which reaches the same destination on foundations that hold.
 compare-and-swap.** See [KSP v1](/docs/spec/knowledgebase-sync-protocol-v1.md).
 
 ```
-authority (leader for project P)          participant node
+authority for scope {project, P}          participant node
  <workspace>/.horde/knowledgebase/         <local workspace>/.horde/knowledgebase/
         │  watch (fsnotify)                       │  watch (stage 2)
-        ▼                                         ▼
+        ▼         /api/v1/kb/{kind}/{id}/…        ▼
    canonical manifest ◀── GET manifest (If-None-Match) ── poll + converge
    (path → digest)    ◀── PUT/DELETE (If-Match CAS) ────── writes, both stages
 ```
 
-Five properties do the work:
+Six properties do the work:
+
+- **The replicated unit is a *scope*, not a project.** A scope is `{kind, id}`
+  (KSP §2.1) — a label on the manifest and a key in the route, never an input to
+  convergence. `project` is the only kind registered; the algorithm beneath it is
+  identical for any other. Two scopes are two independent instances: separate
+  manifests, sync records, trees, authority resolution, and authorization.
 
 - **Identity is the content digest**, not an assigned version. Digests are
   authority-independent, so a leader change cannot regress or corrupt ordering —
@@ -71,7 +85,7 @@ Five properties do the work:
 - **The manifest is complete**, not incremental. A node that misses any number
   of updates converges on its next poll. No event stream to miss, no gap
   detection, no acknowledgement tracking.
-- **`synced_digest` is tracked separately from disk** (KSP §2.3). Comparing it
+- **`synced_digest` is tracked separately from disk** (KSP §2.4). Comparing it
   to the on-disk digest is how a node tells *"changed because I pulled it"* from
   *"changed because a user edited it"* — the distinction that makes multi-writer
   safe and whose absence causes silent lost updates. **Maintained from stage 1**,
@@ -111,6 +125,36 @@ Polling keeps every call node→leader (the direction the codebase supports),
 makes missed updates impossible by construction, and leaves `Event` untouched. A
 change signal to trigger an early poll is a later latency optimization only.
 
+## The scope seam
+
+One interface carries everything kind-specific, so registering a second kind
+later touches nothing else:
+
+```go
+// scopeResolver binds a knowledgebase scope kind to the host. Everything else
+// in the converger is kind-independent.
+type scopeResolver interface {
+    Kind() string
+    Validate(id string) error                       // is this a real scope?
+    IsAuthority(id string) bool                     // do we hold canonical state?
+    AuthorityTree(id string) (string, error)        // canonical path, when authority
+    LocalTree(id string) (string, error)            // node-local materialization path
+    Participates(id string) bool                    // do we sync this at all?
+    Authorize(r *http.Request, id string, w bool) error
+}
+```
+
+Convergence, the manifest, the three-way table, and the CAS handlers take a
+`{kind, id}` and a resolver; only `projectScope` implements it. This is a cheap
+shape to adopt now (it is roughly the indirection the project case needs anyway,
+since authority-vs-participant path resolution already differs) and expensive to
+retrofit, because it otherwise diffuses into route shapes, on-disk record keys,
+and the authorization call sites.
+
+Two things must be scope-keyed on disk from the start, for the same reason:
+sync records (KSP §2.4) and the local tree root. A flat per-project layout would
+have to be migrated later.
+
 ## Preconditions this exposes
 
 - **Distinct workspaces required.** `defaultProjectWorkspaceDir = "."`
@@ -120,7 +164,8 @@ change signal to trigger an early poll is a later latency optimization only.
 - **Participants use a node-local *workspace*, not a cache.** The project's
   `Workspace` is an authority-side path that may not exist elsewhere.
   Participants materialize the KB under a node-local workspace root
-  (`<data_dir>/workspaces/<project_id>/` by default) — **a place users and
+  (`<data_dir>/workspaces/<kind>/<id>/` by default — scope-keyed from the start,
+  so a second kind needs no migration) — **a place users and
   agents actually work**, because in stage 2 they edit there. Same location in
   both stages, so promotion needs no migration.
 - **Participants learn projects from the authority.** There is no node↔project
@@ -135,19 +180,22 @@ change signal to trigger an early poll is a later latency optimization only.
 
 ## Stage 1 — shared, readable, writable by API
 
-1. **Authority manifest + read API.** Digest-based manifest over a project's
-   canonical tree; `GET …/kb/manifest` (with `If-None-Match`/`304`) and
-   `GET …/kb/file`; authorization per KSP §9. Scan on request, cache by mtime.
-   Ships value alone: the KB becomes readable over the API and the TUI.
+1. **Authority manifest + read API.** The `scopeResolver` seam with its single
+   `projectScope` implementation; digest-based manifest over a scope's canonical
+   tree; `GET /api/v1/kb/{kind}/{id}/manifest` (with `If-None-Match`/`304`) and
+   `GET …/file`; authorization per KSP §9. Scan on request, cache by mtime.
+   Unregistered kinds `404`. Ships value alone: the KB becomes readable over the
+   API and the TUI.
 2. **Authority watcher.** fsnotify on the canonical tree, debounced, maintaining
    the manifest incrementally. Editing a file on the authority now shows up
    through the API. *This watcher component is reused verbatim in slice 5.*
-3. **Participant convergence.** Node-local workspace root; persisted sync
-   records (`synced_digest`); periodic manifest poll → three-way classify (KSP
-   §5.1) → pull / delete-locally; dirty local files preserved to the conflict
-   area rather than overwritten (KSP §5.2). Serves local reads labeled
+3. **Participant convergence.** Node-local workspace root; persisted
+   scope-keyed sync records (`synced_digest`); periodic manifest poll →
+   three-way classify (KSP §5.1) → pull / delete-locally; dirty local files
+   preserved to the conflict area rather than overwritten (KSP §5.2). Verify a
+   fetched manifest's scope matches the one requested. Serves local reads labeled
    `X-KSP-Authority: participant`. **The KB is now shared across hosts.**
-4. **CAS writes.** `PUT`/`DELETE …/kb/file` with mandatory
+4. **CAS writes.** `PUT`/`DELETE /api/v1/kb/{kind}/{id}/file` with mandatory
    `If-Match`/`If-None-Match: *`, per-path serialization on the authority,
    temp+rename, digest verification; participant-node writes forward to the
    authority and return `412` verbatim. Every node is a write entry point.
@@ -160,7 +208,7 @@ change signal to trigger an early poll is a later latency optimization only.
    propagate** — the goal.
 6. **Offline durability + conflict handling.** A persisted pending-change queue
    so an edit made while disconnected replays on reconnect; the conflict area
-   (`<data_dir>/kb-conflicts/<project_id>/`, uniquely named per KSP §6.1) with
+   (`<data_dir>/kb-conflicts/<kind>/<id>/`, uniquely named per KSP §6.1) with
    operator surfacing.
 
 ## 7. Docs/KB
@@ -180,12 +228,16 @@ Per-slice `log.md` entries land throughout, not only here.
 - **KB routes must not sit inside the forwarded `/projects` group.**
   `projectForwardMiddleware` forwards unconditionally when a leader is set
   (`project_forward.go:19-22`), so a participant could never serve its local
-  copy. Mount KB routes outside that group; convergence uses its own leader
-  client; slice 4 forwards writes explicitly.
-- **Authorization needs both paths.** Reads must use
-  `authorizeProject(…, levelView)` (`authz.go:41`) and must *not* inherit the
-  open-reads policy (`router.go:74-79`) — redaction cannot redact document
-  bytes. Separately, `authorizeProject`'s node branch requires an echoed
+  copy. The scope-keyed route root (`/api/v1/kb/{kind}/{id}/…`) sits outside that
+  group by construction, which is a second reason to prefer it over
+  `/api/v1/projects/{id}/kb/…` — it makes the requirement structural instead of
+  an exception. Convergence uses its own leader client; slice 4 forwards writes
+  explicitly.
+- **Authorization needs both paths.** For `project` scope, reads resolve through
+  `authorizeProject(…, levelView)` (`authz.go:41`) — behind
+  `scopeResolver.Authorize`, so a later kind substitutes its own rule — and must
+  *not* inherit the open-reads policy (`router.go:74-79`), since redaction cannot
+  redact document bytes. Separately, `authorizeProject`'s node branch requires an echoed
   `X-Horde-User` and returns 403 without one (`authz.go:53-67`), but convergence
   pulls are machine-initiated with no user — a node-principal convergence-read
   path is required or sync fails closed once auth is enabled (KSP §9).
@@ -226,6 +278,12 @@ On `Config`: `Knowledgebase KnowledgebaseConfig` with
 stage 1. Add `Config.KBSyncEnabled()` and a `validateKnowledgebase()` method
 (separate, for gocyclo, like `validateAuth`/`validateCluster`).
 
+These keys are the **cross-kind defaults** (poll, debounce, size, ignore,
+workspace root). A later scope kind adds its own sub-block for what is genuinely
+kind-specific — enablement and, where relevant, participation — rather than
+reshaping this one. Deliberately *not* done now: a `scopes:` map with one entry,
+which buys nothing while `project` is the only kind.
+
 **Every key must be added to the `defaults` map** (`horde.go:283`): viper's
 `AutomaticEnv` only resolves keys it already knows, so a key absent there
 silently ignores its `HORDE_*` override. Thread into `server.Config` via
@@ -243,7 +301,9 @@ no unit test may start a watcher).
   428); conflict-area naming uniqueness; debounce coalescing as a pure function
   over synthetic events with an injected clock; `validateKnowledgebase` table;
   **disabled-by-default is a no-op** (config-level — belongs in the unit suite so
-  CI actually runs it, not behind the integration tag).
+  CI actually runs it, not behind the integration tag); **scope handling** — an
+  unregistered kind returns `404`, a manifest whose scope differs from the one
+  requested is rejected, and sync-record keys for two scopes do not collide.
 - **Integration** (`//go:build integration` — real fds, timing, multi-node): a
   real fsnotify watcher observing an edit (including editor write-temp-rename);
   two-node convergence (edit on authority → appears on participant within a
@@ -254,6 +314,52 @@ no unit test may start a watcher).
   participant propagating to the authority and on to a third node; a concurrent
   edit on two nodes producing exactly one canonical winner plus a preserved
   conflict copy on the loser; an offline edit replaying on reconnect.
+
+# Future scopes
+
+Not built here. Each is a separate piece of work, and none is blocked on KSP —
+they are blocked on modelling or policy that does not exist yet. Registering one
+means supplying the four bindings in KSP §12.1 (identity, authority, location,
+authorization) plus, for the narrow ones, participation.
+
+- **`cluster` — organizational knowledge. The easiest.** Identity is a constant,
+  authority is the leader, authorization is read-all / write-admin (the
+  `UserConfig.Admin` flag at `horde.go:215` already exists). It needs only a
+  defined location outside any project workspace. Plausibly the next scope after
+  project, and cheap.
+- **`team` — tribal knowledge. Blocked on the data model.** `Team` is not an
+  entity: it is a struct *inside* a project (`Project.Team`, `project.go:38-42`,
+  `{Agents []TeamAgent, Users []TeamUser}`) with no id, no store, and no
+  existence outside its project. A team knowledgebase cannot be *named* by a
+  scope, let alone located or authorized. First-class cross-project teams with
+  stable ids and membership are the prerequisite — a change to the
+  [project/team/user model](../decisions/project-team-user-model.md), not to
+  sync.
+- **`user` — individual knowledge. Blocked on identity and participation.** Two
+  problems. (1) There is deliberately **no replicated user store**
+  ([per-user-token-auth](../decisions/per-user-token-auth.md)): users are
+  per-node config entries and cross-node identity is the `X-Horde-User`
+  echo-trust seam, so user ids are cluster-consistent only by config convention.
+  (2) A participant materializes a whole tree on local disk, and the
+  convergence-read path lets any node holding the cluster token read it (KSP §9)
+  — so fanning a personal knowledgebase to every node is a disclosure problem.
+  Needs **selective participation** (KSP §3.2): sync a user's scope only to nodes
+  where that user is active. That is real new policy, not a binding.
+
+## Open question: composition across scopes
+
+Once more than one scope exists, an agent working in project P, for user U, on
+team T should plausibly see **one** view rather than four trees to search. That
+needs a resolution model — precedence order (cluster → team → project → user, or
+some other), whether a narrower scope shadows or merges with a wider one at the
+same path, and whether composition happens at read time or is materialized.
+
+**Unresolved, and deliberately not designed here.** It is a *consumer* concern,
+not a replication one: KSP replicates each scope independently and takes no
+position (KSP §1.1). It is recorded because it is the thing that makes several
+knowledgebases useful instead of several places to look — and because it may
+constrain the on-disk layout, so it should be settled before the second scope
+lands, not after.
 
 # Risks / edge cases
 
@@ -286,8 +392,9 @@ no unit test may start a watcher).
 - **Finalize** [KSP v1](/docs/spec/knowledgebase-sync-protocol-v1.md).
 - **New decision** `decisions/knowledgebase-sync.md`: authority-serialized
   multi-writer, why not event-push (fan-in / lossy / closed-`Event`), why
-  digest-identity rather than versions, why `synced_digest` is the pivot, and
-  the staging rationale.
+  digest-identity rather than versions, why `synced_digest` is the pivot, why the
+  protocol is scope-parameterized while only `project` ships, and the staging
+  rationale.
 - **Update** `decisions/persistence-and-knowledgebase.md` §4 (fill the deferred
   sync half), the [roadmap](roadmap.md), `docs/environment.md` +
   `concepts/environment.md` (`knowledgebase.sync.*`), `patterns/index.md` (a

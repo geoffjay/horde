@@ -250,6 +250,16 @@ only project/team metadata + AAP resume tokens (raft), never file content. The
   `.horde/knowledgebase/`, and an edit on *any* node propagates to the others.
 * Opt-in `knowledgebase.sync` config; disabled ⇒ byte-for-byte current (local,
   git-backed) behavior.
+* **Scope-parameterized, project scope only.** The replicated unit is a scope
+  `{kind, id}` — a label on the manifest and a key in the route
+  (`/api/v1/kb/{kind}/{id}/…`), never an input to convergence. Only `project` is
+  registered here; `team`, `user`, and `cluster` are reserved so each becomes a
+  later *registration* (four bindings: identity, authority, location,
+  authorization) rather than a protocol revision or a route migration. `team` is
+  blocked on making teams first-class entities (`Team` is a struct inside a
+  project today), `user` on cluster-consistent identity plus selective
+  participation; `cluster` is the cheap one. How a consumer composes a single
+  view across scopes is an open question, deliberately outside the protocol.
 * **Authority-serialized writes, content-digest identity, three-way
   convergence, compare-and-swap.** Digests are authority-independent, so a
   leader change cannot regress ordering (no version counters, no terms); the
@@ -260,8 +270,8 @@ only project/team metadata + AAP resume tokens (raft), never file content. The
   deletion is absence from the manifest (no tombstones); a write conflict is an
   explicit `412`, never a silent merge or an arbitrary tiebreak.
 * Delivered in **two stages on one wire protocol** — a stage-2 watcher calls the
-  same CAS endpoint a stage-1 API client calls. *Stage 1*: (1) authority
-  manifest + read API; (2) authority watcher; (3) participant convergence — the
+  same CAS endpoint a stage-1 API client calls. *Stage 1*: (1) the scope seam +
+  authority manifest + read API; (2) authority watcher; (3) participant convergence — the
   KB becomes shared across hosts; (4) CAS writes from any node. *Stage 2*: (5)
   participant watcher + push — local file edits propagate, the goal; (6) offline
   replay queue + conflict area. Then (7) docs/KB.
