@@ -154,3 +154,13 @@ func classifyStage1(authority, synced, disk string) kbClassifyResult {
 	}
 	return r
 }
+
+// classifyStage2 is the full three-way comparison for a pushing node (KSP
+// §5.1, stage 2). A participant with watch_local enabled executes the push
+// rows directly: a local edit pushes with If-Match: synced_digest, a new
+// local file pushes with If-None-Match: *, and a deleted-locally file pushes
+// a DELETE If-Match. This is the raw classifyPath result — no remapping —
+// because a pushing node originates changes from its local tree.
+func classifyStage2(authority, synced, disk string) kbClassifyResult {
+	return classifyPath(authority, synced, disk)
+}

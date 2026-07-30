@@ -32,6 +32,17 @@ by clients via `HORDE_USER_TOKEN` / `--token`. Empty disables auth. See
 [`docs/environment.md`](../../../environment.md) and the
 [Phase 3.5b plan](../plans/phase-3.5b-auth.md).
 
+# Knowledgebase sync (opt-in)
+
+Per-project OKF knowledgebase synchronization (KSP v1) is configured via the
+`knowledgebase.sync` block: `enabled`, `watch_local` (stage 2 — participant
+watches its local tree and pushes edits), `workspace_root`, `poll_interval`,
+`debounce`, `max_file_size`, and `ignore`. Empty/disabled ⇒ byte-for-byte
+current (local, git-backed) behavior. See
+[`docs/environment.md`](../../../environment.md), the
+[knowledgebase sync plan](../plans/knowledgebase-sync.md), and
+[KSP v1](/docs/spec/knowledgebase-sync-protocol-v1.md).
+
 # Integration environment
 
 `docker/docker-compose.yml` defines one master and two slaves from a single

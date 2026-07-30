@@ -6,7 +6,7 @@ tags: [plan, knowledgebase, sync, distributed, cluster, projects]
 timestamp: 2026-07-28T00:00:00Z
 ---
 
-> **Status: stage 1 complete (slices 1–4).** Roadmap phase 6. This builds
+> **Status: stage 2 complete (slices 1–6).** Roadmap phase 6. This builds
 > horde's central differentiator — the per-project knowledgebase as a
 > *cluster-shared* brain — which the
 > [persistence-and-knowledgebase decision](../decisions/persistence-and-knowledgebase.md)
@@ -202,14 +202,19 @@ have to be migrated later.
 
 ## Stage 2 — symmetric multi-writer
 
-5. **Participant watcher + push.** Point the slice-2 watcher at the
+5. **Participant watcher + push.** ✅ Point the slice-2 watcher at the
    participant's tree and enable the push rows of KSP §5.1, using
-   `synced_digest` as the `If-Match` base. **Local file edits on any node now
+   `synced_digest` as the `If-Match` base. The watcher triggers an early
+   convergence pass via a buffered channel; the converger classifies local
+   edits even on a 304 (manifest unchanged) because local edits need to be
+   pushed. A 412 conflict preserves the local content to the conflict area
+   before converging to canonical. **Local file edits on any node now
    propagate** — the goal.
-6. **Offline durability + conflict handling.** A persisted pending-change queue
-   so an edit made while disconnected replays on reconnect; the conflict area
-   (`<data_dir>/kb-conflicts/<kind>/<id>/`, uniquely named per KSP §6.1) with
-   operator surfacing.
+6. **Offline durability + conflict handling.** ✅ Offline edits stay on
+   disk with `D ≠ S`; the three-way comparison + persisted sync records are
+   the replay mechanism — on reconnect the next poll classifies and pushes.
+   The conflict area (`<data_dir>/kb-conflicts/<kind>/<id>/`, uniquely named
+   per KSP §6.1) with operator surfacing via `GET /api/v1/kb/{kind}/{id}/conflicts`.
 
 ## 7. Docs/KB
 

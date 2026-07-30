@@ -533,3 +533,51 @@ func sha256Hex(data []byte) string {
 	h := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(h[:])
 }
+
+// getKBConflicts handles GET /api/v1/kb/{kind}/{id}/conflicts (KSP §6.1).
+// Lists preserved conflict copies for the scope so an operator can see what
+// local edits were lost to a CAS conflict. The conflict area is node-local
+// (each node surfaces its own conflicts); this is always served from the
+// local node, never forwarded.
+func getKBConflicts(srv kbView) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		kind := chi.URLParam(r, "kind")
+		id := chi.URLParam(r, "id")
+
+		if !srv.KBSyncEnabled() {
+			w.Header().Set(xKSPEnabledHeader, "false")
+			writeJSON(w, http.StatusNotImplemented, errorResponse{Error: errKBDisabled})
+			return
+		}
+
+		resolver := srv.KBResolveScope(kind)
+		if resolver == nil {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "unknown knowledgebase scope kind: " + kind})
+			return
+		}
+
+		if err := resolver.Validate(id); err != nil {
+			if errors.Is(err, server.ErrProjectNotFound) {
+				writeJSON(w, http.StatusNotFound, errorResponse{Error: errKBScopeNotFound})
+				return
+			}
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+
+		// Authorization: reads require view authority (KSP §9).
+		if err := resolver.Authorize(r, id, false); err != nil {
+			writeKBAuthzError(w, err)
+			return
+		}
+
+		conflicts, err := srv.KBConflicts(kind, id)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "list conflicts: " + err.Error()})
+			return
+		}
+
+		w.Header().Set(xKSPAuthorityHeader, kspAuthorityLabel(resolver, id))
+		writeJSON(w, http.StatusOK, conflicts)
+	}
+}

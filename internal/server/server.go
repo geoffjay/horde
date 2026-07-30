@@ -19,7 +19,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -297,7 +299,15 @@ type Server struct {
 	// kbWatcher watches the canonical KB trees on the authority for filesystem
 	// changes and invalidates the manifest cache on edits. nil when
 	// sync is disabled or this node is not the authority.
+	// kbWatcher watches the canonical KB trees on the authority for filesystem
+	// changes and invalidates the manifest cache on edits. On a participant
+	// with WatchLocal enabled (stage 2), it watches the local tree and
+	// triggers an early convergence pass. nil when sync is disabled.
 	kbWatcher *kbWatcher
+	// kbConverger runs the periodic convergence loop on participants. nil on
+	// the authority or when sync is disabled. The participant watcher signals
+	// it via triggerEarlyPoll when a local edit is detected (stage 2).
+	kbConverger *kbConverger
 	// kbSyncMgr manages per-scope sync record stores (synced_digest, KSP §2.4).
 	// Populated in New when sync is enabled; nil when disabled.
 	kbSyncMgr *kbSyncStoreManager
@@ -417,6 +427,9 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 	if cfg.Port == 0 {
 		cfg.Port = defaultServerPort
 	}
+	if cfg.NodeID == "" {
+		cfg.NodeID = generateNodeID(cfg.Mode)
+	}
 	if cfg.ReadyTimeout == 0 {
 		cfg.ReadyTimeout = defaultReadyTimeout
 	}
@@ -479,6 +492,25 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 	return s, nil
 }
 
+// generateNodeID returns a stable-per-process cluster id when cluster.node_id
+// is not configured. The docs promise "when empty a generated id is used";
+// without one a slave registers with an empty node_id and the master rejects
+// it with 400. The id is "<mode>-<hostname>-<8 hex>" (hostname omitted when
+// unavailable), readable in the cluster view and unique enough to avoid
+// collisions between co-located nodes.
+func generateNodeID(mode Mode) string {
+	var buf [4]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// crypto/rand should not fail; fall back to a time-based suffix.
+		return fmt.Sprintf("%s-%d", mode, time.Now().UnixNano())
+	}
+	suffix := hex.EncodeToString(buf[:])
+	if host, err := os.Hostname(); err == nil && host != "" {
+		return fmt.Sprintf("%s-%s-%s", mode, host, suffix)
+	}
+	return fmt.Sprintf("%s-%s", mode, suffix)
+}
+
 // setupKBSync wires the KB scope resolver, manifest cache, sync record store,
 // and conflict area when KB sync is enabled (KSP v1). The project scope is the
 // only kind registered in v1; an unregistered kind returns 404.
@@ -537,16 +569,19 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start background health polling for agent subprocesses.
 	s.startHealthPolling(ctx)
 
-	// Start the KB tree watcher on the authority. The watcher
-	// invalidates the manifest cache on tree changes so the read API serves
-	// fresh data without a manual invalidate call. No-op when sync is
-	// disabled or on a participant (no canonical tree to watch locally).
-	s.startKBWatcher(ctx)
-
 	// Start the KB convergence loop on participants. A participant
-	// polls the authority's manifest and converges its local tree. No-op on
-	// the authority (it IS the canonical state) or when sync is disabled.
+	// polls the authority's manifest and converges its local tree: pulls
+	// remote changes, pushes local edits (stage 2, WatchLocal), and
+	// preserves dirty local files to the conflict area before overwriting
+	// (KSP §5.1, §5.2). No-op on the authority or when sync is disabled.
+	// Must run before the watcher so the participant watcher can signal it.
 	s.startKBConvergence(ctx)
+
+	// Start the KB tree watcher. On the authority, it watches the canonical
+	// tree and invalidates the manifest cache on edits. On a participant
+	// with WatchLocal (stage 2), it watches the local tree and triggers an
+	// early convergence pass. No-op when sync is disabled.
+	s.startKBWatcher(ctx)
 
 	return nil
 }
@@ -1273,6 +1308,15 @@ func (s *Server) AuthEnabled() bool { return len(s.cfg.Users) > 0 }
 // false). When disabled, KB routes return 501 and no watcher/convergence runs.
 func (s *Server) KBSyncEnabled() bool { return s.cfg.KBSync.Enabled }
 
+// KBConflicts returns preserved conflict copies for a scope (KSP §6.1:
+// conflicts MUST be surfaced to the operator). Reads from the node-local
+// conflict area; returns nil when sync is disabled or the conflict area is
+// empty.
+func (s *Server) KBConflicts(kind, id string) ([]KBConflictEntry, error) {
+	scope := KBScopeRef{Kind: kind, ID: id}
+	return s.kbConflict.List(scope)
+}
+
 // Users returns the configured user identities (id + admin + tools + scope)
 // for the read-only /users endpoint and the TUI users view. Tokens are
 // intentionally excluded from the returned value — they are never surfaced
@@ -1686,44 +1730,82 @@ func (s *Server) startHealthPolling(ctx context.Context) {
 	}()
 }
 
-// startKBWatcher starts the KB tree watcher when sync is enabled
-// and this node is the authority. The watcher observes canonical KB trees for
-// all active projects, debounces filesystem events, and invalidates the
-// manifest cache so the read API serves fresh data. It exits on ctx cancel,
-// closing the underlying fsnotify watcher and freeing its fds.
+// startKBWatcher starts the KB tree watcher when sync is enabled. On the
+// authority, the watcher observes canonical KB trees, debounces filesystem
+// events, and invalidates the manifest cache so the read API serves fresh
+// data. On a participant with WatchLocal enabled (stage 2), the watcher
+// observes the local tree and triggers an early convergence pass so local
+// edits are pushed (KSP §11). It exits on ctx cancel, closing the
+// underlying fsnotify watcher and freeing its fds.
 func (s *Server) startKBWatcher(ctx context.Context) {
 	if !s.cfg.KBSync.Enabled || s.kbManifestCache == nil {
 		return
 	}
-	// Only the authority watches the canonical tree. A participant has no
-	// canonical tree to watch locally until local-edit propagation is enabled.
-	if !s.isMaster() {
-		return
+
+	if s.isMaster() {
+		s.startKBAuthorityWatcher(ctx)
+	} else if s.cfg.KBSync.WatchLocal {
+		s.startKBParticipantWatcher(ctx)
 	}
-	w, err := newKBWatcher(s.kbManifestCache, s.cfg.KBSync.Debounce)
+}
+
+// startKBAuthorityWatcher starts the authority-side watcher on the canonical
+// tree(s), invalidating the manifest cache on edits (stage 1, slice 2).
+func (s *Server) startKBAuthorityWatcher(ctx context.Context) {
+	w, err := newKBWatcher(s.kbManifestCache.invalidate, s.cfg.KBSync.Debounce)
 	if err != nil {
 		logrus.WithError(err).Warn("kb watcher: failed to create; edits will rely on mtime cache")
 		return
 	}
 	s.kbWatcher = w
 
-	// Watch the canonical tree of every active project. Only the authority
-	// has the canonical tree; a participant watches its local tree for local-edit propagation.
-	if s.isMaster() {
-		projects := s.projects.List(ProjectActive)
-		for i := range projects {
-			root, err := s.kbCanonicalTreePtr(&projects[i])
-			if err != nil {
-				logrus.WithError(err).WithField(logKeyProject, projects[i].ID).
-					Warn("kb watcher: resolve canonical tree failed")
-				continue
-			}
-			w.addTree(root)
+	// Watch the canonical tree of every active project.
+	projects := s.projects.List(ProjectActive)
+	for i := range projects {
+		root, err := s.kbCanonicalTreePtr(&projects[i])
+		if err != nil {
+			logrus.WithError(err).WithField(logKeyProject, projects[i].ID).
+				Warn("kb watcher: resolve canonical tree failed")
+			continue
 		}
+		w.addTree(root)
 	}
 
 	go w.run(ctx)
-	logrus.WithField("authority", s.isMaster()).Debug("kb watcher started")
+	logrus.Debug("kb watcher started (authority)")
+}
+
+// startKBParticipantWatcher starts the participant-side watcher on the local
+// tree(s), triggering an early convergence pass on local edits (stage 2, slice
+// 5). Requires the convergence loop to be running (s.kbConverger).
+func (s *Server) startKBParticipantWatcher(ctx context.Context) {
+	if s.kbConverger == nil {
+		return // no convergence loop — nothing to trigger
+	}
+	conv := s.kbConverger
+	w, err := newKBWatcher(func(_ string) { conv.triggerEarlyPoll() }, s.cfg.KBSync.Debounce)
+	if err != nil {
+		logrus.WithError(err).Warn("kb watcher: failed to create participant watcher; local edits rely on poll interval")
+		return
+	}
+	s.kbWatcher = w
+
+	// Watch the local tree of every project the participant syncs.
+	resolver := s.KBResolveScope(kbScopeKindProject)
+	if resolver == nil {
+		return
+	}
+	projects := s.ListProjects("")
+	for i := range projects {
+		root, err := resolver.LocalTree(projects[i].ID)
+		if err != nil {
+			continue
+		}
+		w.addTree(root)
+	}
+
+	go w.run(ctx)
+	logrus.Debug("kb watcher started (participant, watch_local)")
 }
 
 // kbCanonicalTreePtr returns the canonical KB tree path for a project (the
@@ -1736,14 +1818,15 @@ func (s *Server) kbCanonicalTreePtr(p *Project) (string, error) {
 	return resolver.AuthorityTree(p.ID)
 }
 
-// kbWatchProject adds the project's canonical KB tree to the watcher. Called
-// after a project is created (on the authority). No-op when the watcher is
-// not running (sync disabled or participant).
+// kbWatchProject adds the project's KB tree to the watcher. On the authority,
+// it watches the canonical tree; on a participant with WatchLocal, it watches
+// the local tree. Called after a project is created. No-op when the watcher
+// is not running (sync disabled).
 func (s *Server) kbWatchProject(p *Project) {
-	if s.kbWatcher == nil || !s.isMaster() {
+	if s.kbWatcher == nil {
 		return
 	}
-	root, err := s.kbCanonicalTreePtr(p)
+	root, err := s.kbTreeForWatching(p)
 	if err != nil {
 		logrus.WithError(err).WithField(logKeyProject, p.ID).
 			Warn("kb watcher: add watch failed")
@@ -1752,18 +1835,49 @@ func (s *Server) kbWatchProject(p *Project) {
 	s.kbWatcher.addTree(root)
 }
 
-// kbUnwatchProject removes the project's canonical KB tree from the watcher.
-// Called when a project is finished or deleted. No-op when the watcher is
-// not running.
+// kbUnwatchProject removes the project's KB tree from the watcher. Called
+// when a project is finished or deleted. No-op when the watcher is not running.
 func (s *Server) kbUnwatchProject(p *Project) {
 	if s.kbWatcher == nil {
 		return
 	}
-	root, err := s.kbCanonicalTreePtr(p)
+	root, err := s.kbTreeForWatching(p)
 	if err != nil {
 		return
 	}
 	s.kbWatcher.removeTree(root)
+}
+
+// kbTreeForWatching returns the tree to watch for a project: the canonical
+// tree on the authority, the local tree on a participant with WatchLocal.
+func (s *Server) kbTreeForWatching(p *Project) (string, error) {
+	resolver := s.kbScopes[kbScopeKindProject]
+	if resolver == nil {
+		return "", ErrKBFileNotFound
+	}
+	if s.isMaster() {
+		return resolver.AuthorityTree(p.ID)
+	}
+	return resolver.LocalTree(p.ID)
+}
+
+// kbEnsureWatched ensures the local tree for a project is being watched by
+// the participant watcher. Called by the converger after it first creates
+// the local tree (by pulling files), since the tree may not have existed
+// when the watcher started. Idempotent: addTree skips if already watched.
+func (s *Server) kbEnsureWatched(projectID string) {
+	if s.kbWatcher == nil || s.isMaster() {
+		return
+	}
+	resolver := s.kbScopes[kbScopeKindProject]
+	if resolver == nil {
+		return
+	}
+	root, err := resolver.LocalTree(projectID)
+	if err != nil {
+		return
+	}
+	s.kbWatcher.addTree(root)
 }
 
 // startKBConvergence starts the periodic KB convergence loop on participants.
@@ -1779,8 +1893,9 @@ func (s *Server) startKBConvergence(ctx context.Context) {
 	if conv == nil {
 		return // no leader address (master mode or not yet connected)
 	}
+	s.kbConverger = conv
 	go conv.run(ctx)
-	logrus.Debug("kb convergence loop started")
+	logrus.WithField("pushing", conv.pushing).Debug("kb convergence loop started")
 }
 
 // kbWriteLock returns the per-path mutex for serializing concurrent writes on

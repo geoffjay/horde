@@ -16,6 +16,26 @@ func TestNew_DefaultsToMaster(t *testing.T) {
 	assert.True(t, srv.LeaderConnected()) // master is always "connected"
 }
 
+func TestNew_GeneratesNodeIDWhenEmpty(t *testing.T) {
+	// An empty cluster.node_id must yield a generated id — a slave with an
+	// empty node_id is rejected by the master's register handler with 400.
+	s1, err := New(Config{Mode: ModeSlave})
+	require.NoError(t, err)
+	assert.NotEmpty(t, s1.NodeID(), "empty node_id must be generated")
+	assert.Contains(t, s1.NodeID(), string(ModeSlave), "generated id encodes the mode")
+
+	// Distinct nodes get distinct ids (random suffix).
+	s2, err := New(Config{Mode: ModeSlave})
+	require.NoError(t, err)
+	assert.NotEqual(t, s1.NodeID(), s2.NodeID(), "generated ids must be unique")
+}
+
+func TestNew_KeepsExplicitNodeID(t *testing.T) {
+	srv, err := New(Config{Mode: ModeSlave, NodeID: "my-node"})
+	require.NoError(t, err)
+	assert.Equal(t, "my-node", srv.NodeID(), "explicit node_id is preserved")
+}
+
 func TestNew_ExplicitMaster(t *testing.T) {
 	srv, err := New(Config{Mode: ModeMaster})
 	require.NoError(t, err)

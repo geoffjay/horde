@@ -118,3 +118,61 @@ func TestClassifyStage1_CleanRowsUnchanged(t *testing.T) {
 			"non-pushing should not remap non-push rows (A=%q S=%q D=%q)", tc.a, tc.s, tc.d)
 	}
 }
+
+// TestClassifyStage2_PushRows verifies that a pushing node (stage 2, WatchLocal
+// enabled) executes the push rows directly — the raw classifyPath result with
+// no remapping. A local edit pushes (If-Match: S), a new local file pushes
+// (If-None-Match: *), and a deleted-locally file pushes a DELETE (If-Match: S).
+// This is the symmetric multi-writer path (KSP §5.1, §11).
+func TestClassifyStage2_PushRows(t *testing.T) {
+	const x, y, z = "sha256:x", "sha256:y", "sha256:z"
+
+	tests := []struct {
+		name    string
+		a, s, d string
+		want    kbClassifyAction
+	}{
+		// Clean rows — same as stage 1.
+		{"in sync", x, x, x, kbActNone},
+		{"remote change, clean local", y, x, x, kbActPull},
+		{"new upstream file", y, "", "", kbActPullNew},
+		{"deleted upstream, clean local", "", x, x, kbActDeleteLocal},
+		{"stale record", "", x, "", kbActDropRecord},
+
+		// Push rows — the stage 2 difference: these are executed, not
+		// remapped to conflicts.
+		{"local edit only → push", x, x, z, kbActPush},
+		{"new local file → push-new", "", "", z, kbActPushNew},
+		{"deleted locally → push-delete", x, x, "", kbActPushDelete},
+
+		// Conflict rows — still conflicts in stage 2.
+		{"concurrent remote + local change → conflict", y, x, z, kbActConflict},
+		{"deleted upstream, edited locally → conflict", "", x, z, kbActConflict},
+		{"exists upstream, untracked local → conflict", x, "", z, kbActConflict},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := classifyStage2(tc.a, tc.s, tc.d)
+			assert.Equal(t, tc.want, r.Action, "pushing classification")
+		})
+	}
+}
+
+// TestClassifyStage2_EqualsRaw verifies classifyStage2 is the identity of
+// classifyPath — a pushing node executes the raw three-way comparison with no
+// remapping (KSP §11, stage 2).
+func TestClassifyStage2_EqualsRaw(t *testing.T) {
+	// All combinations of {absent, x, y, z} for A, S, D.
+	digests := []string{"", "sha256:x", "sha256:y", "sha256:z"}
+	for _, a := range digests {
+		for _, s := range digests {
+			for _, d := range digests {
+				raw := classifyPath(a, s, d)
+				stage2 := classifyStage2(a, s, d)
+				assert.Equal(t, raw.Action, stage2.Action,
+					"classifyStage2 must equal raw classifyPath (A=%q S=%q D=%q)", a, s, d)
+			}
+		}
+	}
+}
