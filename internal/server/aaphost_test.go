@@ -400,7 +400,7 @@ func TestAAPHostSession_ResolvePendingWritesDecision(t *testing.T) {
 // TestRespondApproval_UnknownAgent asserts the server-level wrapper maps an
 // unknown agent id to ErrAgentNotFound.
 func TestRespondApproval_UnknownAgent(t *testing.T) {
-	srv, err := New(Config{Mode: ModeMaster, SpawnDefaultAgent: false})
+	srv, err := New(Config{Mode: ModeCoordinator, SpawnDefaultAgent: false})
 	require.NoError(t, err)
 	err = srv.RespondApproval("no-such-agent", "req", aap.DecisionAllow)
 	assert.ErrorIs(t, err, ErrAgentNotFound)
@@ -574,7 +574,7 @@ func TestResumeStore_Persistence(t *testing.T) {
 // cancel func was dereferenced in the spawn error path).
 func TestSpawnAAPAgent_BadCommandReturnsError(t *testing.T) {
 	srv, err := New(Config{
-		Mode:              ModeMaster,
+		Mode:              ModeCoordinator,
 		SpawnDefaultAgent: false,
 		AgentDefs: map[string]AgentDef{
 			"bad": {Kind: AgentKindAAP, Command: "/nonexistent-horde-binary-xyz"},
@@ -589,7 +589,7 @@ func TestSpawnAAPAgent_BadCommandReturnsError(t *testing.T) {
 // TestSpawnAAPAgent_UnknownName asserts an unknown AAP agent name (no def, no
 // registry entry) is rejected.
 func TestSpawnAAPAgent_UnknownName(t *testing.T) {
-	srv, err := New(Config{Mode: ModeMaster, SpawnDefaultAgent: false})
+	srv, err := New(Config{Mode: ModeCoordinator, SpawnDefaultAgent: false})
 	require.NoError(t, err)
 	_, err = srv.SpawnAgent(context.Background(), "no-such-agent")
 	require.Error(t, err)
@@ -599,7 +599,7 @@ func TestSpawnAAPAgent_UnknownName(t *testing.T) {
 // TestAAPInvoke_NotAnAAPAgent asserts AAPInvoke on an ADK agent returns an
 // error stream rather than blocking.
 func TestAAPInvoke_NotAnAAPAgent(t *testing.T) {
-	srv, err := New(Config{Mode: ModeMaster, SpawnDefaultAgent: false})
+	srv, err := New(Config{Mode: ModeCoordinator, SpawnDefaultAgent: false})
 	require.NoError(t, err)
 	evCh, errCh := srv.AAPInvoke(context.Background(), "ghost", "", "", "x", nil)
 	for range evCh {

@@ -18,7 +18,7 @@ func TestConfig_AuthEnabled(t *testing.T) {
 func TestConfig_ValidateAuth(t *testing.T) {
 	base := func() *Config {
 		return &Config{
-			Mode:   "master",
+			Mode:   "coordinator",
 			Server: ServerConfig{Port: defaultServerPort},
 		}
 	}

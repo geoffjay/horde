@@ -1,9 +1,9 @@
 {
   "env": "testing",
-  "mode": "slave",
+  "mode": "worker",
   "server": {
     "port": 13500,
-    "leader": "master:13420"
+    "leader": "coordinator:13420"
   },
   "cluster": {
     "node_id": "test-node",

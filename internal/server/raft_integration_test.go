@@ -34,9 +34,9 @@ type raftNodeHandle struct {
 
 // startRaftNode starts an in-process failover node (raft + gossip) on loopback,
 // with its own raft data dir and pre-allocated gossip/raft ports. seeds is the
-// gossip seed list (empty for the bootstrap master). It returns a handle whose
+// gossip seed list (empty for the bootstrap coordinator). It returns a handle whose
 // stop() crashes just this node (cancels its context and closes its listener).
-func startRaftNode(t *testing.T, nodeID string, master bool, seeds []string) raftNodeHandle {
+func startRaftNode(t *testing.T, nodeID string, coordinator bool, seeds []string) raftNodeHandle {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -45,9 +45,9 @@ func startRaftNode(t *testing.T, nodeID string, master bool, seeds []string) raf
 	gossipAddr := "127.0.0.1:" + strconv.Itoa(freePort(t))
 	raftAddr := "127.0.0.1:" + strconv.Itoa(freePort(t))
 
-	mode := server.ModeSlave
-	if master {
-		mode = server.ModeMaster
+	mode := server.ModeWorker
+	if coordinator {
+		mode = server.ModeCoordinator
 	}
 	cfg := server.Config{
 		Mode:                mode,
@@ -93,7 +93,7 @@ func startRaftNode(t *testing.T, nodeID string, master bool, seeds []string) raf
 	t.Cleanup(stop)
 
 	c := client.New(apiAddr)
-	// Report the gossip addr so the caller can seed followers off the master.
+	// Report the gossip addr so the caller can seed followers off the coordinator.
 	return raftNodeHandle{srv: srv, addr: gossipAddr, apiAddr: apiAddr, client: c, stop: stop}
 }
 

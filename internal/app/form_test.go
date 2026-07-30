@@ -613,7 +613,7 @@ func setupProjectActionServer(t *testing.T, status int, response client.Project)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("/api/v1/node", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"mode": "master", "leader_connected": true, "node_id": "n1"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"mode": "coordinator", "leader_connected": true, "node_id": "n1"})
 	})
 	mux.HandleFunc("/api/v1/agents", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode([]client.Agent{})

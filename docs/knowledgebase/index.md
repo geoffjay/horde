@@ -49,7 +49,7 @@ every edit.
 
 ## Concepts
 
-* [Architecture](concepts/architecture.md) - the horde node, master/slave modes, and agent subprocess model.
+* [Architecture](concepts/architecture.md) - the horde node, coordinator/worker modes, and agent subprocess model.
 * [Configuration](concepts/configuration.md) - the layered config system, search paths, and env overrides.
 * [Environment](concepts/environment.md) - ports, services, and environment variables.
 * [Agent model](concepts/agent-model.md) - how ADK agents are defined, hosted as subprocesses, and invoked over HTTP on unix sockets.
@@ -65,8 +65,8 @@ every edit.
 * [Use bubbletea + lipgloss, not crush](decisions/use-bubbletea-not-crush.md) - crush is an app, not a TUI library.
 * [Vendor plantd config into internal/config](decisions/vendor-config.md) - avoid pulling plantd/core as a dependency.
 * [logrus for logging](decisions/logrus-for-logging.md) - logging library choice.
-* [Master/slave cluster model](decisions/master-slave-model.md) - distributed topology and its trade-offs.
-* [Raft for leader election and master-state replication](decisions/raft-leader-election.md) - hashicorp/raft for quorum-based election + master-state replication via the raft log; the basis for leader failover.
+* [Coordinator/worker cluster model](decisions/coordinator-worker-model.md) - distributed topology and its trade-offs.
+* [Raft for leader election and coordinator-state replication](decisions/raft-leader-election.md) - hashicorp/raft for quorum-based election + coordinator-state replication via the raft log; the basis for leader failover.
 * [HTTP + SSE for the node API transport](decisions/http-api-transport.md) - HTTP/JSON + SSE over chi (net/http-native), in-process event bus now, brokerless messaging deferred to Phase 4.
 * [HTTP over unix domain sockets for agent invocation](decisions/agent-invocation-transport.md) - agent subprocess serves a local HTTP API on a unix socket; the node reverse-proxies invoke requests.
 * [The TUI consumes the node API](decisions/tui-uses-node-api.md) - the TUI always goes over the API; it does not start a node and retries with a 60s countdown.
@@ -91,12 +91,12 @@ every edit.
 ## Plans
 
 * [Roadmap](plans/roadmap.md) - phasing of horde capabilities.
-* [Phase 2 — Server API](plans/phase-2-server-api.md) - node API transport, event streaming, slave↔master contract.
+* [Phase 2 — Server API](plans/phase-2-server-api.md) - node API transport, event streaming, worker↔coordinator contract.
 * [Phase 3 — Agent mechanism](plans/phase-3-agents.md) - long-lived agent subprocesses invoked over HTTP on unix sockets, streaming, resume, agent registry.
 * [Agent execution context](plans/agent-execution-context.md) - queryable per-agent work-state, materialized at the node from AAP signals, aggregated across the cluster with redacted remote access.
 * [Projects, teams, and multi-turn context](plans/projects-teams.md) - Phase 3.5 Slice B: project/team data model, project API, agent assignment, session-key derivation.
 * [TUI for projects, teams, and execution context](plans/tui-projects.md) - complete; the breadcrumb-navigated TUI over the Slice B domain (projects, teams, execution context, invoke, cluster).
-* [Distributed project management](plans/distributed-project-management.md) - forward project mutations from slave to master, and add a `horde project` CLI subcommand.
+* [Distributed project management](plans/distributed-project-management.md) - forward project mutations from worker to coordinator, and add a `horde project` CLI subcommand.
 * [AAP host — driving external coding agents](plans/aap-host.md) - Phase 3.6: the node spawns AAP adapters over stdio, bridges turns to the invoke SSE stream, wires node-as-approval-authority, and consumes context/error/approval frames at full fidelity.
 * [Phase 4 — Distributed](plans/phase-4-distributed.md) - making a cluster act across nodes, in slices; **complete**: cross-node invoke routing (1), agent placement (2), dns discovery (3), cross-node event fan-out (4), and gossip discovery (5). Automatic leader failover landed as Phase 5 — see [leader failover](plans/leader-failover.md).
 * [Knowledgebase sync](plans/knowledgebase-sync.md) - Phase 6 (**complete**): share each project's `.horde/knowledgebase/` across the cluster, reaching **symmetric multi-writer** (every node's tree watched) in two stages — authority-serialized writes, content-digest identity, three-way convergence (`synced_digest` vs disk), and compare-and-swap. Scope-parameterized: `project` ships, `team`/`user`/`cluster` are later registrations (team blocked on first-class teams, user on selective participation). Opt-in; disabled ⇒ byte-for-byte current behavior. Spec: [KSP v1](/docs/spec/knowledgebase-sync-protocol-v1.md) (Final). Decision: [knowledgebase-sync](decisions/knowledgebase-sync.md).

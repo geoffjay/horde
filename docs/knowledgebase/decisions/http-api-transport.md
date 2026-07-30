@@ -11,7 +11,7 @@ timestamp: 2026-07-09T00:00:00Z
 Phase 2 needs a transport for the node API, which serves two channels:
 
 * **TUI ↔ server** — agent control and event streaming.
-* **slave ↔ master** — health, registration, heartbeat.
+* **worker ↔ coordinator** — health, registration, heartbeat.
 
 See the [Phase 2 plan](/docs/knowledgebase/plans/phase-2-server-api.md) for the
 full surface. The transport choice drives every downstream handler and client,
@@ -59,13 +59,13 @@ chi up front. Why chi and not other popular routers:
 
 * **chi** is the thinnest option that stays `net/http`-native. Every chi
   router is an `http.Handler` and every chi handler is an
-  `http.HandlerFunc`, so the slave's leader-client, the TUI client, and
+  `http.HandlerFunc`, so the worker's leader-client, the TUI client, and
   `httptest`-based handler tests all reuse the same handlers with zero
   adapter glue. Middleware composition (request id, recoverer, logging)
   is composable without importing a framework.
 * **Fiber** is built on `fasthttp`, not `net/http`. It does not implement
   the `http.Handler`/`http.HandlerFunc` interface, so handlers could not
-  be shared between the server, the slave leader-client, and tests. It is
+  be shared between the server, the worker leader-client, and tests. It is
   also optimized for fast short-lived request/response at the expense of
   long-lived streaming connections — the opposite of what SSE with
   `Last-Event-ID` resume needs — and lacks HTTP/2. Fiber opts out of the
@@ -85,7 +85,7 @@ routing) is a local change, not an architectural one.
 
 Agent events flow over an **in-process event bus** (Go channels) exposed to
 clients via SSE. The server owns the bus; multiple in-process consumers (an SSE
-response handler, a slave forwarding events upstream) fan out trivially via
+response handler, a worker forwarding events upstream) fan out trivially via
 subscriptions, and clients never need a broker library.
 
 Brokerless messaging libraries (ZeroMQ, nng/nanomsg) were considered for the
@@ -93,9 +93,9 @@ pub/sub layer and **deferred**. They earn their complexity only when publisher
 and subscriber are separate processes with no shared hub. In horde the server
 *is* the hub, so an in-process bus is strictly simpler and still brokerless.
 Cross-node event fan-out was resolved in Phase 4 slice 4 **over HTTP, no new
-transport**: each node runs its own in-process bus, and a slave pushes its
-events to the master (`POST /api/v1/cluster/events`) which republishes them onto
-its bus, so the master's `/events/stream` is a cluster-wide feed (see the
+transport**: each node runs its own in-process bus, and a worker pushes its
+events to the coordinator (`POST /api/v1/cluster/events`) which republishes them onto
+its bus, so the coordinator's `/events/stream` is a cluster-wide feed (see the
 [Phase 4 plan](/docs/knowledgebase/plans/phase-4-distributed.md)). nng
 (nanomsg-next-generation, the actively-maintained brokerless option) remains the
 candidate only if HTTP fan-out later proves insufficient (e.g. very high event
@@ -107,8 +107,8 @@ volume). ActiveMQ and other brokered options are out of scope by design.
 
 # Consequences
 
-* One transport for both channels (TUI ↔ server and slave ↔ master); the master
-  is just another node, so a slave reuses the same client code to talk to it.
+* One transport for both channels (TUI ↔ server and worker ↔ coordinator); the coordinator
+  is just another node, so a worker reuses the same client code to talk to it.
 * `server.port`, `server.leader`, and the read/write/idle timeouts already in
   `ServerConfig` (currently unused) are consumed by the new HTTP listener.
 * SSE gives `Last-Event-ID` resume for agent token streams; gRPC streaming has
@@ -119,5 +119,5 @@ volume). ActiveMQ and other brokered options are out of scope by design.
   subscribes to all events. (Agent token streams use their own per-invocation
   ring buffers with `Last-Event-ID` resume, not this bus.)
 * A second transport (nng or similar) was *not* needed: Phase 4 slice 4 fans
-  out cross-node events over the existing HTTP transport (slave→master push +
+  out cross-node events over the existing HTTP transport (worker→coordinator push +
   republish), matching the direction heartbeat digests already flow.

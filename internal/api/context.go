@@ -109,7 +109,7 @@ func listAgentContexts(srv agentView) http.HandlerFunc {
 }
 
 // listRemoteAgentContexts returns the aggregated, redacted execution
-// contexts from all slaves. Served by the master only.
+// contexts from all workers. Served by the coordinator only.
 func listRemoteAgentContexts(srv clusterView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctxs := srv.RemoteAgentContexts()

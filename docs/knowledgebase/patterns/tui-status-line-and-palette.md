@@ -38,11 +38,11 @@ segment's (styled) text; returning `""` omits the block and its separator.
 
 ```go
 s := NewStatusLine()          // Separator defaults to ">"
-s.Add(nodeStatusBlock())      // "● master · n1 · 2 agents" / "● disconnected"
+s.Add(nodeStatusBlock())      // "● coordinator · n1 · 2 agents" / "● disconnected"
 s.Add(commandsBlock())        // "ctrl+p commands" (chord bold, label faint)
 s.Remove("node")              // blocks are removable by name
 
-// Render: "● master · n1 · 2 agents > ctrl+p commands", right-aligned in width.
+// Render: "● coordinator · n1 · 2 agents > ctrl+p commands", right-aligned in width.
 line := s.Render(m, width)
 ```
 

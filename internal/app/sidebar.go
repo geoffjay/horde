@@ -118,7 +118,7 @@ func (m *Model) sidebarRows() []sidebarRow {
 func (m *Model) sidebarLen() int { return len(m.sidebarRows()) }
 
 // groupChildren returns the child rows for an expandable group, sourced from
-// live model data. Nodes lists this node then registered slaves; Agents the
+// live model data. Nodes lists this node then registered workers; Agents the
 // node's running agents; Teams one entry per project (derived — there is no
 // team API); Projects the projects. Users has no children (per-user data does
 // not exist yet).
@@ -347,7 +347,7 @@ func (m *Model) applyChild(row sidebarRow) tea.Cmd {
 }
 
 // setNodeCursor sets the detail cursor to the cluster row for the given node id
-// (this node is row 0, registered slaves follow).
+// (this node is row 0, registered workers follow).
 func (m *Model) setNodeCursor(id string) {
 	if id == m.node.NodeID {
 		m.cursor = 0

@@ -110,7 +110,7 @@ The obvious design fans a change event out from the leader. It does not fit this
 codebase:
 
 - **The event bus fans *in*, not out.** `forwardEvents` (`server.go:693`) is
-  slave→master; `PublishClusterEvent` (`server.go:1221`) republishes onto *this
+  worker→coordinator; `PublishClusterEvent` (`server.go:1221`) republishes onto *this
   node's own* bus. One `POST /api/v1/cluster/events` ingest exists and **no
   outbound push** — leader→node push would be net-new cluster infrastructure.
 - **The bus is lossy by design.** `Publish` drops on a full subscriber channel
@@ -169,8 +169,8 @@ have to be migrated later.
   agents actually work**, because in stage 2 they edit there. Same location in
   both stages, so promotion needs no migration.
 - **Participants learn projects from the authority.** There is no node↔project
-  association (`Team` is `{Agents, Users}`, `project.go:39`; `knownSlave` is
-  `{addr, agents, lastSeen}`, `server.go:1234`) and a slave's local
+  association (`Team` is `{Agents, Users}`, `project.go:39`; `knownWorker` is
+  `{addr, agents, lastSeen}`, `server.go:1234`) and a worker's local
   `ProjectStore` is permanently empty (`projectForwardMiddleware` forwards every
   `/projects` request). No new primitive is needed: a participant lists projects
   from the leader over the existing forward path and syncs those with sync

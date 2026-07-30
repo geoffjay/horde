@@ -18,7 +18,7 @@ const deadAddr = "127.0.0.1:1"
 
 func TestClient_RotatesToLiveMemberOnTransportError(t *testing.T) {
 	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(NodeInfo{NodeID: "node-b", Mode: "master"})
+		_ = json.NewEncoder(w).Encode(NodeInfo{NodeID: "node-b", Mode: "coordinator"})
 	}))
 	defer live.Close()
 

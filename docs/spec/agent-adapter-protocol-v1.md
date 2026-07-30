@@ -32,7 +32,7 @@ a single agent process over one connection. It does **not** govern:
 - **Interactive PTY mode**, in which a human types directly into a terminal running an agent. That path
   bypasses AAP entirely.
 - **Multi-user, cross-node, or remote-principal concerns.** In a clustered host (e.g. horde's
-  master/slave topology), *who* may address an agent, whether a remote principal may send a *mutating*
+  coordinator/worker topology), *who* may address an agent, whether a remote principal may send a *mutating*
   prompt vs. a read-only query, directory synchronization, and default-restrictive remote permissions
   all live in the **host's node-authorization and cluster layer, above AAP**. AAP is the local
   enforcement point at the tool/write boundary (via tool approval, §6.4, and permission scope, §6.6);

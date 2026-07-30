@@ -13,7 +13,7 @@ The app is a tabbed dashboard over the node API (`/api/v1`, default
 - **Agents** — list running agents and start a new one by name.
 - **Projects** — list projects, create one, and pause/resume/finish by ID.
 - **Talk to an agent** — send a plain-language task to an agent and see the reply.
-- **Cluster** — nodes registered with this master.
+- **Cluster** — nodes registered with this coordinator.
 
 Read-only panels poll the API every few seconds, so the views refresh on their
 own after any change. Buttons call the API via the Rhai handlers in

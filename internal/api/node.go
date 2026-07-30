@@ -47,18 +47,18 @@ type readyResponse struct {
 	Leader string `json:"leader"`
 }
 
-// getReady reports readiness. A master is always ready; a slave is ready
+// getReady reports readiness. A coordinator is always ready; a worker is ready
 // when its leader connection is established, otherwise degraded.
 func getReady(srv nodeView) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		leader := "ok"
 		status := "ready"
 		code := http.StatusOK
-		if srv.Mode() == server.ModeSlave && !srv.LeaderConnected() {
+		if srv.Mode() == server.ModeWorker && !srv.LeaderConnected() {
 			leader = "degraded"
 			status = "degraded"
 			// 503 so orchestrators that gate on HTTP status (k8s readiness
-			// probes, load balancers) pull a leaderless slave from rotation.
+			// probes, load balancers) pull a leaderless worker from rotation.
 			code = http.StatusServiceUnavailable
 		}
 		writeJSON(w, code, readyResponse{Status: status, Leader: leader})

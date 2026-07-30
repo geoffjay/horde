@@ -29,8 +29,8 @@ type agentDTO struct {
 
 // createAgentRequest is the body of POST /api/v1/agents. Node is an optional
 // placement target: "" or "local" spawns on this node (unchanged behavior),
-// "auto" asks the master to pick the least-loaded node, and a slave node id
-// places the agent on that slave. Remote placement is master-only.
+// "auto" asks the coordinator to pick the least-loaded node, and a worker node id
+// places the agent on that worker. Remote placement is coordinator-only.
 type createAgentRequest struct {
 	Name string `json:"name"`
 	Node string `json:"node,omitempty"`
@@ -82,8 +82,8 @@ func createAgent(srv agentView) http.HandlerFunc {
 		}
 
 		// Resolve placement. A local target spawns here as before; a remote
-		// target forwards the spawn to the owning slave (master → node) and
-		// relays its response, so the id the slave assigns reaches the caller.
+		// target forwards the spawn to the owning worker (coordinator → node) and
+		// relays its response, so the id the worker assigns reaches the caller.
 		addr, local, err := srv.ResolveSpawnTarget(req.Node)
 		if err != nil {
 			status := http.StatusBadRequest
@@ -117,11 +117,11 @@ func createAgent(srv agentView) http.HandlerFunc {
 	}
 }
 
-// forwardSpawn relays a spawn to the slave hosting the placement target and
-// copies its response (status, headers, body) back to the caller. The slave's
+// forwardSpawn relays a spawn to the worker hosting the placement target and
+// copies its response (status, headers, body) back to the caller. The worker's
 // local agents endpoint does the actual spawn and returns the agent DTO with
-// the id it assigned; that id becomes routable for invoke once the slave's
-// next heartbeat reaches the master.
+// the id it assigned; that id becomes routable for invoke once the worker's
+// next heartbeat reaches the coordinator.
 func forwardSpawn(srv agentView, w http.ResponseWriter, r *http.Request, addr, name string) {
 	status, header, body, err := srv.ForwardSpawn(r.Context(), addr, name)
 	if err != nil {

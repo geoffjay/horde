@@ -38,7 +38,7 @@ in `SpawnAgent`, which sends SIGINT but never force-kills a wedged agent.~~
 is no TUI teardown path to unify. Agent teardown is solely `Server.Run`'s
 job on the `horde serve` path.
 
-### Slave "connected" status is fake
+### Worker "connected" status is fake
 
 ~~`connectLeader` (`internal/server/server.go`) sets `leaderOK = true`
 immediately with no real connection, and the TUI renders "leader connected" as
@@ -47,8 +47,8 @@ truth.~~
 **Resolved in Phase 2:** `connectLeader` now uses a real `leaderClient`
 (`internal/server/leaderclient.go`) that performs `POST /cluster/register`
 then loops on `GET /cluster/heartbeat`; `leaderOK` reflects the actual
-round-trip outcome. `TestStart_SlaveBecomesLeaderConnected` was rewritten
-against an `httptest` master stub.
+round-trip outcome. `TestStart_WorkerBecomesLeaderConnected` was rewritten
+against an `httptest` coordinator stub.
 
 ## Robustness
 

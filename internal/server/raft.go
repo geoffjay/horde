@@ -34,7 +34,7 @@ const (
 var errNoRaftLeader = errors.New("raft: no leader elected yet")
 
 // raftFSMHandler is implemented by the Server to apply replicated commands and
-// snapshot/restore the master-only state. It is injected into the FSM so the
+// snapshot/restore the coordinator-only state. It is injected into the FSM so the
 // raft package stays free of project/resume specifics. Nil during slice 1
 // (election only) — the FSM then no-ops, which is safe because no commands are
 // applied until the state stores are wired through raft.
@@ -56,12 +56,12 @@ type raftConfig struct {
 	BindAddr      string // host:port to bind the raft transport; empty → 0.0.0.0:<advertise port|default>
 	AdvertiseAddr string // host:port peers dial to reach this node's raft transport
 	DataDir       string // directory for the raft log, stable store, and snapshots
-	Bootstrap     bool   // bootstrap a new single-node cluster when no state exists (the --mode master hint)
+	Bootstrap     bool   // bootstrap a new single-node cluster when no state exists (the --mode coordinator hint)
 	Handler       raftFSMHandler
 }
 
 // raftNode wraps a hashicorp/raft instance: the leader of the raft cluster is
-// the horde master. Every failover node runs one; membership is reconciled from
+// the horde coordinator. Every failover node runs one; membership is reconciled from
 // the gossip ring (the leader AddVoter/RemoveServers peers as they join/leave).
 type raftNode struct {
 	raft      *raft.Raft

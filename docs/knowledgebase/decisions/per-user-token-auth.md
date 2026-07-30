@@ -55,9 +55,9 @@ the chain). A request is resolved to one of:
 * **anonymous** — no token, or auth disabled and no token.
 
 `requireUser` (disabled ⇒ pass; node ⇒ pass; user ⇒ pass; anonymous ⇒ 401)
-runs before project and agent mutation handlers; on a slave it runs **before**
+runs before project and agent mutation handlers; on a worker it runs **before**
 the forward middleware so an anonymous mutation is rejected at the edge rather
-than forwarded to the master as trusted node traffic. Project mutations
+than forwarded to the coordinator as trusted node traffic. Project mutations
 additionally call `authorizeProject` (owner + team members; see below).
 
 ## Authorization = owner + team members
@@ -66,7 +66,7 @@ additionally call `authorizeProject` (owner + team members; see below).
 
 * disabled ⇒ no-op (returns nil, nil — the handler's own existence check runs
   unchanged; authz never precedes the existence check when auth is off)
-* node ⇒ a slave→master forward; enforce the echoed user (below), re-deriving
+* node ⇒ a worker→coordinator forward; enforce the echoed user (below), re-deriving
   admin from local config — do **not** blanket-trust the node
 * admin ⇒ allow
 * `own` ⇒ `UserID == p.Owner`
@@ -80,8 +80,8 @@ authenticated user). `view` is reserved (reads are open this phase).
 
 ## Cross-node identity: the X-Horde-User echo-trust seam
 
-A slave forwards project mutations and invoke reverse-proxies to the
-master/owning node, so the authoritative check runs where the project/agent
+A worker forwards project mutations and invoke reverse-proxies to the
+coordinator/owning node, so the authoritative check runs where the project/agent
 lives. The origin sets `X-Horde-User: <userID>` on forwarded requests
 (already authenticated by the cluster token). The receiver honors
 `X-Horde-User` **only when the caller is a node principal** (a valid cluster
@@ -91,7 +91,7 @@ request without `X-Horde-User` is denied on a mutation (no anonymous mutation
 via a node).
 
 This also delivers per-user tool/scope to the owning node for invoke, which
-need not traverse the master (a slave hosting the agent applies the tool
+need not traverse the coordinator (a worker hosting the agent applies the tool
 gate locally).
 
 ## No replicated user store

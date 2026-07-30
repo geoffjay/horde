@@ -6,65 +6,65 @@ tags: [plan, cluster, distributed, phase-4]
 ---
 
 Phases 2–3.6 build a full single-node story and a cluster that *observes*
-itself (slaves register, heartbeat, and the master aggregates remote agent
+itself (workers register, heartbeat, and the coordinator aggregates remote agent
 contexts — Phase 3.5a). Phase 4 makes the cluster *act* across nodes. It is
 built in independent slices; each lands on its own.
 
 ## Slice 1 — Cross-node invoke + foundations (complete)
 
-The first real distributed capability: **the master routes an invoke to
+The first real distributed capability: **the coordinator routes an invoke to
 whichever node hosts the agent**, plus the two foundations it needs.
 
 * **Advertised address.** `cluster.advertise_addr` (`HORDE_CLUSTER_ADVERTISE_ADDR`)
-  is the routable `host:port` a node sends to the master on register;
+  is the routable `host:port` a node sends to the coordinator on register;
   `localAddr()` uses it (falls back to `:<port>` with a warning). Fixes the
-  former stub that stored an unroutable slave address — the prerequisite for
-  any master→slave call.
-* **Stale-slave eviction.** The master marks a slave `stale` after
-  `slaveStaleAfter` (kept visible in the cluster view) and evicts it from the
-  registry after `slaveEvictAfter`, bounding growth (`evictStaleSlavesLocked`).
+  former stub that stored an unroutable worker address — the prerequisite for
+  any coordinator→worker call.
+* **Stale-worker eviction.** The coordinator marks a worker `stale` after
+  `workerStaleAfter` (kept visible in the cluster view) and evicts it from the
+  registry after `workerEvictAfter`, bounding growth (`evictStaleWorkersLocked`).
 * **Cross-node invoke.** `Server.RemoteAgentNode(agentID)` resolves a
-  non-local agent id to its slave's address via the aggregated remote-context
-  store (`nodeID/agentID`) + the slave registry, skipping stale/unknown nodes
+  non-local agent id to its worker's address via the aggregated remote-context
+  store (`nodeID/agentID`) + the worker registry, skipping stale/unknown nodes
   and refusing ambiguous ids (an id reported by >1 node — agent ids are
   per-node counters, so not globally unique). The invoke handler
   (`internal/api/invoke.go`) serves local agents as before; for a non-local id
   it reverse-proxies (`httputil.ReverseProxy`, streaming SSE) to
-  `http://<addr>/api/v1/agents/{id}/invoke`. Direction is master→owning node.
+  `http://<addr>/api/v1/agents/{id}/invoke`. Direction is coordinator→owning node.
 
-Verified end-to-end: a two-node cluster (master + slave) where invoking the
-slave's agent through the master streamed the agent's response back.
+Verified end-to-end: a two-node cluster (coordinator + worker) where invoking the
+worker's agent through the coordinator streamed the agent's response back.
 
 ## Slice 2 — Agent placement / scheduling (complete)
 
 The other half of "placement/coordination": **choose which node an agent
 *spawns* on**. Cross-node invoke (slice 1) already routes to wherever an agent
-lives, so a placed agent is immediately invokable through the master.
+lives, so a placed agent is immediately invokable through the coordinator.
 
 * **Placement request.** `POST /api/v1/agents` gains an optional `node` field:
-  `""`/`"local"`/the local node id → spawn here (unchanged); a slave node id →
-  place on that slave; `"auto"` → let the master choose.
+  `""`/`"local"`/the local node id → spawn here (unchanged); a worker node id →
+  place on that worker; `"auto"` → let the coordinator choose.
 * **Placement policy.** `Server.ResolveSpawnTarget(requested)` maps the request
-  to a target. `"auto"` picks the least-loaded node among the master and its
-  non-stale slaves (load = agent count; ties favour local, avoiding a network
-  hop). An explicit slave id must be registered and non-stale, else
-  `ErrNodeNotFound` (404). Remote placement is master-only
-  (`ErrPlacementMasterOnly` on a slave) — direction is master→slave, mirroring
-  slice 1 and the slave→master project forwarding.
-* **Spawn forwarding.** For a remote target the master POSTs the spawn to the
-  slave's own `/api/v1/agents` (`Server.ForwardSpawn`) carrying only the name
-  (never a node, so it cannot loop) and relays the slave's response — including
-  the id the slave assigned. The slave's next heartbeat (~5s) surfaces the
+  to a target. `"auto"` picks the least-loaded node among the coordinator and its
+  non-stale workers (load = agent count; ties favour local, avoiding a network
+  hop). An explicit worker id must be registered and non-stale, else
+  `ErrNodeNotFound` (404). Remote placement is coordinator-only
+  (`ErrPlacementCoordinatorOnly` on a worker) — direction is coordinator→worker, mirroring
+  slice 1 and the worker→coordinator project forwarding.
+* **Spawn forwarding.** For a remote target the coordinator POSTs the spawn to the
+  worker's own `/api/v1/agents` (`Server.ForwardSpawn`) carrying only the name
+  (never a node, so it cannot loop) and relays the worker's response — including
+  the id the worker assigned. The worker's next heartbeat (~5s) surfaces the
   agent in the aggregated view, at which point slice-1 invoke routing reaches
   it.
 
 Verified end-to-end: on a two-node cluster, `POST /api/v1/agents` with
-`node: "slave-1"` on the master spawned the agent on the slave and a subsequent
-invoke through the master streamed its response back.
+`node: "worker-1"` on the coordinator spawned the agent on the worker and a subsequent
+invoke through the coordinator streamed its response back.
 
 ## Slice 3 — Discovery beyond `static` (complete)
 
-Remove the hardcoded-leader-address dependency: a slave can **find its leader
+Remove the hardcoded-leader-address dependency: a worker can **find its leader
 via DNS** instead of a configured `server.leader`.
 
 * **Mechanism.** `cluster.discovery_mechanism` is now honoured: `static`
@@ -77,7 +77,7 @@ via DNS** instead of a configured `server.leader`.
   leader address: `staticDiscoverer` returns the configured address;
   `dnsDiscoverer` does an SRV lookup and picks the lowest-priority target (ties
   broken by highest weight), trimming the trailing dot and joining `host:port`.
-  `newDiscoverer` returns `(nil, nil)` for a standalone slave (static, no
+  `newDiscoverer` returns `(nil, nil)` for a standalone worker (static, no
   leader), and an error for an unknown mechanism or a `dns` mechanism missing
   its name (also validated in `config.Validate`).
 * **Re-resolution.** The `leaderClient` resolves through the `Discoverer` on
@@ -94,7 +94,7 @@ register/heartbeat integration test still passes).
 ## Slice 4 — Cross-node event fan-out (complete)
 
 Bring the dormant in-process `EventBus` to life as a **cluster-wide activity
-feed**: a live stream of agent lifecycle transitions, aggregated at the master.
+feed**: a live stream of agent lifecycle transitions, aggregated at the coordinator.
 
 * **Real events.** The node now publishes agent lifecycle events on the bus at
   the natural seams: `agent.spawned` (after a subprocess starts and its context
@@ -106,58 +106,58 @@ feed**: a live stream of agent lifecycle transitions, aggregated at the master.
 * **Local stream.** `GET /api/v1/events/stream` is an SSE feed of the bus
   (`streamEvents`). It carries only live events (no backlog replay), so the
   per-frame `id:` is for client correlation, not Last-Event-ID resume.
-* **Cross-node fan-out (slave → master push).** Rather than a fan-in reverse
-  proxy, events flow the same direction as heartbeat digests: a slave runs a
+* **Cross-node fan-out (worker → coordinator push).** Rather than a fan-in reverse
+  proxy, events flow the same direction as heartbeat digests: a worker runs a
   `forwardEvents` goroutine that subscribes to its own bus and POSTs each event
-  to the master's `POST /api/v1/cluster/events` (best-effort — a failed POST is
-  logged and dropped). The master republishes received events onto its own bus
-  (`PublishClusterEvent`), so the master's `/events/stream` is the whole
+  to the coordinator's `POST /api/v1/cluster/events` (best-effort — a failed POST is
+  logged and dropped). The coordinator republishes received events onto its own bus
+  (`PublishClusterEvent`), so the coordinator's `/events/stream` is the whole
   cluster's feed with each event's origin node preserved. The receiver is
-  master-only (a slave rejects it with 404), and the master never forwards, so
+  coordinator-only (a worker rejects it with 404), and the coordinator never forwards, so
   there is no echo loop.
 
 Verified: bus fan-out/drop-on-full/cancel and the republish path are unit
-tested; the SSE framing and the master-only receiver are tested at the API
+tested; the SSE framing and the coordinator-only receiver are tested at the API
 layer; the full `POST /cluster/events` → bus → `/events/stream` wiring is
 covered through the router.
 
 ## Slice 5 — Gossip discovery (complete)
 
-The last `discovery_mechanism`: a slave finds its master through a **peer-to-peer
-membership ring** — no per-slave leader address and no DNS.
+The last `discovery_mechanism`: a worker finds its coordinator through a **peer-to-peer
+membership ring** — no per-worker leader address and no DNS.
 
 * **Transport.** `github.com/hashicorp/memberlist` (SWIM) — the de-facto Go
   gossip library, chosen over a hand-rolled protocol for its mature failure
   detection and anti-entropy.
-* **Discovery only.** The master is still statically designated
-  (`--mode master`); there is no leader election. Every node joins the ring; the
-  master advertises `role=master` plus its HTTP address in memberlist node
+* **Discovery only.** The coordinator is still statically designated
+  (`--mode coordinator`); there is no leader election. Every node joins the ring; the
+  coordinator advertises `role=coordinator` plus its HTTP address in memberlist node
   metadata (`nodeMeta`, JSON, ≤512 B — a role and an address, nothing
-  sensitive). A slave's `gossipDiscoverer` reads the ring for the master's
+  sensitive). A worker's `gossipDiscoverer` reads the ring for the coordinator's
   address and then registers/heartbeats over HTTP exactly as before — the
   `leaderClient` re-resolves through the `Discoverer` each reconnect, so gossip
   slots in with no change to the register path.
 * **Node.** `internal/server/gossip.go` wraps memberlist: `newGossipNode` binds
   the listeners (fatal on failure, surfaced from `Start`), does an initial
-  `Join(seeds)`, and runs a background re-join loop while no master is visible
-  so a node that starts before the master converges without a restart.
-  `leaderAPIAddr()` scans members for `role=master`; `shutdown()` (Leave +
+  `Join(seeds)`, and runs a background re-join loop while no coordinator is visible
+  so a node that starts before the coordinator converges without a restart.
+  `leaderAPIAddr()` scans members for `role=coordinator`; `shutdown()` (Leave +
   Shutdown) runs on `ctx` cancel (there is no `Stop()`). A `gossipMembers` seam
   keeps `gossipDiscoverer` unit-testable without binding ports (mirrors the
   `lookupSRV` seam for dns).
 * **Config.** `cluster.gossip_bind_addr`, `cluster.gossip_advertise_addr`, and
   `cluster.gossip_seeds` (a comma-separated **string**, not a list, so it also
   works via `HORDE_CLUSTER_GOSSIP_SEEDS` — viper here has no slice-env decode
-  hook). `Validate` requires seeds for a gossip *slave* (a master is the seed).
-  Under `gossip` the master must set `cluster.advertise_addr` so the HTTP
+  hook). `Validate` requires seeds for a gossip *worker* (a coordinator is the seed).
+  Under `gossip` the coordinator must set `cluster.advertise_addr` so the HTTP
   address it gossips is routable.
 
 Verified: real two-node memberlist convergence on loopback
 (`gossip_test.go`), the discoverer via a fake, config validation, and
 end-to-end on a three-node docker cluster (`docker-compose.gossip.yml`) where
-slaves registered with the master having discovered its address through gossip
-alone (no `server.leader`), then a slave-hosted agent was invoked through the
-master.
+workers registered with the coordinator having discovered its address through gossip
+alone (no `server.leader`), then a worker-hosted agent was invoked through the
+coordinator.
 
 **Leader failover is out of scope** — see the
 [cluster leader failover](../concepts/cluster-failover.md) concept doc for what
@@ -178,6 +178,6 @@ cluster-wide event feed. Automatic leader failover is deliberately deferred
   TUI new-agent flow.
 * Node-qualified agent addressing (collision-proof) if bare-id resolution
   proves insufficient.
-* Slave→master (and slave→slave) invoke forwarding for non-master entry points
-  (mirrors the existing slave→master project forwarding).
+* Worker→coordinator (and worker→worker) invoke forwarding for non-coordinator entry points
+  (mirrors the existing worker→coordinator project forwarding).
 * Register/heartbeat authentication.

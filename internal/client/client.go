@@ -259,8 +259,8 @@ func (c *Client) ListAvailableAgents(ctx context.Context) ([]AvailableAgent, err
 }
 
 // SpawnAgent starts a new agent subprocess of the given name. node selects
-// placement: "" or "local" spawns on the target node, "auto" lets the master
-// pick the least-loaded node, and a node id places it on that node (master
+// placement: "" or "local" spawns on the target node, "auto" lets the coordinator
+// pick the least-loaded node, and a node id places it on that node (coordinator
 // only). node is omitted from the request when empty.
 func (c *Client) SpawnAgent(ctx context.Context, name, node string) (Agent, error) {
 	var a Agent

@@ -14,18 +14,18 @@ import (
 	"github.com/geoffjay/horde/internal/server"
 )
 
-// fakeForwarder is a projectForwarder that proxies to an httptest master.
+// fakeForwarder is a projectForwarder that proxies to an httptest coordinator.
 // It is used to test the projectForwardMiddleware without needing a real
-// slave-to-master cluster setup.
+// worker-to-coordinator cluster setup.
 type fakeForwarder struct {
-	leaderAddr string
-	master     *httptest.Server
+	leaderAddr  string
+	coordinator *httptest.Server
 }
 
 func (f *fakeForwarder) LeaderAddr() string { return f.leaderAddr }
 
 func (f *fakeForwarder) ForwardProjectRequest(ctx context.Context, method, path string, body []byte, forwardedUser string) (int, http.Header, []byte, error) {
-	url := f.master.URL + path
+	url := f.coordinator.URL + path
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, nil, err
@@ -53,10 +53,10 @@ func (f *fakeForwarder) ForwardProjectRequest(ctx context.Context, method, path 
 	return resp.StatusCode, resp.Header, respBody, nil
 }
 
-// newMasterStub returns an httptest server that responds to project API
+// newCoordinatorStub returns an httptest server that responds to project API
 // requests with a fixed project list. It records the requests it receives
 // so tests can assert forwarding behaviour.
-func newMasterStub(t *testing.T) *httptest.Server {
+func newCoordinatorStub(t *testing.T) *httptest.Server {
 	t.Helper()
 	projects := []projectDTO{
 		{ID: "p1", Name: "auth-service", State: "active", Goal: "Fix login", Team: teamDTO{Agents: []teamAgentDTO{{AgentID: "a1", Name: "greeter"}}}},
@@ -86,7 +86,7 @@ func newMasterStub(t *testing.T) *httptest.Server {
 }
 
 // routerWithForwarder builds a Router that uses the given forwarder for
-// project routes. The non-project routes use the real server (master mode).
+// project routes. The non-project routes use the real server (coordinator mode).
 func routerWithForwarder(t *testing.T, fwd projectForwarder) http.Handler {
 	t.Helper()
 	srv := newTestServer(t)
@@ -100,17 +100,17 @@ func TestProjectForwardMiddleware_PassesThroughWhenNoLeader(t *testing.T) {
 	srv := newTestServer(t)
 	h := Router(srv)
 
-	// Master mode: no forwarding, local handler responds.
+	// Coordinator mode: no forwarding, local handler responds.
 	w := do(t, h, http.MethodGet, "/api/v1/projects/", nil)
 	require.Equal(t, http.StatusOK, w.Code)
 	var projects []projectDTO
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&projects))
-	assert.Empty(t, projects, "master with no projects returns empty list")
+	assert.Empty(t, projects, "coordinator with no projects returns empty list")
 }
 
-func TestProjectForwardMiddleware_ForwardsToMaster(t *testing.T) {
-	master := newMasterStub(t)
-	fwd := &fakeForwarder{leaderAddr: master.Listener.Addr().String(), master: master}
+func TestProjectForwardMiddleware_ForwardsToCoordinator(t *testing.T) {
+	coordinator := newCoordinatorStub(t)
+	fwd := &fakeForwarder{leaderAddr: coordinator.Listener.Addr().String(), coordinator: coordinator}
 
 	// Build a handler that wraps the project route with the forwarding
 	// middleware. We test the middleware in isolation: when LeaderAddr is
@@ -120,7 +120,7 @@ func TestProjectForwardMiddleware_ForwardsToMaster(t *testing.T) {
 
 	mw := projectForwardMiddleware(fwd)(localHandler)
 
-	// POST a project — should be forwarded to the master stub.
+	// POST a project — should be forwarded to the coordinator stub.
 	body, _ := json.Marshal(createProjectRequest{
 		Name: "billing", AgentNames: []string{"greeter"},
 	})
@@ -132,12 +132,12 @@ func TestProjectForwardMiddleware_ForwardsToMaster(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w.Code)
 	var p projectDTO
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&p))
-	assert.Equal(t, "billing", p.Name, "response should come from the master stub")
+	assert.Equal(t, "billing", p.Name, "response should come from the coordinator stub")
 }
 
-func TestProjectForwardMiddleware_ForwardsListToMaster(t *testing.T) {
-	master := newMasterStub(t)
-	fwd := &fakeForwarder{leaderAddr: master.Listener.Addr().String(), master: master}
+func TestProjectForwardMiddleware_ForwardsListToCoordinator(t *testing.T) {
+	coordinator := newCoordinatorStub(t)
+	fwd := &fakeForwarder{leaderAddr: coordinator.Listener.Addr().String(), coordinator: coordinator}
 
 	localSrv := newTestServer(t)
 	localHandler := listProjects(localSrv)
@@ -152,7 +152,7 @@ func TestProjectForwardMiddleware_ForwardsListToMaster(t *testing.T) {
 	var projects []projectDTO
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&projects))
 	require.Len(t, projects, 1)
-	assert.Equal(t, "auth-service", projects[0].Name, "list should come from the master")
+	assert.Equal(t, "auth-service", projects[0].Name, "list should come from the coordinator")
 }
 
 func TestProjectForwardMiddleware_NoLeaderPassesThrough(t *testing.T) {
@@ -176,10 +176,10 @@ func TestProjectForwardMiddleware_NoLeaderPassesThrough(t *testing.T) {
 func TestProjectForwardMiddleware_LeaderErrorReturnsBadGateway(t *testing.T) {
 	// Forwarder that always errors.
 	fwd := &fakeForwarder{
-		leaderAddr: "unreachable:1",
-		master:     httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})),
+		leaderAddr:  "unreachable:1",
+		coordinator: httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})),
 	}
-	defer fwd.master.Close()
+	defer fwd.coordinator.Close()
 
 	localSrv := newTestServer(t)
 	localHandler := listProjects(localSrv)
@@ -190,10 +190,10 @@ func TestProjectForwardMiddleware_LeaderErrorReturnsBadGateway(t *testing.T) {
 	w := httptest.NewRecorder()
 	mw.ServeHTTP(w, req)
 
-	// The fakeForwarder tries to dial the master URL (not the leader addr),
+	// The fakeForwarder tries to dial the coordinator URL (not the leader addr),
 	// so it actually succeeds. To test the error path, use a forwarder
-	// whose master is closed.
-	fwd.master.Close()
+	// whose coordinator is closed.
+	fwd.coordinator.Close()
 	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/projects/", nil)
 	w2 := httptest.NewRecorder()
 	mw.ServeHTTP(w2, req2)
@@ -201,13 +201,13 @@ func TestProjectForwardMiddleware_LeaderErrorReturnsBadGateway(t *testing.T) {
 	assert.Equal(t, http.StatusBadGateway, w2.Code)
 }
 
-// TestSlaveGatesAnonymousBeforeForwarding mirrors the router's mutation
+// TestWorkerGatesAnonymousBeforeForwarding mirrors the router's mutation
 // middleware order (resolvePrincipal → requireUser → projectForwardMiddleware)
-// and asserts a slave (leader set) rejects an anonymous mutation with 401
-// BEFORE forwarding it to the master, while a resolved user is forwarded.
-func TestSlaveGatesAnonymousBeforeForwarding(t *testing.T) {
-	master := newMasterStub(t)
-	fwd := &fakeForwarder{leaderAddr: master.Listener.Addr().String(), master: master}
+// and asserts a worker (leader set) rejects an anonymous mutation with 401
+// BEFORE forwarding it to the coordinator, while a resolved user is forwarded.
+func TestWorkerGatesAnonymousBeforeForwarding(t *testing.T) {
+	coordinator := newCoordinatorStub(t)
+	fwd := &fakeForwarder{leaderAddr: coordinator.Listener.Addr().String(), coordinator: coordinator}
 	srv := newAuthServer(t) // auth enabled: alice/tok-a
 
 	// Chain composed exactly as router.go wires project mutations.
@@ -220,27 +220,27 @@ func TestSlaveGatesAnonymousBeforeForwarding(t *testing.T) {
 	anon.Header.Set("Content-Type", "application/json")
 	wAnon := httptest.NewRecorder()
 	chain.ServeHTTP(wAnon, anon)
-	assert.Equal(t, http.StatusUnauthorized, wAnon.Code, "slave rejects anonymous before forwarding")
+	assert.Equal(t, http.StatusUnauthorized, wAnon.Code, "worker rejects anonymous before forwarding")
 
-	// Resolved user → forwarded to the master stub (201).
+	// Resolved user → forwarded to the coordinator stub (201).
 	user := httptest.NewRequest(http.MethodPost, "/api/v1/projects/", bytes.NewReader(body))
 	user.Header.Set("Content-Type", "application/json")
 	user.Header.Set("Authorization", "Bearer tok-a")
 	wUser := httptest.NewRecorder()
 	chain.ServeHTTP(wUser, user)
-	assert.Equal(t, http.StatusCreated, wUser.Code, "resolved user is forwarded to the master")
+	assert.Equal(t, http.StatusCreated, wUser.Code, "resolved user is forwarded to the coordinator")
 }
 
-func TestServer_LeaderAddr_MasterMode(t *testing.T) {
+func TestServer_LeaderAddr_CoordinatorMode(t *testing.T) {
 	srv, err := server.New(server.Config{SpawnDefaultAgent: false})
 	require.NoError(t, err)
 	require.NoError(t, srv.Start(context.Background()))
-	assert.Empty(t, srv.LeaderAddr(), "master mode has no leader address")
+	assert.Empty(t, srv.LeaderAddr(), "coordinator mode has no leader address")
 }
 
-func TestServer_LeaderAddr_SlaveWithoutLeader(t *testing.T) {
-	srv, err := server.New(server.Config{Mode: server.ModeSlave, SpawnDefaultAgent: false})
+func TestServer_LeaderAddr_WorkerWithoutLeader(t *testing.T) {
+	srv, err := server.New(server.Config{Mode: server.ModeWorker, SpawnDefaultAgent: false})
 	require.NoError(t, err)
 	require.NoError(t, srv.Start(context.Background()))
-	assert.Empty(t, srv.LeaderAddr(), "slave with no leader config has empty address")
+	assert.Empty(t, srv.LeaderAddr(), "worker with no leader config has empty address")
 }

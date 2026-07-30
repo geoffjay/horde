@@ -13,13 +13,13 @@ what/why. This document is the how.
 
 * Signal source: [Agent Adapter Protocol (AAP)](/docs/knowledgebase/decisions/agent-adapter-protocol.md) — the `context` message + `execution_context` capability (already in the spec + `internal/aap`).
 * Node/agent mechanism: [Phase 3 — Agent mechanism](/docs/knowledgebase/plans/phase-3-agents.md).
-* Topology + authorization context: [master/slave model](/docs/knowledgebase/decisions/master-slave-model.md).
+* Topology + authorization context: [coordinator/worker model](/docs/knowledgebase/decisions/coordinator-worker-model.md).
 
 # Scope
 
 **v1 delivers:** the `ExecutionContext` data model, node-side materialization
 from AAP frames + launch metadata, a local query API (snapshot + change
-stream), cross-node aggregation via the master, and read-only, **redacted**
+stream), cross-node aggregation via the coordinator, and read-only, **redacted**
 remote access gated by a minimal node-level principal model.
 
 **v1 does not deliver:** a full user/permission model (only node-level
@@ -124,10 +124,10 @@ an agent gets the current snapshot followed by deltas.
 
 ## Aggregation
 
-Slaves report their agents' contexts to the master. Reuse the existing
-heartbeat (slave→master) by extending its payload with a **context digest**
+Workers report their agents' contexts to the coordinator. Reuse the existing
+heartbeat (worker→coordinator) by extending its payload with a **context digest**
 (the redacted, remote-visible subset — see below — plus `UpdatedAt`), rather
-than adding a new channel. The master keeps an aggregated view keyed by
+than adding a new channel. The coordinator keeps an aggregated view keyed by
 `(node_id, agent_id)` and evicts entries whose node stops heartbeating.
 
 Sending only the redacted subset over the wire means sensitive fields never
@@ -141,7 +141,7 @@ GET /api/v1/cluster/agents/context             → aggregated, redacted contexts
 GET /api/v1/cluster/agents/context?issue=proj-42 → filtered (the "who is on X?" query)
 ```
 
-Served by the master. Read-only: there is **no** cross-node mutation of context
+Served by the coordinator. Read-only: there is **no** cross-node mutation of context
 and no way for a remote caller to drive an agent through this surface.
 
 ## Authorization + redaction
@@ -157,7 +157,7 @@ is a separate phase):
 Redacted **out** for remote principals: `blocked_reason`, `note`, error
 messages/codes, approval payloads, `turn_id`. Default is restrictive; a node MAY
 widen what it shares but MUST NOT exceed the full model. This matches the
-[collaboration model](/docs/knowledgebase/decisions/master-slave-model.md): a
+[collaboration model](/docs/knowledgebase/decisions/coordinator-worker-model.md): a
 coworker can see *that* you are on issue X and blocked, not the sensitive
 detail.
 
@@ -179,7 +179,7 @@ detail.
   omitting a field leaves the prior value).
 * **Local API:** snapshot and stream (initial snapshot + delta).
 * **Degradation:** an ADK agent yields coarse context; rich fields zero.
-* **Aggregation:** master assembles `(node_id, agent_id)` view from slave
+* **Aggregation:** coordinator assembles `(node_id, agent_id)` view from worker
   heartbeats; evicts on heartbeat loss.
 * **Redaction:** a `remote` principal never receives `blocked_reason`, `note`,
   error text, or approval payloads — enforced at the source digest.

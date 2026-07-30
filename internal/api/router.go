@@ -52,10 +52,10 @@ func Router(srv *server.Server) http.Handler {
 			r.Post("/agents/{id}/approvals/{requestID}", respondApproval(srv))
 		})
 
-		// Cluster (slave ↔ master). The node→node ingest endpoints require the
+		// Cluster (worker ↔ coordinator). The node→node ingest endpoints require the
 		// shared cluster auth token (when configured); the read endpoints below
 		// are also used by local clients (the TUI) and stay open.
-		r.With(requireClusterAuth(srv)).Post("/cluster/register", registerSlave(srv))
+		r.With(requireClusterAuth(srv)).Post("/cluster/register", registerWorker(srv))
 		r.With(requireClusterAuth(srv)).Post("/cluster/heartbeat", heartbeat(srv))
 		r.With(requireClusterAuth(srv)).Post("/cluster/events", receiveClusterEvent(srv))
 		r.Get("/cluster/nodes", listNodes(srv))
@@ -67,20 +67,20 @@ func Router(srv *server.Server) http.Handler {
 		// Users (per-user auth; ids only — never tokens)
 		r.Get("/users", listUsers(srv))
 
-		// Projects. The master is the source of truth for project state; a
-		// slave with a leader forwards project requests to it
+		// Projects. The coordinator is the source of truth for project state; a
+		// worker with a leader forwards project requests to it
 		// (projectForwardMiddleware).
 		r.Route("/projects", func(r chi.Router) {
-			// Reads are open (origin-redacted) and forward-only on a slave.
+			// Reads are open (origin-redacted) and forward-only on a worker.
 			r.Group(func(r chi.Router) {
 				r.Use(projectForwardMiddleware(srv))
 				r.Get("/", listProjects(srv))
 				r.Get("/{id}", getProject(srv))
 			})
-			// Mutations: requireUser gates BEFORE the forward, so a slave
+			// Mutations: requireUser gates BEFORE the forward, so a worker
 			// rejects an anonymous mutation at the edge instead of forwarding
-			// it to the master as trusted node traffic (disabled ⇒ no-op).
-			// The master then enforces ownership (authorizeProject),
+			// it to the coordinator as trusted node traffic (disabled ⇒ no-op).
+			// The coordinator then enforces ownership (authorizeProject),
 			// re-deriving the forwarded user from X-Horde-User.
 			r.Group(func(r chi.Router) {
 				r.Use(requireUser(srv))

@@ -53,9 +53,9 @@ func authorizeProject(srv projectAuthorizer, r *http.Request, projectID string, 
 	case principalUser:
 		return authorizeUser(p, prin.userID, prin.admin, level)
 	case principalNode:
-		// A node principal is a slave→master (or master→owning-node) forward.
+		// A node principal is a worker→coordinator (or coordinator→owning-node) forward.
 		// Enforce the echoed user (X-Horde-User), re-deriving admin from local
-		// config — do NOT blanket-trust the node. The origin slave rejects
+		// config — do NOT blanket-trust the node. The origin worker rejects
 		// anonymous mutations before forwarding (requireUser runs before the
 		// forward middleware), so a forwarded request always carries a user
 		// once auth is enabled; a node request without one is denied.
@@ -106,7 +106,7 @@ func lookupForwardedUser(srv userTable, userID string) (server.UserAuth, bool) {
 }
 
 // forwardedUserIsAdmin reports whether the given user id is an admin per local
-// config. resolveForwardedUser yields only the id, so the master re-derives
+// config. resolveForwardedUser yields only the id, so the coordinator re-derives
 // admin from its own (identical, config-defined) user table.
 func forwardedUserIsAdmin(srv userTable, userID string) bool {
 	u, ok := lookupForwardedUser(srv, userID)

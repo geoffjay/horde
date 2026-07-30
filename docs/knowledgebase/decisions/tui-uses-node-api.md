@@ -9,7 +9,7 @@ timestamp: 2026-07-09T00:00:00Z
 # Context
 
 Phase 1 launches the TUI (`horde` with no subcommand) by starting an in-process
-node in master mode and interacting with it locally. With the node API landing
+node in coordinator mode and interacting with it locally. With the node API landing
 in Phase 2 (see the [plan](/docs/knowledgebase/plans/phase-2-server-api.md)),
 there is a choice: keep the in-process shortcut for the co-located case, or
 have the TUI always go through the API.
@@ -25,7 +25,7 @@ in-process shortcut into `Server` methods for the co-located case.
 
 * One code path for local and remote: the TUI is just another API client. This
   removes a whole class of "works in the TUI, breaks over the network" bugs
-  and keeps the TUI identical whether it talks to a local master or a remote
+  and keeps the TUI identical whether it talks to a local coordinator or a remote
   node.
 * `Server` stays the node core; the TUI never imports `internal/server`
   directly. `internal/client` is the TUI's only adapter into the node API,

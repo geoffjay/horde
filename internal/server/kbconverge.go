@@ -135,7 +135,7 @@ type kbLeaderProject struct {
 
 // listProjects fetches the project list from the leader (the authority is the
 // source of truth). A participant's own project store is empty — project API
-// requests forward to the master (projectForwardMiddleware) and never populate
+// requests forward to the coordinator (projectForwardMiddleware) and never populate
 // the local store — so the converger MUST learn participating projects from
 // the leader rather than reading its local store (KSP §3.2: participants learn
 // projects from the authority).
@@ -333,7 +333,7 @@ func (c *kbConverger) convergeAll(ctx context.Context) {
 	// In v1 every node that has sync enabled participates in every project
 	// (KSP §3.2). On the authority there's nothing to converge — it IS the
 	// canonical state.
-	if c.srv.isMaster() {
+	if c.srv.isCoordinator() {
 		return
 	}
 
@@ -350,8 +350,8 @@ func (c *kbConverger) convergeAll(ctx context.Context) {
 		return
 	}
 
-	// Collect participating project IDs. A real slave's local store is empty
-	// (project API requests forward to the master), so the leader's list is
+	// Collect participating project IDs. A real worker's local store is empty
+	// (project API requests forward to the coordinator), so the leader's list is
 	// the source of truth (KSP §3.2). Union with the local store so the
 	// in-process/raft cases (where the store is populated) also work.
 	ids := make(map[string]struct{})

@@ -22,8 +22,8 @@ type registerResponse struct {
 	LeaderID string `json:"leader_id"`
 }
 
-// registerSlave handles a slave registering with this master.
-func registerSlave(srv clusterView) http.HandlerFunc {
+// registerWorker handles a worker registering with this coordinator.
+func registerWorker(srv clusterView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req registerRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -34,7 +34,7 @@ func registerSlave(srv clusterView) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "node_id is required"})
 			return
 		}
-		srv.RegisterSlave(req.NodeID, req.Addr)
+		srv.RegisterWorker(req.NodeID, req.Addr)
 		writeJSON(w, http.StatusOK, registerResponse{
 			OK:       true,
 			NodeID:   req.NodeID,
@@ -56,7 +56,7 @@ type heartbeatResponse struct {
 	LeaderID string `json:"leader_id"`
 }
 
-// heartbeat handles a slave's periodic health check against this master,
+// heartbeat handles a worker's periodic health check against this coordinator,
 // refreshing its last-seen time and reported agents.
 func heartbeat(srv clusterView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -74,8 +74,8 @@ func heartbeat(srv clusterView) http.HandlerFunc {
 	}
 }
 
-// slaveDTO is the JSON shape for a registered slave in the cluster view.
-type slaveDTO struct {
+// workerDTO is the JSON shape for a registered worker in the cluster view.
+type workerDTO struct {
 	NodeID   string   `json:"node_id"`
 	Addr     string   `json:"addr"`
 	Agents   []string `json:"agents"`
@@ -84,28 +84,28 @@ type slaveDTO struct {
 }
 
 // clusterNodesResponse is the GET /api/v1/cluster/nodes response: the leader's
-// id plus every slave registered with this master.
+// id plus every worker registered with this coordinator.
 type clusterNodesResponse struct {
-	LeaderID string     `json:"leader_id"`
-	Nodes    []slaveDTO `json:"nodes"`
+	LeaderID string      `json:"leader_id"`
+	Nodes    []workerDTO `json:"nodes"`
 }
 
-// listNodes returns the master's view of the cluster: the slaves that have
-// registered and their last-seen/agents state. On a slave node the registry
+// listNodes returns the coordinator's view of the cluster: the workers that have
+// registered and their last-seen/agents state. On a worker node the registry
 // is empty, so this returns just the leader id and no nodes.
 func listNodes(srv clusterView) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		slaves := srv.Slaves()
-		nodes := make([]slaveDTO, 0, len(slaves))
-		for i := range slaves {
-			nodes = append(nodes, toSlaveDTO(&slaves[i]))
+		workers := srv.Workers()
+		nodes := make([]workerDTO, 0, len(workers))
+		for i := range workers {
+			nodes = append(nodes, toWorkerDTO(&workers[i]))
 		}
 		writeJSON(w, http.StatusOK, clusterNodesResponse{LeaderID: srv.NodeID(), Nodes: nodes})
 	}
 }
 
-// toSlaveDTO converts a server.SlaveInfo to its JSON DTO.
-func toSlaveDTO(s *server.SlaveInfo) slaveDTO {
+// toWorkerDTO converts a server.WorkerInfo to its JSON DTO.
+func toWorkerDTO(s *server.WorkerInfo) workerDTO {
 	agents := s.Agents
 	if agents == nil {
 		agents = []string{}
@@ -114,7 +114,7 @@ func toSlaveDTO(s *server.SlaveInfo) slaveDTO {
 	if !s.LastSeen.IsZero() {
 		lastSeen = s.LastSeen.UTC().Format(time.RFC3339)
 	}
-	return slaveDTO{
+	return workerDTO{
 		NodeID:   s.NodeID,
 		Addr:     s.Addr,
 		Agents:   agents,

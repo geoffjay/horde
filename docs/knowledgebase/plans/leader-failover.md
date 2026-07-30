@@ -1,12 +1,12 @@
 ---
 type: Plan
 title: Leader failover
-description: Automatic leader failover for a horde cluster — raft-based election on top of the gossip ring, master-only state replicated through the raft log, and a stable entry point that survives a leader change. Built in slices on the Phase 4 foundation.
+description: Automatic leader failover for a horde cluster — raft-based election on top of the gossip ring, coordinator-only state replicated through the raft log, and a stable entry point that survives a leader change. Built in slices on the Phase 4 foundation.
 tags: [plan, cluster, distributed, failover, raft]
 ---
 
 Phase 4 makes a cluster *act* across nodes but keeps a **statically designated,
-single-point-of-failure master**: if it dies, the cluster has no leader until an
+single-point-of-failure coordinator**: if it dies, the cluster has no leader until an
 operator starts a new one, and its in-memory/on-disk state is lost. This is the
 next body of work — make leadership *survive* the loss of a node.
 
@@ -14,18 +14,18 @@ next body of work — make leadership *survive* the loss of a node.
 > gossip ring (1), the project store replicated through the raft log (2), AAP
 > resume tokens replicated (3), and a client that follows the leader across a
 > failover (4). Failover is opt-in (`cluster.failover: raft`, needs a ≥3-node
-> quorum); the default static-master path is unchanged.
+> quorum); the default static-coordinator path is unchanged.
 
-Decision: [Raft for leader election and master-state replication](../decisions/raft-leader-election.md).
+Decision: [Raft for leader election and coordinator-state replication](../decisions/raft-leader-election.md).
 Requirements background: [cluster leader failover](../concepts/cluster-failover.md) concept.
-Topology it extends: [master/slave cluster model](../decisions/master-slave-model.md).
+Topology it extends: [coordinator/worker cluster model](../decisions/coordinator-worker-model.md).
 
 ## Principles
 
 * **Opt-in, backwards-compatible.** Failover is a new mode
   (`cluster.failover: raft`, default `off`). With it off, horde behaves exactly
-  as it does after Phase 4 — a static master, no quorum requirement, no new
-  runtime cost. Nothing below changes the single-master default path.
+  as it does after Phase 4 — a static coordinator, no quorum requirement, no new
+  runtime cost. Nothing below changes the single-coordinator default path.
 * **Layer, don't replace.** Keep the gossip ring for membership + failure
   detection and keep the `Discoverer`/`leaderClient` re-resolve seam. Raft is
   layered on top; a `raftDiscoverer` returns the current leader and slots into
@@ -38,7 +38,7 @@ Topology it extends: [master/slave cluster model](../decisions/master-slave-mode
 
 ## Slice 1 — Raft membership + election (leader lookup only) — complete
 
-Stood up a raft cluster whose leader *is* the horde master, exposed through the
+Stood up a raft cluster whose leader *is* the horde coordinator, exposed through the
 existing discovery seam — **no state replication yet** (the FSM is a no-op).
 This proves election + re-targeting end to end before touching the stores.
 
@@ -48,8 +48,8 @@ Delivered: `internal/server/raft.go` (`raftNode` — `hashicorp/raft` +
 handler-delegating FSM that no-ops until the stores are wired in). Config keys
 `cluster.failover` / `raft_bind_addr` / `raft_advertise_addr` / `raft_dir`
 (validated: `raft` needs `gossip` + a routable advertise addr). Role is dynamic
-via `Server.isMaster()` (raft leader ⇒ master), threaded through the
-master-gated methods, `Mode()`, `LeaderAddr()`, `LeaderConnected()`, and a new
+via `Server.isCoordinator()` (raft leader ⇒ coordinator), threaded through the
+coordinator-gated methods, `Mode()`, `LeaderAddr()`, `LeaderConnected()`, and a new
 `IsLeader()`. Gossip `nodeMeta` gained `raft_addr`; the `raftDiscoverer` maps the
 raft leader id → its HTTP address via the ring. `startCluster` brings up raft
 before gossip (so gossip advertises the raft addr); every failover node runs
@@ -83,15 +83,15 @@ The original slice plan (unchanged) follows.
   leader's **HTTP** address. Raft knows the leader's *raft* address; map it to
   the HTTP address via the gossip `nodeMeta` (already carries `api_addr`), or
   extend `nodeMeta` with the raft server id. `newDiscoverer` gains a `raft`
-  branch alongside `static`/`dns`/`gossip`. Slaves re-resolve each reconnect, so
+  branch alongside `static`/`dns`/`gossip`. Workers re-resolve each reconnect, so
   they follow a new leader for free once elected.
-* **Role from raft, not config.** Under `failover: raft` a node's master/slave
-  role is *dynamic* — whoever holds raft leadership serves the master API; the
-  others act as slaves. `--mode` becomes advisory (initial bootstrap hint) rather
+* **Role from raft, not config.** Under `failover: raft` a node's coordinator/worker
+  role is *dynamic* — whoever holds raft leadership serves the coordinator API; the
+  others act as workers. `--mode` becomes advisory (initial bootstrap hint) rather
   than a fixed assignment. Keep it fixed when `failover: off`.
 
 Verify (`task test:integration`): a 3-node raft cluster elects one leader;
-killing the leader elects a new one within the election timeout; a slave's
+killing the leader elects a new one within the election timeout; a worker's
 `raftDiscoverer` returns the new leader's HTTP addr and it re-registers there.
 
 ## Slice 2 — Replicate the project store through the log — complete
@@ -124,10 +124,10 @@ The original slice plan (unchanged) follows.
   assign / attach / remove / delete) to the in-memory project state; `Apply`
   replaces the direct `flush()`-to-`projects.json` write. Snapshots serialize the
   full state (the existing `persistedState` shape); `Restore` loads it.
-* **Route mutations through raft.** Master-only project mutations
+* **Route mutations through raft.** Coordinator-only project mutations
   (`internal/server/project_api.go`) become `raft.Apply(cmd)` on the leader.
   Non-leader nodes that receive a project mutation forward it to the leader
-  (the existing slave→master project-forwarding path already does this; point it
+  (the existing worker→coordinator project-forwarding path already does this; point it
   at the raft leader via the discoverer). Reads stay local to the leader's
   applied state.
 * **Persistence.** Under `failover: raft` the raft log+snapshots are the source
@@ -156,7 +156,7 @@ newly-elected leader finds the token (keying by owning node would defeat failove
 resume). A name collision across nodes shares the token, i.e. "same logical
 agent". A resume-set that happens on a **follower** (an AAP agent placed off the
 leader) falls back to a node-local write, matching pre-failover per-node
-behavior — that is the boundary: leader-hosted agents' resume survives master
+behavior — that is the boundary: leader-hosted agents' resume survives coordinator
 failover; follower-hosted agents keep node-local resume. Verified:
 `TestRaftResume_ReplicatesAndSurvivesFailover` (white-box, 3 real raft nodes: a
 token set on the leader replicates to followers and survives a leader crash) plus
@@ -170,15 +170,15 @@ The original slice plan (unchanged) follows.
 * Consider scope: resume tokens are today per-node and agents are per-node
   counters, so replication must key by a cluster-stable identity (agent name +
   owning node), not the bare per-node id. Decide whether resume state is truly
-  cluster-global or only needs to survive *master* failover (project-hosting
-  masters vs. slave-hosted agents). Document the boundary.
+  cluster-global or only needs to survive *coordinator* failover (project-hosting
+  coordinators vs. worker-hosted agents). Document the boundary.
 
 Verify: capture a resume token on the leader; fail over; a respawn resumes from
 the replicated token.
 
 ## Slice 4 — Stable entry point + client retry — complete
 
-Clients and the TUI enter at the master; after failover the address changes.
+Clients and the TUI enter at the coordinator; after failover the address changes.
 Gave them a stable way in.
 
 Delivered: the `client.Client` now holds a set of member addresses
@@ -218,8 +218,8 @@ leader and continues.
 
 * **Replicating live agent processes.** Agents are subprocesses of the node that
   hosts them; failover preserves *cluster metadata* (projects, assignments,
-  resume tokens), not running agent processes. A slave-hosted agent survives a
-  master failover (the slave keeps running); a *master*-hosted agent dies with
+  resume tokens), not running agent processes. A worker-hosted agent survives a
+  coordinator failover (the worker keeps running); a *coordinator*-hosted agent dies with
   its node. Auto-rescheduling orphaned agents onto survivors is a later effort.
 * **Learner/non-voter nodes** for read scaling or geo-distribution.
 * **Dynamic quorum reconfiguration** beyond gossip-driven AddVoter/RemoveServer.

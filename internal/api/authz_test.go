@@ -138,7 +138,7 @@ func TestPauseProject_AdminBypassesOwnership(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// doForwarded simulates a slave→master forward: a node caller (cluster token)
+// doForwarded simulates a worker→coordinator forward: a node caller (cluster token)
 // echoing X-Horde-User for the originating user.
 func doForwarded(t *testing.T, h http.Handler, method, target, clusterToken, xUser string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -152,9 +152,9 @@ func doForwarded(t *testing.T, h http.Handler, method, target, clusterToken, xUs
 	return w
 }
 
-func TestPauseProject_ForwardedOwnerEnforcedOnMaster(t *testing.T) {
+func TestPauseProject_ForwardedOwnerEnforcedOnCoordinator(t *testing.T) {
 	// A forwarded (node) request is authorized against the echoed X-Horde-User,
-	// not blanket-trusted: the master re-derives and enforces ownership.
+	// not blanket-trusted: the coordinator re-derives and enforces ownership.
 	srv := newAuthServer(t, server.UserAuth{ID: "alice", Token: "tok-a"}, server.UserAuth{ID: "bob", Token: "tok-b"})
 	srv.SetClusterAuthTokenForTest("ct")
 	h := Router(srv)
@@ -164,7 +164,7 @@ func TestPauseProject_ForwardedOwnerEnforcedOnMaster(t *testing.T) {
 	w := doForwarded(t, h, http.MethodPost, "/api/v1/projects/"+p.ID+"/pause", "ct", "alice")
 	assert.Equal(t, http.StatusOK, w.Code, "forwarded owner is enforced and allowed")
 
-	// Non-owner forwarded → 403 (master enforces, does not blanket-trust node).
+	// Non-owner forwarded → 403 (coordinator enforces, does not blanket-trust node).
 	w = doForwarded(t, h, http.MethodPost, "/api/v1/projects/"+p.ID+"/pause", "ct", "bob")
 	assert.Equal(t, http.StatusForbidden, w.Code, "forwarded non-owner is forbidden")
 
@@ -174,7 +174,7 @@ func TestPauseProject_ForwardedOwnerEnforcedOnMaster(t *testing.T) {
 }
 
 func TestPauseProject_ForwardedAdminBypassesOwnership(t *testing.T) {
-	// The master re-derives admin from local config for the forwarded user.
+	// The coordinator re-derives admin from local config for the forwarded user.
 	srv := newAuthServer(t, server.UserAuth{ID: "alice", Token: "tok-a"}, server.UserAuth{ID: "admin", Token: "tok-admin", Admin: true})
 	srv.SetClusterAuthTokenForTest("ct")
 	h := Router(srv)

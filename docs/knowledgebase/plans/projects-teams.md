@@ -258,8 +258,8 @@ convention. `cmd/serve.go` maps it into `server.Config`.
   reserved.
 * **OS-level filesystem sandboxing** — advisory scope is sufficient for
   3.5a; revisit when the risk model changes with per-user auth.
-* **Cross-node project sync** — Phase 4: slaves report their projects to the
-  master; a cluster-wide project listing. The digest wire format is already
+* **Cross-node project sync** — Phase 4: workers report their projects to the
+  coordinator; a cluster-wide project listing. The digest wire format is already
   project-aware.
 * **Agent-to-agent messaging** — deferred per the decision (prior attempt in
   agentd proved challenging).

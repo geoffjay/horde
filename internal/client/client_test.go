@@ -35,7 +35,7 @@ func (s *nodeStub) health(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *nodeStub) node(w http.ResponseWriter, _ *http.Request) {
-	_ = json.NewEncoder(w).Encode(NodeInfo{Mode: "master", LeaderConnected: true, NodeID: "n1", Version: "test"})
+	_ = json.NewEncoder(w).Encode(NodeInfo{Mode: "coordinator", LeaderConnected: true, NodeID: "n1", Version: "test"})
 }
 
 func (s *nodeStub) agents(w http.ResponseWriter, r *http.Request) {
@@ -68,11 +68,11 @@ func (s *nodeStub) eventsStream(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.WriteHeader(http.StatusOK)
 	fl, _ := w.(http.Flusher)
-	_, _ = w.Write([]byte("id: 1\nevent: agent.spawned\ndata: {\"type\":\"agent.spawned\",\"node\":\"slave-1\",\"agent_id\":\"a1\",\"name\":\"greeter\"}\n\n"))
+	_, _ = w.Write([]byte("id: 1\nevent: agent.spawned\ndata: {\"type\":\"agent.spawned\",\"node\":\"worker-1\",\"agent_id\":\"a1\",\"name\":\"greeter\"}\n\n"))
 	if fl != nil {
 		fl.Flush()
 	}
-	_, _ = w.Write([]byte("id: 2\nevent: agent.exited\ndata: {\"type\":\"agent.exited\",\"node\":\"slave-1\",\"agent_id\":\"a1\"}\n\n"))
+	_, _ = w.Write([]byte("id: 2\nevent: agent.exited\ndata: {\"type\":\"agent.exited\",\"node\":\"worker-1\",\"agent_id\":\"a1\"}\n\n"))
 	if fl != nil {
 		fl.Flush()
 	}
@@ -103,7 +103,7 @@ func TestNode(t *testing.T) {
 	c := New(srv.Listener.Addr().String())
 	n, err := c.Node(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "master", n.Mode)
+	assert.Equal(t, "coordinator", n.Mode)
 	assert.True(t, n.LeaderConnected)
 	assert.Equal(t, "n1", n.NodeID)
 }
@@ -134,9 +134,9 @@ func TestSpawnAgent_SendsNodePlacement(t *testing.T) {
 	c := New(srv.Listener.Addr().String())
 
 	// A placement node is sent in the body.
-	_, err := c.SpawnAgent(context.Background(), "greeter", "slave-1")
+	_, err := c.SpawnAgent(context.Background(), "greeter", "worker-1")
 	require.NoError(t, err)
-	assert.Equal(t, "slave-1", stub.lastSpawn["node"])
+	assert.Equal(t, "worker-1", stub.lastSpawn["node"])
 
 	// An empty node is omitted (local placement).
 	_, err = c.SpawnAgent(context.Background(), "greeter", "")
@@ -166,7 +166,7 @@ func TestStreamEvents_ParsesFrames(t *testing.T) {
 	first, ok := <-ch
 	require.True(t, ok)
 	assert.Equal(t, EventAgentSpawned, first.Type)
-	assert.Equal(t, "slave-1", first.Node)
+	assert.Equal(t, "worker-1", first.Node)
 	assert.Equal(t, "a1", first.AgentID)
 	assert.Equal(t, "greeter", first.Name)
 

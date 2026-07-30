@@ -51,9 +51,9 @@ func TestLoadConfigWithDefaults_FixtureFormats(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Equal(t, "testing", c.Env)
-			assert.Equal(t, "slave", c.Mode)
+			assert.Equal(t, "worker", c.Mode)
 			assert.Equal(t, 13500, c.Server.Port)
-			assert.Equal(t, "master:13420", c.Server.Leader)
+			assert.Equal(t, "coordinator:13420", c.Server.Leader)
 			assert.Equal(t, "test-node", c.Cluster.NodeID)
 			assert.Equal(t, "json", c.Log.Formatter)
 			assert.Equal(t, "debug", c.Log.Level)
@@ -93,7 +93,7 @@ func TestLoadConfigWithDefaults_AppliesDefaults(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "development", c.Env)
-	assert.Equal(t, "master", c.Mode)
+	assert.Equal(t, "coordinator", c.Mode)
 	assert.Equal(t, 13420, c.Server.Port)
 	assert.Equal(t, "text", c.Log.Formatter)
 	assert.Equal(t, "info", c.Log.Level)
@@ -103,7 +103,7 @@ func TestLoadConfigWithDefaults_AppliesDefaults(t *testing.T) {
 
 func TestLoadConfigWithDefaults_EnvOverrides(t *testing.T) {
 	t.Setenv("HORDE_CONFIG", fixturePath("valid.yaml"))
-	t.Setenv("HORDE_MODE", "master")
+	t.Setenv("HORDE_MODE", "coordinator")
 	t.Setenv("HORDE_SERVER_PORT", "14000")
 	t.Setenv("HORDE_LOG_LEVEL", "warn")
 	Reset()
@@ -113,7 +113,7 @@ func TestLoadConfigWithDefaults_EnvOverrides(t *testing.T) {
 	require.NoError(t, err)
 
 	// Env overrides file values.
-	assert.Equal(t, "master", c.Mode)
+	assert.Equal(t, "coordinator", c.Mode)
 	assert.Equal(t, 14000, c.Server.Port)
 	assert.Equal(t, "warn", c.Log.Level)
 	// File value preserved where no env override.
@@ -127,7 +127,7 @@ func TestGet_Singleton(t *testing.T) {
 	c1 := Get()
 	c2 := Get()
 	assert.Same(t, c1, c2)
-	assert.Equal(t, "master", c1.Mode)
+	assert.Equal(t, "coordinator", c1.Mode)
 }
 
 func TestLoad_Idempotent(t *testing.T) {
@@ -136,7 +136,7 @@ func TestLoad_Idempotent(t *testing.T) {
 
 	require.NoError(t, Load())
 	require.NoError(t, Load()) // second call is a no-op
-	assert.Equal(t, "master", Get().Mode)
+	assert.Equal(t, "coordinator", Get().Mode)
 }
 
 func TestLoadConfig_RejectsUnsupportedExtension(t *testing.T) {
@@ -154,18 +154,18 @@ func TestLoadConfig_RejectsUnsupportedExtension(t *testing.T) {
 func TestConfig_Validate(t *testing.T) {
 	valid := func() *Config {
 		return &Config{
-			Mode:   "master",
+			Mode:   "coordinator",
 			Server: ServerConfig{Port: defaultServerPort},
 		}
 	}
 
-	t.Run("valid master", func(t *testing.T) {
+	t.Run("valid coordinator", func(t *testing.T) {
 		assert.NoError(t, valid().Validate())
 	})
 
-	t.Run("valid slave without leader", func(t *testing.T) {
+	t.Run("valid worker without leader", func(t *testing.T) {
 		c := valid()
-		c.Mode = "slave"
+		c.Mode = "worker"
 		assert.NoError(t, c.Validate())
 	})
 
@@ -211,20 +211,20 @@ func TestConfig_Validate(t *testing.T) {
 		assert.Contains(t, err.Error(), "discovery_mechanism")
 	})
 
-	t.Run("gossip requires seeds on a slave", func(t *testing.T) {
+	t.Run("gossip requires seeds on a worker", func(t *testing.T) {
 		c := valid()
-		c.Mode = "slave"
+		c.Mode = "worker"
 		c.Cluster.DiscoveryMechanism = "gossip"
 		err := c.Validate()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "gossip_seeds")
 
-		c.Cluster.GossipSeeds = "master:7946"
+		c.Cluster.GossipSeeds = "coordinator:7946"
 		assert.NoError(t, c.Validate())
 	})
 
-	t.Run("gossip master needs no seeds", func(t *testing.T) {
-		c := valid() // master
+	t.Run("gossip coordinator needs no seeds", func(t *testing.T) {
+		c := valid() // coordinator
 		c.Cluster.DiscoveryMechanism = "gossip"
 		assert.NoError(t, c.Validate())
 	})

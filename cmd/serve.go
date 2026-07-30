@@ -29,15 +29,15 @@ var serveCmd = &cobra.Command{
 	Short: "Start the horde node",
 	Long: `Start the horde node in the foreground.
 
-By default the node runs in master (leader) mode. Pass --mode slave to start
-as a slave that connects to a leader; local functionality is not blocked while
+By default the node runs in coordinator (leader) mode. Pass --mode worker to start
+as a worker that connects to a leader; local functionality is not blocked while
 the leader connection is being established.`,
 	RunE: runServe,
 }
 
 func init() {
-	serveCmd.Flags().StringVar(&serveMode, "mode", "master",
-		"Node mode: master (leader, default) or slave")
+	serveCmd.Flags().StringVar(&serveMode, "mode", "coordinator",
+		"Node mode: coordinator (leader, default) or worker")
 	serveCmd.Flags().BoolVar(&serveDaemonize, "daemonize", false,
 		"Detach and run the server in the background")
 	rootCmd.AddCommand(serveCmd)
@@ -47,7 +47,7 @@ func init() {
 func runServe(cmd *cobra.Command, _ []string) error {
 	cfg := config.Get()
 	// The flag takes precedence over config when explicitly set; otherwise
-	// the config value (which defaults to master) is used.
+	// the config value (which defaults to coordinator) is used.
 	if cmd.Flags().Changed("mode") {
 		cfg.Mode = serveMode
 	}

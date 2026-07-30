@@ -55,7 +55,7 @@ here: [`docs/spec/agent-adapter-protocol-v1.md`](/docs/spec/agent-adapter-protoc
 * **Layering.** AAP is the *local* one-host-to-one-adapter contract. Multi-user,
   cross-node, remote-principal authorization, directory sync, and "who may send
   a mutating prompt" all live in the node-authorization + cluster layer **above**
-  AAP (see [master/slave model](master-slave-model.md)). The node is the sole
+  AAP (see [coordinator/worker model](coordinator-worker-model.md)). The node is the sole
   tool-approval authority, so it enforces write-gating at the AAP boundary.
 
 # Consequences

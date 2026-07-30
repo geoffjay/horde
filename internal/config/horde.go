@@ -19,8 +19,8 @@ type ServerConfig struct {
 	// AgentCommand is the path to the binary used to host agent subprocesses.
 	// When empty, the server uses the current executable (`horde agent`).
 	AgentCommand string `mapstructure:"agent_command"`
-	// Leader is the address of the master node that a slave connects to. Only
-	// used when Mode == "slave".
+	// Leader is the address of the coordinator node that a worker connects to. Only
+	// used when Mode == "worker".
 	Leader string `mapstructure:"leader"`
 	// ReadTimeout, WriteTimeout, IdleTimeout are the API server timeouts in
 	// seconds.
@@ -34,16 +34,16 @@ type ClusterConfig struct {
 	// NodeID is the unique identifier for this node within the cluster. When
 	// empty a generated id is used.
 	NodeID string `mapstructure:"node_id"`
-	// DiscoveryMechanism is how a slave finds its leader: "static" (via
+	// DiscoveryMechanism is how a worker finds its leader: "static" (via
 	// server.leader), "dns" (an SRV lookup of DiscoveryDNSName), or "gossip"
-	// (a peer-to-peer membership ring; the master advertises itself).
+	// (a peer-to-peer membership ring; the coordinator advertises itself).
 	DiscoveryMechanism string `mapstructure:"discovery_mechanism"`
-	// DiscoveryDNSName is the SRV name a slave looks up when DiscoveryMechanism
+	// DiscoveryDNSName is the SRV name a worker looks up when DiscoveryMechanism
 	// is "dns" (e.g. "_horde._tcp.example.com"). The lowest-priority target's
 	// host:port becomes the leader address.
 	DiscoveryDNSName string `mapstructure:"discovery_dns_name"`
 	// AdvertiseAddr is the reachable host:port this node advertises to peers
-	// (sent to the master on register so it can route back to this node).
+	// (sent to the coordinator on register so it can route back to this node).
 	// Empty falls back to ":<port>", which is not routable across hosts.
 	AdvertiseAddr string `mapstructure:"advertise_addr"`
 	// GossipBindAddr / GossipAdvertiseAddr are the host:port the gossip
@@ -52,21 +52,21 @@ type ClusterConfig struct {
 	GossipBindAddr      string `mapstructure:"gossip_bind_addr"`
 	GossipAdvertiseAddr string `mapstructure:"gossip_advertise_addr"`
 	// GossipSeeds is a comma-separated list of gossip addresses a node joins to
-	// bootstrap ring membership (e.g. "master:7946"). A scalar (not a list) so
-	// it also works via HORDE_CLUSTER_GOSSIP_SEEDS. A slave needs at least one.
+	// bootstrap ring membership (e.g. "coordinator:7946"). A scalar (not a list) so
+	// it also works via HORDE_CLUSTER_GOSSIP_SEEDS. A worker needs at least one.
 	GossipSeeds string `mapstructure:"gossip_seeds"`
 	// AuthToken is a shared secret required on node→node cluster calls
 	// (register/heartbeat/events). When set, outbound cluster calls send it as
-	// a bearer token and the master rejects unauthenticated ones. Empty
+	// a bearer token and the coordinator rejects unauthenticated ones. Empty
 	// disables cluster request auth (backward compatible).
 	AuthToken string `mapstructure:"auth_token"`
 	// GossipEncryptionKey is a base64-encoded 16/24/32-byte key that encrypts
 	// gossip traffic (memberlist SecretKey, AES-128/192/256). All nodes must
 	// share it. Empty leaves gossip unencrypted.
 	GossipEncryptionKey string `mapstructure:"gossip_encryption_key"`
-	// Failover selects automatic leader failover: "off" (default, the master is
+	// Failover selects automatic leader failover: "off" (default, the coordinator is
 	// statically designated) or "raft" (a hashicorp/raft quorum elects the
-	// leader and master-only state is replicated through the raft log). "raft"
+	// leader and coordinator-only state is replicated through the raft log). "raft"
 	// builds on gossip discovery — it uses the ring for membership + failure
 	// detection — so it requires cluster.discovery_mechanism "gossip".
 	Failover string `mapstructure:"failover"`
@@ -327,7 +327,7 @@ const (
 // defaults defines the default configuration values for horde.
 var defaults = map[string]any{
 	"env":  "development",
-	"mode": "master",
+	"mode": "coordinator",
 
 	// Server defaults
 	"server.port":          defaultServerPort,
@@ -442,14 +442,14 @@ func Reset() {
 // Validate validates the configuration settings. It rejects an unknown node
 // mode, an out-of-range server port, and negative timeouts.
 //
-// A slave without a configured leader is intentionally allowed: the server
-// treats that as a standalone slave (see server.connectLeader), so it is a
+// A worker without a configured leader is intentionally allowed: the server
+// treats that as a standalone worker (see server.connectLeader), so it is a
 // warning at runtime rather than a validation error here.
 func (c *Config) Validate() error {
 	switch c.Mode {
-	case "master", "slave":
+	case "coordinator", "worker":
 	default:
-		return fmt.Errorf("invalid mode %q: want master or slave", c.Mode)
+		return fmt.Errorf("invalid mode %q: want coordinator or worker", c.Mode)
 	}
 
 	if c.Server.Port < 1 || c.Server.Port > maxPort {
@@ -549,10 +549,10 @@ func (c *Config) validateCluster() error {
 			return fmt.Errorf("cluster.discovery_mechanism \"dns\" requires cluster.discovery_dns_name")
 		}
 	case "gossip":
-		// A slave must know at least one seed to join the ring; a master is
+		// A worker must know at least one seed to join the ring; a coordinator is
 		// typically the seed itself, so seeds are optional for it.
-		if c.Mode == "slave" && c.Cluster.GossipSeeds == "" {
-			return fmt.Errorf("cluster.discovery_mechanism \"gossip\" requires cluster.gossip_seeds on a slave")
+		if c.Mode == "worker" && c.Cluster.GossipSeeds == "" {
+			return fmt.Errorf("cluster.discovery_mechanism \"gossip\" requires cluster.gossip_seeds on a worker")
 		}
 	default:
 		return fmt.Errorf("invalid cluster.discovery_mechanism %q: want static, dns, or gossip", c.Cluster.DiscoveryMechanism)

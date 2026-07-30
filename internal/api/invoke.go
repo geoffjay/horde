@@ -43,7 +43,7 @@ func invokeAgent(srv invokeView) http.HandlerFunc {
 		// Authorize the invoke against the agent's active project: the owner
 		// or a team member may invoke; a non-member is forbidden (403). A
 		// no-op when auth is disabled or the agent is standalone (no active
-		// project). On a slave the agent is not local so AgentActiveProject is
+		// project). On a worker the agent is not local so AgentActiveProject is
 		// empty here and this is skipped; the owning node (which hosts the
 		// agent) runs the check on the forwarded request, re-deriving the
 		// X-Horde-User — mirroring the project-mutation cross-node model.
@@ -80,16 +80,16 @@ func invokeAgent(srv invokeView) http.HandlerFunc {
 			return
 		}
 		// Not local: route to the node that hosts the agent, if known
-		// (master → owning slave). Otherwise it's genuinely unknown.
+		// (coordinator → owning worker). Otherwise it's genuinely unknown.
 		if addr, ok := srv.RemoteAgentNode(id); ok {
 			invokeRemoteAgent(w, r, addr, srv.ClusterAuthToken(), forwardedUser(r))
 			return
 		}
-		// On a non-master node, an agent this node does not host may live on the
-		// master or a peer the master knows. Forward to the leader, which routes
-		// it (locally or to the owning slave via cross-node invoke). This makes
+		// On a non-coordinator node, an agent this node does not host may live on the
+		// coordinator or a peer the coordinator knows. Forward to the leader, which routes
+		// it (locally or to the owning worker via cross-node invoke). This makes
 		// any node a valid invoke entry point.
-		if srv.Mode() == server.ModeSlave {
+		if srv.Mode() == server.ModeWorker {
 			if leader := srv.LeaderAddr(); leader != "" {
 				invokeRemoteAgent(w, r, leader, srv.ClusterAuthToken(), forwardedUser(r))
 				return

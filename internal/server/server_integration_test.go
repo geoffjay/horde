@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestStart_SlaveBecomesLeaderConnected(t *testing.T) {
-	// Stand up a fake master that accepts register + heartbeat so the real
+func TestStart_WorkerBecomesLeaderConnected(t *testing.T) {
+	// Stand up a fake coordinator that accepts register + heartbeat so the real
 	// leader client in connectLeader succeeds. This replaces the old test
 	// which passed only because connectLeader faked leaderOK = true.
 	var heartbeats atomic.Int32
@@ -24,19 +24,19 @@ func TestStart_SlaveBecomesLeaderConnected(t *testing.T) {
 	mux.HandleFunc("/api/v1/cluster/register", func(w http.ResponseWriter, r *http.Request) {
 		var req registerPayload
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		_ = json.NewEncoder(w).Encode(registerResponse{OK: true, NodeID: req.NodeID, LeaderID: "master"})
+		_ = json.NewEncoder(w).Encode(registerResponse{OK: true, NodeID: req.NodeID, LeaderID: "coordinator"})
 	})
 	mux.HandleFunc("/api/v1/cluster/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		heartbeats.Add(1)
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "leader_id": "master"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "leader_id": "coordinator"})
 	})
-	master := httptest.NewServer(mux)
-	defer master.Close()
+	coordinator := httptest.NewServer(mux)
+	defer coordinator.Close()
 
 	srv, err := New(Config{
-		Mode:   ModeSlave,
-		Leader: master.Listener.Addr().String(),
-		NodeID: "slave-test",
+		Mode:   ModeWorker,
+		Leader: coordinator.Listener.Addr().String(),
+		NodeID: "worker-test",
 	})
 	require.NoError(t, err)
 

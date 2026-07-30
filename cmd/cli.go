@@ -29,8 +29,8 @@ var rootCmd = &cobra.Command{
 	Long: `horde is a collection of AI agents that can be executed and managed.
 
 It can run in standalone mode (a single host as the central hub) or in a
-multi-user distributed mode where one node is the master and others are
-slaves. This relationship is largely invisible to the user on each system.
+multi-user distributed mode where one node is the coordinator and others are
+workers. This relationship is largely invisible to the user on each system.
 
 Run without a subcommand to launch the TUI.`,
 	Version: version,

@@ -18,7 +18,7 @@ func TestConfig_KBSyncEnabled(t *testing.T) {
 func TestConfig_ValidateKnowledgebase(t *testing.T) {
 	base := func() *Config {
 		return &Config{
-			Mode:   "master",
+			Mode:   "coordinator",
 			Server: ServerConfig{Port: defaultServerPort},
 		}
 	}

@@ -149,7 +149,7 @@ no acknowledgement to track.
 
 Exactly one node is the authority **for a given scope**. Which node that is, is
 resolved per scope kind (§12); for `project` it is the cluster's leader (static
-master, or the raft-elected leader). The authority holds the **canonical tree**,
+coordinator, or the raft-elected leader). The authority holds the **canonical tree**,
 watches it, serves reads (§4.1, §4.2), and is the sole applier of writes (§4.3,
 §4.4) — every write to that scope is serialized through it.
 
@@ -451,7 +451,7 @@ kinds may be added to a cluster incrementally.
 | Binding | Definition |
 | --- | --- |
 | Identity | A project id in the host's project store. |
-| Authority | The cluster leader (static master, or raft-elected). |
+| Authority | The cluster leader (static coordinator, or raft-elected). |
 | Location | Authority: `<Project.Workspace>/.horde/knowledgebase/`. Participant: a node-local workspace root (§3.2). |
 | Authorization | View: owner, admin, or team member. Write: the host's project write authority. |
 | Participation | Every node that has the project's sync enabled. |

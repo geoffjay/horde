@@ -5,12 +5,12 @@ import (
 	"net/http"
 )
 
-// projectForwardMiddleware intercepts project API requests on a slave node
-// with a configured leader and forwards them to the master. On a master or
-// standalone slave (no leader), requests pass through to the local handlers.
+// projectForwardMiddleware intercepts project API requests on a worker node
+// with a configured leader and forwards them to the coordinator. On a coordinator or
+// standalone worker (no leader), requests pass through to the local handlers.
 //
-// The master is the source of truth for project state: a slave that receives
-// a project request proxies it to the master and returns the master's
+// The coordinator is the source of truth for project state: a worker that receives
+// a project request proxies it to the coordinator and returns the coordinator's
 // response. This keeps project state cluster-wide without active replication.
 func projectForwardMiddleware(fwd projectForwarder) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -32,13 +32,13 @@ func projectForwardMiddleware(fwd projectForwarder) func(http.Handler) http.Hand
 				_ = r.Body.Close()
 			}
 
-			// Resolve the per-user identity to echo to the master. A user
+			// Resolve the per-user identity to echo to the coordinator. A user
 			// caller is forwarded as X-Horde-User; a node caller honors any
 			// X-Horde-User already present (cross-node re-forward); an
 			// anonymous caller yields empty.
 			uid, _ := resolveForwardedUser(r)
 
-			// Forward to the master. The path includes the /api/v1 prefix
+			// Forward to the coordinator. The path includes the /api/v1 prefix
 			// (chi routes are nested under /api/v1, but the full path is
 			// available on the request).
 			status, header, respBody, err := fwd.ForwardProjectRequest(r.Context(), r.Method, r.URL.Path+queryString(r), body, uid)
@@ -47,14 +47,14 @@ func projectForwardMiddleware(fwd projectForwarder) func(http.Handler) http.Hand
 				return
 			}
 
-			// Copy the master's response back to the caller.
+			// Copy the coordinator's response back to the caller.
 			for k, vs := range header {
 				for _, v := range vs {
 					w.Header().Add(k, v)
 				}
 			}
 			w.WriteHeader(status)
-			//nolint:gosec // G705: respBody is the master's trusted API response, not user input
+			//nolint:gosec // G705: respBody is the coordinator's trusted API response, not user input
 			_, _ = w.Write(respBody)
 		})
 	}

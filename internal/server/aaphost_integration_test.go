@@ -26,7 +26,7 @@ func TestSpawnAAPAgent_MockBinary(t *testing.T) {
 	defer cancel()
 
 	srv, err := New(Config{
-		Mode:              ModeMaster,
+		Mode:              ModeCoordinator,
 		AgentCommand:      bin,
 		SpawnDefaultAgent: false,
 		AgentDefs: map[string]AgentDef{
@@ -91,7 +91,7 @@ func TestSpawnAAPAgent_PiAdapter(t *testing.T) {
 	defer cancel()
 
 	srv, err := New(Config{
-		Mode:              ModeMaster,
+		Mode:              ModeCoordinator,
 		SpawnDefaultAgent: false,
 		AgentDefs: map[string]AgentDef{
 			"pi": {Kind: AgentKindAAP, Command: node, Args: []string{entry}},
@@ -113,7 +113,7 @@ func TestIsAAPAgent_ADKIsFalse(t *testing.T) {
 	bin := findHordeBinaryLocal(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	srv, err := New(Config{Mode: ModeMaster, AgentCommand: bin, SpawnDefaultAgent: false})
+	srv, err := New(Config{Mode: ModeCoordinator, AgentCommand: bin, SpawnDefaultAgent: false})
 	require.NoError(t, err)
 	id, err := srv.SpawnAgent(ctx, "greeter")
 	require.NoError(t, err)
@@ -150,7 +150,7 @@ func TestAAPInvoke_SecondInvokeReplaysBuffer(t *testing.T) {
 	s, cleanup := newTestAAPSession(t, ctx, "fake", AgentDef{Kind: AgentKindAAP, Command: "test"}, false)
 	defer cleanup()
 
-	srv, err := New(Config{Mode: ModeMaster, SpawnDefaultAgent: false})
+	srv, err := New(Config{Mode: ModeCoordinator, SpawnDefaultAgent: false})
 	require.NoError(t, err)
 	// Inject the in-process session as a proc so AAPInvoke finds it.
 	srv.mu.Lock()
@@ -212,7 +212,7 @@ func TestAAPInvoke_StreamsBeforeTurnCompletes(t *testing.T) {
 	s, cleanup := newTestAAPSession(t, ctx, "fake", AgentDef{Kind: AgentKindAAP, Command: "test", AutoApprove: false}, true)
 	defer cleanup()
 
-	srv, err := New(Config{Mode: ModeMaster, SpawnDefaultAgent: false})
+	srv, err := New(Config{Mode: ModeCoordinator, SpawnDefaultAgent: false})
 	require.NoError(t, err)
 	injectAAPProc(t, srv, "fake", s)
 
@@ -256,7 +256,7 @@ func TestAAPInvoke_TurnSurvivesClientDisconnect(t *testing.T) {
 	s, cleanup := newTestAAPSession(t, ctx, "fake", AgentDef{Kind: AgentKindAAP, Command: "test", AutoApprove: false}, true)
 	defer cleanup()
 
-	srv, err := New(Config{Mode: ModeMaster, SpawnDefaultAgent: false})
+	srv, err := New(Config{Mode: ModeCoordinator, SpawnDefaultAgent: false})
 	require.NoError(t, err)
 	injectAAPProc(t, srv, "fake", s)
 

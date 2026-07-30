@@ -8,11 +8,11 @@ Go 1.26 project. Build with `go build .` (binary: `./bin/horde` via Taskfile).
 - **Test (unit):** `task test` or `go test -race -count=1 ./...` — fast, deterministic, no binary/network. This is what CI runs.
 - **Test (integration):** `task test:integration` — the exhaustive suite (subprocess agents + multi-node cluster) behind the `//go:build integration` tag; it builds `bin/horde` first. Run manually to verify integrated behaviour. Never in the default `task`/CI test path.
 - **Test (one package):** `go test -race ./internal/config/...`
-- **Test (one test):** `go test -race -run TestNew_DefaultsToMaster ./internal/server/...`
+- **Test (one test):** `go test -race -run TestNew_DefaultsToCoordinator ./internal/server/...`
 - **Lint:** `task lint` (`golangci-lint run --timeout=5m`). Must report 0 issues before done.
 - **Format:** `task fmt` (gofmt -s + goimports). CI fails on unformatted files.
 - **Tidy:** `task tidy`; CI's lint workflow rejects an untidy `go.mod`/`go.sum`.
-- **Docker cluster:** `task docker:up` (master + 2 slaves), `task docker:down`, `task docker:logs`.
+- **Docker cluster:** `task docker:up` (coordinator + 2 workers), `task docker:down`, `task docker:logs`.
 - **Release snapshot:** `task snapshot` (goreleaser `--snapshot`, no publish/tap push).
 - **Release:** `task release` (runs goreleaser; publish to GitHub + homebrew-tap). Driven by `.github/workflows/release.yml` on `v*` tag pushes. The first release will be `v0.1.0`.
 
@@ -34,7 +34,7 @@ To exercise the running node, query its configured API port (`server.port`, defa
 ## Architecture
 
 - Entry point is root `main.go` → `cmd.Execute()`. The `cmd/` package has **one file per cobra command** (`cli.go` root + `Execute`, `serve.go`, `tui.go`, `agent.go`, `daemonize.go`). Add new subcommands in their own file, registered via `rootCmd.AddCommand` in that file's `init()`.
-- `horde` (no subcommand) launches the TUI; `horde serve --mode master|slave` runs a node (`master` default); `horde agent` is **hidden**, spawned by the server as a subprocess to host one ADK agent.
+- `horde` (no subcommand) launches the TUI; `horde serve --mode coordinator|worker` runs a node (`coordinator` default); `horde agent` is **hidden**, spawned by the server as a subprocess to host one ADK agent.
 - Agents live in the top-level `agents/` package and are built on `google.golang.org/adk/v2` (the V2 ADK). The binary hosts its own agents as subprocesses of itself.
 - Config is vendored from `plantd/core/config` into `internal/config/` (adapted to the `HORDE_` prefix). Do **not** add `plantd/core` as a dependency.
 
@@ -54,7 +54,7 @@ To exercise the running node, query its configured API port (`server.port`, defa
 - `internal/config` tests load fixtures from `internal/config/testdata/` (yaml/json/toml). They set `HORDE_CONFIG` and call `config.Reset()` to clear the singleton — **always call `Reset()` before relying on `Get()`** in a test.
 - `internal/server` tests set `SpawnDefaultAgent: false` in `server.Config` to avoid spawning real subprocesses. Keep doing this; do not spawn the `horde agent` subprocess from unit tests.
 - **Unit vs integration split (`//go:build integration`):** heavy or non-deterministic tests — subprocess spawn (`spawn_test.go`, `aaphost_integration_test.go`, `project_integration_test.go`), real memberlist (`gossip_integration_test.go`), network/goroutine lifecycle (`server_integration_test.go`, `integration_test.go`), and the multi-node cluster suite (`cluster_integration_test.go`) — carry the `//go:build integration` tag and run only under `task test:integration`. The default `task test` (and CI) compiles/runs unit tests only, so it stays fast and deterministic. When adding a test that spawns a subprocess, binds a real port, or depends on timing, tag it `integration` (or move the flaky case into the matching `*_integration_test.go`) rather than leaving it in the unit path. Integration files that need the binary reuse `findHordeBinary`/`findHordeBinaryLocal`, which skip when `bin/horde` is absent.
-- `TestStart_SlaveBecomesLeaderConnected` (now in `server_integration_test.go`) relies on a goroutine marking `leaderOK`; if you change `connectLeader`, keep the background + non-blocking contract.
+- `TestStart_WorkerBecomesLeaderConnected` (now in `server_integration_test.go`) relies on a goroutine marking `leaderOK`; if you change `connectLeader`, keep the background + non-blocking contract.
 
 ## Gotchas
 

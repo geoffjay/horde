@@ -25,7 +25,7 @@ func newTestHandler() http.Handler {
 	})
 	mux.HandleFunc("/api/v1/node", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"mode": "master", "leader_connected": true, "node_id": "n1", "version": "test",
+			"mode": "coordinator", "leader_connected": true, "node_id": "n1", "version": "test",
 		})
 	})
 	mux.HandleFunc("/api/v1/agents", func(w http.ResponseWriter, _ *http.Request) {
@@ -185,7 +185,7 @@ func TestPalette_EnterRunsSelectedCommand(t *testing.T) {
 func TestStatusLine_RightAlignedBlocks(t *testing.T) {
 	m := newTestModel("127.0.0.1:1")
 	m.connected = true
-	m.node.Mode = "master"
+	m.node.Mode = "coordinator"
 	m.node.NodeID = "n1"
 
 	const width = 100
@@ -194,7 +194,7 @@ func TestStatusLine_RightAlignedBlocks(t *testing.T) {
 	// The node block summarizes mode / id / agent count, the commands block
 	// and the default separator are present, and the whole line is padded to
 	// the full width (right-aligned).
-	assert.Contains(t, out, "master")
+	assert.Contains(t, out, "coordinator")
 	assert.Contains(t, out, "n1")
 	assert.Contains(t, out, "0 agents")
 	assert.Contains(t, out, "ctrl+p")

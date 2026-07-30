@@ -312,7 +312,7 @@ func (m *Model) loadNode() tea.Msg {
 		ctxMap[contexts[i].AgentID] = contexts[i]
 	}
 
-	// Cluster nodes and remote agent contexts are best-effort; on a slave
+	// Cluster nodes and remote agent contexts are best-effort; on a worker
 	// or standalone node the cluster view may be empty.
 	clusterNodes, clErr := m.c.ListNodes(ctx)
 	if clErr != nil {

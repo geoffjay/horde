@@ -104,7 +104,7 @@ with `yay -S horde-bin` (or `paru -S horde-bin`). Requirements:
 - The `AUR_KEY` repo secret (an SSH private key with access to the AUR
   package) must be set. If it's unset, the AUR push is skipped — the
   GitHub release and Homebrew formula still succeed.
-- AUR requires the branch be `master`, not `main`.
+- AUR requires the branch be `coordinator`, not `main`.
 - `makepkg` is not available on macOS; generate `.SRCINFO` manually or on
   a Linux machine when updating manually.
 

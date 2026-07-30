@@ -36,7 +36,7 @@ func TestStreamEvents_WritesSSEFrames(t *testing.T) {
 	// Unbuffered channel: a send returns only once the handler has received,
 	// so the second send guarantees the first frame is fully written.
 	ch := make(chan server.Event)
-	fake := &fakeEventView{mode: server.ModeMaster, events: ch}
+	fake := &fakeEventView{mode: server.ModeCoordinator, events: ch}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/events/stream", nil).WithContext(ctx)
@@ -48,8 +48,8 @@ func TestStreamEvents_WritesSSEFrames(t *testing.T) {
 		close(done)
 	}()
 
-	ch <- server.Event{Type: server.EventAgentSpawned, Node: "master-1", AgentID: "a1-7", Name: "greeter"}
-	ch <- server.Event{Type: server.EventAgentExited, Node: "master-1", AgentID: "a1-7"}
+	ch <- server.Event{Type: server.EventAgentSpawned, Node: "coordinator-1", AgentID: "a1-7", Name: "greeter"}
+	ch <- server.Event{Type: server.EventAgentExited, Node: "coordinator-1", AgentID: "a1-7"}
 	cancel()
 	<-done
 
@@ -61,9 +61,9 @@ func TestStreamEvents_WritesSSEFrames(t *testing.T) {
 	assert.Contains(t, body, `"name":"greeter"`)
 }
 
-func TestReceiveClusterEvent_MasterRepublishes(t *testing.T) {
-	fake := &fakeEventView{mode: server.ModeMaster}
-	body, err := json.Marshal(server.Event{Type: server.EventAgentSpawned, Node: "slave-1", AgentID: "a1"})
+func TestReceiveClusterEvent_CoordinatorRepublishes(t *testing.T) {
+	fake := &fakeEventView{mode: server.ModeCoordinator}
+	body, err := json.Marshal(server.Event{Type: server.EventAgentSpawned, Node: "worker-1", AgentID: "a1"})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/events", bytes.NewReader(body))
@@ -72,11 +72,11 @@ func TestReceiveClusterEvent_MasterRepublishes(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Len(t, fake.published, 1)
-	assert.Equal(t, "slave-1", fake.published[0].Node)
+	assert.Equal(t, "worker-1", fake.published[0].Node)
 }
 
-func TestReceiveClusterEvent_SlaveRejects(t *testing.T) {
-	fake := &fakeEventView{mode: server.ModeSlave}
+func TestReceiveClusterEvent_WorkerRejects(t *testing.T) {
+	fake := &fakeEventView{mode: server.ModeWorker}
 	body, err := json.Marshal(server.Event{Type: server.EventAgentSpawned})
 	require.NoError(t, err)
 
@@ -89,14 +89,14 @@ func TestReceiveClusterEvent_SlaveRejects(t *testing.T) {
 }
 
 func TestReceiveClusterEvent_RejectsBadBodyAndMissingType(t *testing.T) {
-	fake := &fakeEventView{mode: server.ModeMaster}
+	fake := &fakeEventView{mode: server.ModeCoordinator}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/events", bytes.NewReader([]byte("not json")))
 	rec := httptest.NewRecorder()
 	receiveClusterEvent(fake)(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
-	body, err := json.Marshal(server.Event{Node: "slave-1"}) // no Type
+	body, err := json.Marshal(server.Event{Node: "worker-1"}) // no Type
 	require.NoError(t, err)
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/cluster/events", bytes.NewReader(body))
 	rec = httptest.NewRecorder()
@@ -107,7 +107,7 @@ func TestReceiveClusterEvent_RejectsBadBodyAndMissingType(t *testing.T) {
 }
 
 // TestClusterEvents_RepublishedThroughRouter exercises the full wiring: a POST
-// to /cluster/events on the master is republished onto the bus and reaches a
+// to /cluster/events on the coordinator is republished onto the bus and reaches a
 // local /events/stream subscriber.
 func TestClusterEvents_RepublishedThroughRouter(t *testing.T) {
 	srv := newTestServer(t)
@@ -117,13 +117,13 @@ func TestClusterEvents_RepublishedThroughRouter(t *testing.T) {
 	defer cancel()
 
 	w := do(t, h, http.MethodPost, "/api/v1/cluster/events", server.Event{
-		Type: server.EventAgentSpawned, Node: "slave-1", AgentID: "a1-9", Name: "greeter",
+		Type: server.EventAgentSpawned, Node: "worker-1", AgentID: "a1-9", Name: "greeter",
 	})
 	require.Equal(t, http.StatusOK, w.Code)
 
 	select {
 	case ev := <-ch:
-		assert.Equal(t, "slave-1", ev.Node)
+		assert.Equal(t, "worker-1", ev.Node)
 		assert.Equal(t, "a1-9", ev.AgentID)
 	case <-time.After(time.Second):
 		t.Fatal("event not republished onto bus")

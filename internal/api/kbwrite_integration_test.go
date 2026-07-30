@@ -15,14 +15,14 @@ import (
 	"github.com/geoffjay/horde/internal/server"
 )
 
-// TestPutKBFile_ParticipantForward creates a two-node setup (master + slave)
-// and verifies that a PUT on the slave forwards to the master, and a 412 is
+// TestPutKBFile_ParticipantForward creates a two-node setup (coordinator + worker)
+// and verifies that a PUT on the worker forwards to the coordinator, and a 412 is
 // returned verbatim when the CAS precondition fails.
 func TestPutKBFile_ParticipantForward(t *testing.T) {
-	// Master: KB sync enabled, serves as the authority.
-	masterWorkspace := t.TempDir()
-	masterSrv, err := server.New(server.Config{
-		Mode:              server.ModeMaster,
+	// Coordinator: KB sync enabled, serves as the authority.
+	coordinatorWorkspace := t.TempDir()
+	coordinatorSrv, err := server.New(server.Config{
+		Mode:              server.ModeCoordinator,
 		SpawnDefaultAgent: false,
 		KBSync: server.KBSyncConfig{
 			Enabled:     true,
@@ -32,22 +32,22 @@ func TestPutKBFile_ParticipantForward(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	require.NoError(t, masterSrv.Start(ctx))
+	require.NoError(t, coordinatorSrv.Start(ctx))
 
-	mp, err := masterSrv.CreateProjectForTest(server.CreateProjectInput{
+	mp, err := coordinatorSrv.CreateProjectForTest(server.CreateProjectInput{
 		Name:       "test-proj",
-		Workspace:  masterWorkspace,
+		Workspace:  coordinatorWorkspace,
 		AgentNames: []string{"greeter"},
 	})
 	require.NoError(t, err)
 
-	// Start an HTTP server for the master.
-	masterRouter := Router(masterSrv)
-	masterHS := httptest.NewServer(masterRouter)
-	t.Cleanup(masterHS.Close)
+	// Start an HTTP server for the coordinator.
+	coordinatorRouter := Router(coordinatorSrv)
+	coordinatorHS := httptest.NewServer(coordinatorRouter)
+	t.Cleanup(coordinatorHS.Close)
 
-	// Create a file on the master first, so we have a digest for If-Match.
-	w := doRaw(t, masterRouter, http.MethodPut,
+	// Create a file on the coordinator first, so we have a digest for If-Match.
+	w := doRaw(t, coordinatorRouter, http.MethodPut,
 		"/api/v1/kb/project/"+mp.ID+"/file?path=existing.md",
 		[]byte("# v1\n"),
 		map[string]string{"If-None-Match": "*"})
@@ -55,15 +55,15 @@ func TestPutKBFile_ParticipantForward(t *testing.T) {
 	etag := w.Header().Get("ETag")
 	require.NotEmpty(t, etag)
 
-	// Participant: KB sync enabled, slave mode with the master as leader.
+	// Participant: KB sync enabled, worker mode with the coordinator as leader.
 	partSrv, err := server.New(server.Config{
-		Mode:              server.ModeSlave,
+		Mode:              server.ModeWorker,
 		SpawnDefaultAgent: false,
 		KBSync: server.KBSyncConfig{
 			Enabled:     true,
 			MaxFileSize: 1048576,
 		},
-		Leader: masterHS.Listener.Addr().String(),
+		Leader: coordinatorHS.Listener.Addr().String(),
 	})
 	require.NoError(t, err)
 	require.NoError(t, partSrv.Start(ctx))
@@ -78,7 +78,7 @@ func TestPutKBFile_ParticipantForward(t *testing.T) {
 
 	partRouter := Router(partSrv)
 
-	// PUT with correct If-Match should forward to master and succeed.
+	// PUT with correct If-Match should forward to coordinator and succeed.
 	w2 := doRaw(t, partRouter, http.MethodPut,
 		"/api/v1/kb/project/"+mp.ID+"/file?path=existing.md",
 		[]byte("# v2\n"),

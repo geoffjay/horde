@@ -123,7 +123,7 @@ type ScopeResolver interface {
 }
 
 // projectScope implements ScopeResolver for the project kind. The authority is
-// the cluster leader (static master or raft-elected). The canonical tree is
+// the cluster leader (static coordinator or raft-elected). The canonical tree is
 // <Project.Workspace>/.horde/knowledgebase/. Authorization is the project's
 // own view/write authority — owner, admin, or team member for reads; the
 // host's project write authority for writes.
@@ -143,7 +143,7 @@ func (ps *projectScope) Kind() string { return kbScopeKindProject }
 //
 // On the authority the local project store is the source of truth. On a
 // participant the local store is empty (project API requests forward to the
-// master), so a scope is "known" once convergence has materialized its local
+// coordinator), so a scope is "known" once convergence has materialized its local
 // tree on disk — which is exactly when the participant can serve local reads
 // (KSP §3.2, §4.1).
 func (ps *projectScope) Validate(id string) error {
@@ -165,7 +165,7 @@ func (ps *projectScope) Validate(id string) error {
 // scope's authority). Without failover the role is static; with raft failover
 // the current raft leader is the authority.
 func (ps *projectScope) IsAuthority(_ string) bool {
-	return ps.srv.isMaster()
+	return ps.srv.isCoordinator()
 }
 
 // AuthorityTree returns the canonical KB path for the project on this node

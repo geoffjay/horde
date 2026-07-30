@@ -16,9 +16,9 @@ import (
 )
 
 const (
-	// roleMaster / roleSlave are the values carried in nodeMeta.Role.
-	roleMaster = "master"
-	roleSlave  = "slave"
+	// roleCoordinator / roleWorker are the values carried in nodeMeta.Role.
+	roleCoordinator = "coordinator"
+	roleWorker      = "worker"
 
 	// defaultGossipPort is the memberlist bind/advertise port used when a
 	// gossip address omits one.
@@ -27,7 +27,7 @@ const (
 	// gossipLeaveTimeout bounds the graceful Leave broadcast on shutdown.
 	gossipLeaveTimeout = 5 * time.Second
 	// gossipRejoinInterval is how often a node with seeds retries Join while
-	// no master is visible in the ring.
+	// no coordinator is visible in the ring.
 	gossipRejoinInterval = 5 * time.Second
 )
 
@@ -56,8 +56,8 @@ type gossipConfig struct {
 }
 
 // gossipNode wraps a memberlist so the cluster can discover the leader's HTTP
-// address peer-to-peer. Every node (master and slave) runs one; the master
-// advertises Role=master so slaves can find it via the gossiped membership.
+// address peer-to-peer. Every node (coordinator and worker) runs one; the coordinator
+// advertises Role=coordinator so workers can find it via the gossiped membership.
 type gossipNode struct {
 	ml    *memberlist.Memberlist
 	seeds []string
@@ -85,8 +85,8 @@ func (d *gossipDelegate) MergeRemoteState([]byte, bool)   {}
 // newGossipNode creates and starts a gossip node. Creating the memberlist
 // binds the gossip listeners (fatal on failure). If seeds are configured it
 // attempts an initial Join (non-fatal) and starts a background loop that
-// retries Join while no master is visible, so a node that starts before the
-// master converges without a restart.
+// retries Join while no coordinator is visible, so a node that starts before the
+// coordinator converges without a restart.
 //
 //nolint:gocritic // hugeParam: gossipConfig is a one-shot construction argument
 func newGossipNode(cfg gossipConfig) (*gossipNode, error) {
@@ -143,9 +143,9 @@ func newGossipNode(cfg gossipConfig) (*gossipNode, error) {
 	return n, nil
 }
 
-// rejoinLoop retries Join while no master is visible in the ring, until the
-// node shuts down. Once a master is present it idles (a cheap membership check
-// each interval), so a master that comes up late — or restarts — is picked up
+// rejoinLoop retries Join while no coordinator is visible in the ring, until the
+// node shuts down. Once a coordinator is present it idles (a cheap membership check
+// each interval), so a coordinator that comes up late — or restarts — is picked up
 // without a restart of this node.
 func (n *gossipNode) rejoinLoop() {
 	ticker := time.NewTicker(gossipRejoinInterval)
@@ -164,8 +164,8 @@ func (n *gossipNode) rejoinLoop() {
 	}
 }
 
-// leaderAPIAddr scans the gossiped membership for the master and returns its
-// advertised HTTP address. It errors when no master is visible yet (the caller
+// leaderAPIAddr scans the gossiped membership for the coordinator and returns its
+// advertised HTTP address. It errors when no coordinator is visible yet (the caller
 // — the leaderClient — retries on its next reconnect tick).
 func (n *gossipNode) leaderAPIAddr() (string, error) {
 	for _, m := range n.ml.Members() {
@@ -173,11 +173,11 @@ func (n *gossipNode) leaderAPIAddr() (string, error) {
 		if err := json.Unmarshal(m.Meta, &meta); err != nil {
 			continue
 		}
-		if meta.Role == roleMaster && meta.APIAddr != "" {
+		if meta.Role == roleCoordinator && meta.APIAddr != "" {
 			return meta.APIAddr, nil
 		}
 	}
-	return "", fmt.Errorf("gossip: no master visible in the cluster yet (%d members)", n.ml.NumMembers())
+	return "", fmt.Errorf("gossip: no coordinator visible in the cluster yet (%d members)", n.ml.NumMembers())
 }
 
 // apiAddrForNode returns the advertised HTTP address of the gossip member with

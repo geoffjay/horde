@@ -339,7 +339,7 @@ func (m *Model) renderClusterView() string {
 	}
 	b.WriteString("\n\n")
 
-	// Node rows: this node first, then registered slaves.
+	// Node rows: this node first, then registered workers.
 	rows := m.clusterNodeRows()
 	if len(rows) == 0 {
 		b.WriteString(m.paint(lipgloss.NewStyle().Faint(true).Render, "  (no nodes registered)\n"))
@@ -377,7 +377,7 @@ func (m *Model) renderClusterView() string {
 }
 
 // clusterNodeRows builds the display rows for the cluster view: this node
-// first (with mode from the node info), then each registered slave.
+// first (with mode from the node info), then each registered worker.
 func (m *Model) clusterNodeRows() []string {
 	var rows []string
 
@@ -393,7 +393,7 @@ func (m *Model) clusterNodeRows() []string {
 	rows = append(rows, fmt.Sprintf("  %s  %-8s %-20s %-8s %-9s  seen just now",
 		localDot, m.node.NodeID, fmt.Sprintf(":%d", m.nodePort()), localMode, agentCountLabel(len(m.agents))))
 
-	// Registered slaves
+	// Registered workers
 	for _, n := range m.nodes.Nodes {
 		dot := greenDot()
 		if n.Stale {
@@ -401,7 +401,7 @@ func (m *Model) clusterNodeRows() []string {
 		}
 		seen := formatSeenAgo(&n)
 		line := fmt.Sprintf("  %s  %-8s %-20s %-8s %-9s  seen %s",
-			dot, n.NodeID, n.Addr, "slave", agentCountLabel(len(n.Agents)), seen)
+			dot, n.NodeID, n.Addr, "worker", agentCountLabel(len(n.Agents)), seen)
 		if n.Stale {
 			line += "  stale"
 		}
@@ -415,7 +415,7 @@ func (m *Model) clusterNodeRows() []string {
 // derived from the client's base URL).
 func (m *Model) nodePort() int {
 	// The node info doesn't carry the port; use the client's base URL.
-	// This is display-only — the address column shows the slave addresses.
+	// This is display-only — the address column shows the worker addresses.
 	return 0
 }
 

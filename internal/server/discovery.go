@@ -9,15 +9,15 @@ import (
 	"strings"
 )
 
-// errStandaloneSlave is returned by newDiscoverer for a slave with the static
+// errStandaloneWorker is returned by newDiscoverer for a worker with the static
 // mechanism and no leader configured. The caller treats it as "run without a
 // leader connection" rather than a fatal error.
-var errStandaloneSlave = errors.New("no leader configured; running standalone")
+var errStandaloneWorker = errors.New("no leader configured; running standalone")
 
-// Discoverer resolves the address of the leader (master) a slave connects to.
+// Discoverer resolves the address of the leader (coordinator) a worker connects to.
 // It abstracts cluster.discovery_mechanism: "static" returns a configured
 // address, "dns" looks up an SRV record so the leader can move, come up later,
-// or be one of several targets without reconfiguring slaves. It is re-resolved
+// or be one of several targets without reconfiguring workers. It is re-resolved
 // on each reconnect/heartbeat, so a leader that changes address is picked up
 // without a restart.
 type Discoverer interface {
@@ -27,7 +27,7 @@ type Discoverer interface {
 	Describe() string
 }
 
-// DiscoveryConfig selects and parameterizes leader discovery for a slave.
+// DiscoveryConfig selects and parameterizes leader discovery for a worker.
 type DiscoveryConfig struct {
 	// Mechanism is "static" (default) or "dns".
 	Mechanism string
@@ -65,9 +65,9 @@ type apiAddrResolver interface {
 
 // raftDiscoverer resolves the leader from raft: the current raft leader's node
 // id, mapped to its HTTP address via the gossip ring. Under failover the raft
-// leader *is* the horde master, so this returns whoever currently leads — and
+// leader *is* the horde coordinator, so this returns whoever currently leads — and
 // because the leaderClient re-resolves each reconnect, a follower re-targets the
-// new master automatically after an election, with no change to the register
+// new coordinator automatically after an election, with no change to the register
 // path.
 type raftDiscoverer struct {
 	raft   raftLeaderSource
@@ -88,7 +88,7 @@ func (d *raftDiscoverer) Leader(context.Context) (string, error) {
 
 func (d *raftDiscoverer) Describe() string { return "raft" }
 
-// newDiscoverer builds the Discoverer for a slave. It returns errStandaloneSlave
+// newDiscoverer builds the Discoverer for a worker. It returns errStandaloneWorker
 // for the static mechanism with no leader configured — the caller runs without
 // a leader connection. It returns another error for an unknown mechanism, a dns
 // mechanism missing its name, or a gossip mechanism with no running gossip node.
@@ -97,7 +97,7 @@ func newDiscoverer(cfg DiscoveryConfig, gossip gossipMembers) (Discoverer, error
 	switch cfg.Mechanism {
 	case "", discoveryStatic:
 		if cfg.Leader == "" {
-			return nil, errStandaloneSlave
+			return nil, errStandaloneWorker
 		}
 		return &staticDiscoverer{addr: normalizeAddr(cfg.Leader)}, nil
 	case discoveryDNS:
@@ -160,7 +160,7 @@ func (d *dnsDiscoverer) Describe() string { return "dns(" + d.name + ")" }
 
 // pickSRV chooses the preferred SRV target: lowest priority wins, ties broken
 // by highest weight. (Weighted random selection within a priority is not
-// needed — a slave just needs one reachable leader.)
+// needed — a worker just needs one reachable leader.)
 func pickSRV(addrs []*net.SRV) *net.SRV {
 	best := addrs[0]
 	for _, a := range addrs[1:] {
@@ -172,8 +172,8 @@ func pickSRV(addrs []*net.SRV) *net.SRV {
 }
 
 // gossipDiscoverer resolves the leader from a peer-to-peer gossip membership:
-// the master advertises Role=master in its gossip metadata, and this reads the
-// ring for the master's advertised HTTP address. It errors until a master is
+// the coordinator advertises Role=coordinator in its gossip metadata, and this reads the
+// ring for the coordinator's advertised HTTP address. It errors until a coordinator is
 // visible, which the leaderClient treats like any transient resolve failure
 // (retried on the next reconnect tick).
 type gossipDiscoverer struct{ node gossipMembers }

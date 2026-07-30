@@ -21,7 +21,7 @@ idea.
 
 # Services
 
-* `horde serve` — the node (master or slave).
+* `horde serve` — the node (coordinator or worker).
 * `horde agent` — hidden; hosts one ADK agent per subprocess.
 * `horde` — the TUI; a pure client of the node API (does not start a node).
 
@@ -45,5 +45,5 @@ current (local, git-backed) behavior. See
 
 # Integration environment
 
-`docker/docker-compose.yml` defines one master and two slaves from a single
-image. Host ports 13420 (master), 13421 (slave1), 13422 (slave2).
+`docker/docker-compose.yml` defines one coordinator and two workers from a single
+image. Host ports 13420 (coordinator), 13421 (worker1), 13422 (worker2).

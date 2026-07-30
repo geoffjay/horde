@@ -22,7 +22,7 @@ questions. Each is recorded below with its outcome.
 See:
 * [Phase 3 — Agent mechanism](/docs/knowledgebase/plans/phase-3-agents.md)
 * [Agent execution context](/docs/knowledgebase/concepts/agent-execution-context.md)
-* [Master/slave cluster model](/docs/knowledgebase/decisions/master-slave-model.md)
+* [Coordinator/worker cluster model](/docs/knowledgebase/decisions/coordinator-worker-model.md)
 
 # 1. What is a project?
 
@@ -62,10 +62,10 @@ agent).
   later (static-ish but mutable).
 * **Users** join by permission, by request, or by invitation. For a local
   single-node system there are zero or more users in a team. For a
-  multi-node system, a second user joining as a slave node can see projects
+  multi-node system, a second user joining as a worker node can see projects
   and join if already permitted, request to join, or be requested to join.
   This is the cluster membership model; it builds on the
-  [master/slave model](/docs/knowledgebase/decisions/master-slave-model.md)
+  [coordinator/worker model](/docs/knowledgebase/decisions/coordinator-worker-model.md)
   and is fleshed out in Phase 4.
 
 ## Roles

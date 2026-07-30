@@ -64,7 +64,7 @@ func TestSidebarRows_UsersHasNoChildren(t *testing.T) {
 	assert.Empty(t, m.groupChildren(groupUsers))
 }
 
-func TestSidebarRows_NodesIncludesLocalAndSlaves(t *testing.T) {
+func TestSidebarRows_NodesIncludesLocalAndWorkers(t *testing.T) {
 	m := newTestModel("127.0.0.1:1")
 	m.node.NodeID = "n1"
 	m.nodes = client.ClusterView{Nodes: []client.ClusterNode{

@@ -53,7 +53,7 @@ func (m *Model) closeAgentForm() {
 }
 
 // agentNodeOptions returns the placement choices: "local", "auto", then each
-// known node id (this node first, then registered slaves), de-duplicated.
+// known node id (this node first, then registered workers), de-duplicated.
 func (m *Model) agentNodeOptions() []string {
 	opts := []string{nodeLocal, "auto"}
 	seen := map[string]bool{}

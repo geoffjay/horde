@@ -9,13 +9,13 @@ timestamp: 2026-07-08T00:00:00Z
 # Phase 1 — Foundation (complete)
 
 * CLI with cobra, one file per command.
-* Master/slave node modes; `horde serve --mode`.
+* Coordinator/worker node modes; `horde serve --mode`.
 * Layered configuration system (vendored plantd config).
 * logrus logging.
 * Hello-world ADK agent (`greeter`) in `agents/`.
 * Subprocess agent hosting via `horde agent`.
 * TUI (bubbletea + lipgloss).
-* Docker integration environment (master + 2 slaves).
+* Docker integration environment (coordinator + 2 workers).
 * Taskfile, GitHub Actions (lint, build, test).
 * OKF knowledge base.
 
@@ -24,7 +24,7 @@ timestamp: 2026-07-08T00:00:00Z
 Detailed plan: [Phase 2 — Server API](phase-2-server-api.md).
 
 * Implement the node API transport (the stub previously in `Server.Run`).
-* Define the API surface for TUI ↔ server and slave ↔ master.
+* Define the API surface for TUI ↔ server and worker ↔ coordinator.
 * Real leader connection / health / registration.
 
 Decisions underpinning this phase:
@@ -62,7 +62,7 @@ Detailed plan: [Agent execution context](agent-execution-context.md).
 * `ExecutionContext` data model, node-side materialization from AAP frames +
   launch metadata.
 * Local query API (snapshot + change stream).
-* Cross-node aggregation via the master with read-only, redacted remote
+* Cross-node aggregation via the coordinator with read-only, redacted remote
   access.
 * Minimal node-granular principal model (`local` vs `remote`).
 
@@ -172,31 +172,31 @@ already in place — the AAP spec and the `internal/aap` package (typed messages
 
 Detailed plan: [Phase 4 — Distributed](phase-4-distributed.md). Built in slices.
 
-* Slave registration with the master. ✅ (Phase 3.5a + slice 1 hardening:
-  routable advertised address, stale-slave eviction.)
+* Worker registration with the coordinator. ✅ (Phase 3.5a + slice 1 hardening:
+  routable advertised address, stale-worker eviction.)
 * Agent placement and coordination across nodes. **Slices 1–2 done**: the
-  master routes an invoke to whichever node hosts the agent (slice 1,
+  coordinator routes an invoke to whichever node hosts the agent (slice 1,
   cross-node invoke via a reachable advertised address) and can place a new
-  agent on a chosen node — an explicit slave, or `auto` (least-loaded) — via
+  agent on a chosen node — an explicit worker, or `auto` (least-loaded) — via
   `POST /api/v1/agents` with a `node` field (slice 2, spawn forwarding).
-* Cluster discovery beyond `static`. **Slice 3 done**: a slave can find its
+* Cluster discovery beyond `static`. **Slice 3 done**: a worker can find its
   leader via `discovery_mechanism: dns` (an SRV lookup of
   `cluster.discovery_dns_name`, re-resolved each reconnect) instead of a
   hardcoded `server.leader`. Gossip discovery is a later slice.
 * Cross-node event fan-out. **Slice 4 done**: the previously-unused in-process
   `EventBus` now carries agent lifecycle events (`agent.spawned`/`exiting`/
-  `exited`), streamed over `GET /api/v1/events/stream` (SSE). Slaves push their
-  events to the master (`POST /api/v1/cluster/events`), which republishes them,
-  so the master's stream is a cluster-wide feed.
+  `exited`), streamed over `GET /api/v1/events/stream` (SSE). Workers push their
+  events to the coordinator (`POST /api/v1/cluster/events`), which republishes them,
+  so the coordinator's stream is a cluster-wide feed.
 * Gossip discovery. **Slice 5 done**: the third `discovery_mechanism` —
-  `gossip` — has slaves find the master through a `hashicorp/memberlist` (SWIM)
-  ring, where the master advertises itself; no per-slave leader address. This
+  `gossip` — has workers find the coordinator through a `hashicorp/memberlist` (SWIM)
+  ring, where the coordinator advertises itself; no per-worker leader address. This
   completes Phase 4. Automatic leader *failover* is deferred (see the
   [cluster failover](../concepts/cluster-failover.md) concept doc).
 * Phase 4 hardening / surfacing. **Done**: cluster request auth (shared bearer
   token `cluster.auth_token`) + gossip wire encryption
   (`cluster.gossip_encryption_key`); any node is a valid invoke entry point
-  (a slave forwards an unknown-agent invoke to the master); and the TUI/client
+  (a worker forwards an unknown-agent invoke to the coordinator); and the TUI/client
   surfaces for placement (a new-agent form with a node picker) and the event
   feed (a live cluster-activity view). mTLS is the intended long-term node auth
   (see the [cluster mTLS](../concepts/cluster-mtls.md) concept doc).
@@ -204,18 +204,18 @@ Detailed plan: [Phase 4 — Distributed](phase-4-distributed.md). Built in slice
 # Phase 5 — Leader failover
 
 Detailed plan: [Leader failover](leader-failover.md). Decision:
-[Raft for leader election and master-state replication](/docs/knowledgebase/decisions/raft-leader-election.md).
+[Raft for leader election and coordinator-state replication](/docs/knowledgebase/decisions/raft-leader-election.md).
 Built in slices.
 
-Phase 4 leaves a statically designated, single-point-of-failure master. Phase 5
+Phase 4 leaves a statically designated, single-point-of-failure coordinator. Phase 5
 makes leadership *survive* the loss of a node: opt-in **raft** election
-(`cluster.failover: raft`) layered on the gossip ring, with master-only state
+(`cluster.failover: raft`) layered on the gossip ring, with coordinator-only state
 (the project store and AAP resume tokens) replicated through the raft log so an
-elected leader comes up current. Default (static-master) behaviour is unchanged.
+elected leader comes up current. Default (static-coordinator) behaviour is unchanged.
 
 * Slice 1 — raft membership + election (leader lookup via a `raftDiscoverer`;
   no state replication yet). **Done**: a raft quorum over the gossip ring elects
-  the leader, role is dynamic (`Server.isMaster()`), and a follower re-targets
+  the leader, role is dynamic (`Server.isCoordinator()`), and a follower re-targets
   the new leader after an election.
 * Slice 2 — replicate the project store through the raft log (an FSM).
   **Done**: `raftProjectStore` routes project mutations through `raft.Apply`
@@ -281,7 +281,7 @@ only project/team metadata + AAP resume tokens (raft), never file content. The
   file edits propagate, the goal; (6) offline replay via persisted sync records
   + conflict area with operator surfacing (`GET …/conflicts`). Then (7) docs/KB.
 * **Pull, not event-push**, deliberately: the event bus fans *in* not out
-  (`forwardEvents` is slave→master; there is no outbound push), it drops on slow
+  (`forwardEvents` is worker→coordinator; there is no outbound push), it drops on slow
   subscribers by design, and `server.Event` is a closed struct whose "carries no
   sensitive payload" comment is load-bearing. Polling keeps every call in the
   node→leader direction the codebase already supports.

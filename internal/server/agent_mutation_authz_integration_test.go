@@ -19,7 +19,7 @@ import (
 	"github.com/geoffjay/horde/internal/server"
 )
 
-// newAuthEnabledNode builds a started master with per-user auth enabled and
+// newAuthEnabledNode builds a started coordinator with per-user auth enabled and
 // the given users, fronted by the real API router on an httptest server. It
 // is the integration counterpart to newAuthServer in the api package's unit
 // tests: it exercises the full router → handler → server stack with a real

@@ -101,8 +101,8 @@ jobs:
       - name: Wait for nodes
         run: |
           for i in $(seq 1 30); do
-            if docker ps --format '{{.Names}}' | grep -q horde-master; then
-              echo "master is up"
+            if docker ps --format '{{.Names}}' | grep -q horde-coordinator; then
+              echo "coordinator is up"
               break
             fi
             sleep 1

@@ -42,15 +42,15 @@ the seam clean — a guard that rejects is a separate, opt-in layer.
 
 - `requireUser(srv)` — disabled ⇒ pass; node ⇒ pass (trusted cross-node
   traffic); user ⇒ pass; anonymous ⇒ 401. Runs **before** the
-  project-forward middleware on a slave so an anonymous mutation is rejected
-  at the edge, not forwarded to the master as trusted node traffic. Never
+  project-forward middleware on a worker so an anonymous mutation is rejected
+  at the edge, not forwarded to the coordinator as trusted node traffic. Never
   wraps health/ready or reads.
 - `authorizeProject(srv, r, id, level{view|invoke|own})` — disabled ⇒ no-op
   (returns `nil, nil` so the handler's own existence check runs unchanged;
   authz never precedes the existence check when auth is off); admin ⇒ allow;
   `own` ⇒ `UserID == p.Owner`; `view`/`invoke` ⇒ owner OR `UserID ∈
-  p.Team.Users`; else 403. A **node** principal is a slave→master forward:
-  the master re-derives the echoed user (below) and enforces — it does
+  p.Team.Users`; else 403. A **node** principal is a worker→coordinator forward:
+  the coordinator re-derives the echoed user (below) and enforces — it does
   **not** blanket-trust the node.
 
 The two-level design (anonymous gate, then owner/team gate) keeps each guard
@@ -59,8 +59,8 @@ never runs for an anonymous caller.
 
 ## 3. X-Horde-User — the cross-node echo-trust seam
 
-A slave forwards project mutations and invoke reverse-proxies to the
-master/owning node, so the authoritative check runs where the
+A worker forwards project mutations and invoke reverse-proxies to the
+coordinator/owning node, so the authoritative check runs where the
 project/agent lives. The origin sets `X-Horde-User: <userID>` on the
 forwarded request (already authenticated by the cluster token). The receiver
 honors `X-Horde-User` **only when the caller is a node principal** (a valid
@@ -109,7 +109,7 @@ identity seam as the project gate, applied at AAP approval time.
   mutations, and the AAP tool gate all read the same resolved principal;
   cross-node identity uses the same echo-trust header.
 - **No replicated user store** — config-defined users + an echoed header
-  avoid a raft-replicated user table; the master re-derives scope/admin
+  avoid a raft-replicated user table; the coordinator re-derives scope/admin
   from its own identical config.
 - **The ADK session key is not unified with the principal** — `userID`
   stays `"local"` so team conversations stay shared (fracturing them would

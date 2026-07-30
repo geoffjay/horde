@@ -149,7 +149,7 @@
           <stack id="cluster_body" direction="vertical" spacing="12" padding="16">
             <alert id="cluster_hint"
                    variant="info"
-                   message="Nodes registered with this master. Empty on a standalone node." />
+                   message="Nodes registered with this coordinator. Empty on a standalone node." />
             <panel title="Nodes" padding="16" border="1" rounded="lg">
               <table id="cluster_table" height="320" stripe="true" bordered="true"
                      columns='[{"key":"node_id","label":"Node ID","width":200},{"key":"addr","label":"Address","width":200},{"key":"stale","label":"Stale","width":80},{"key":"last_seen","label":"Last Seen","width":200}]'>

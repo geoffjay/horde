@@ -25,22 +25,22 @@ func (f *fakeGossip) leaderAPIAddr() (string, error) { return f.addr, f.err }
 func (f *fakeGossip) describe() string               { return "gossip(fake)" }
 
 func TestGossipDiscoverer(t *testing.T) {
-	d := &gossipDiscoverer{node: &fakeGossip{addr: "master:13420"}}
+	d := &gossipDiscoverer{node: &fakeGossip{addr: "coordinator:13420"}}
 	addr, err := d.Leader(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "master:13420", addr)
+	assert.Equal(t, "coordinator:13420", addr)
 	assert.Equal(t, "gossip(fake)", d.Describe())
 
-	// No master visible yet → the resolve error propagates (the leaderClient
+	// No coordinator visible yet → the resolve error propagates (the leaderClient
 	// retries on its next reconnect tick).
-	derr := &gossipDiscoverer{node: &fakeGossip{err: errors.New("no master yet")}}
+	derr := &gossipDiscoverer{node: &fakeGossip{err: errors.New("no coordinator yet")}}
 	_, err = derr.Leader(context.Background())
 	assert.Error(t, err)
 }
 
 func TestNewDiscoverer_Gossip(t *testing.T) {
 	// gossip with a running node → gossipDiscoverer.
-	d, err := newDiscoverer(DiscoveryConfig{Mechanism: "gossip"}, &fakeGossip{addr: "master:13420"})
+	d, err := newDiscoverer(DiscoveryConfig{Mechanism: "gossip"}, &fakeGossip{addr: "coordinator:13420"})
 	require.NoError(t, err)
 	assert.IsType(t, &gossipDiscoverer{}, d)
 
@@ -51,21 +51,21 @@ func TestNewDiscoverer_Gossip(t *testing.T) {
 
 func TestNewDiscoverer(t *testing.T) {
 	// static with a leader → static discoverer, scheme stripped.
-	d, err := newDiscoverer(DiscoveryConfig{Mechanism: "static", Leader: "http://master:13420"}, nil)
+	d, err := newDiscoverer(DiscoveryConfig{Mechanism: "static", Leader: "http://coordinator:13420"}, nil)
 	require.NoError(t, err)
 	require.IsType(t, &staticDiscoverer{}, d)
 	addr, err := d.Leader(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "master:13420", addr)
+	assert.Equal(t, "coordinator:13420", addr)
 
 	// empty mechanism defaults to static.
-	d, err = newDiscoverer(DiscoveryConfig{Leader: "master:13420"}, nil)
+	d, err = newDiscoverer(DiscoveryConfig{Leader: "coordinator:13420"}, nil)
 	require.NoError(t, err)
 	assert.IsType(t, &staticDiscoverer{}, d)
 
 	// static with no leader → standalone sentinel.
 	d, err = newDiscoverer(DiscoveryConfig{Mechanism: "static"}, nil)
-	assert.ErrorIs(t, err, errStandaloneSlave, "a slave with no leader is standalone")
+	assert.ErrorIs(t, err, errStandaloneWorker, "a worker with no leader is standalone")
 	assert.Nil(t, d)
 
 	// dns with a name → dns discoverer.
@@ -130,14 +130,14 @@ func TestDNSDiscoverer_Errors(t *testing.T) {
 // address (empty until the first resolve, since dns does not seed the cache).
 func TestLeaderClient_ResolvesViaDNSThenRegisters(t *testing.T) {
 	var gotPath string
-	master := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	coordinator := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"ok":true,"node_id":"slave-1","leader_id":"master-1"}`)
+		_, _ = io.WriteString(w, `{"ok":true,"node_id":"worker-1","leader_id":"coordinator-1"}`)
 	}))
-	defer master.Close()
+	defer coordinator.Close()
 
-	host, portStr, err := net.SplitHostPort(master.Listener.Addr().String())
+	host, portStr, err := net.SplitHostPort(coordinator.Listener.Addr().String())
 	require.NoError(t, err)
 	port, err := strconv.Atoi(portStr)
 	require.NoError(t, err)
@@ -149,19 +149,19 @@ func TestLeaderClient_ResolvesViaDNSThenRegisters(t *testing.T) {
 			return "", []*net.SRV{{Target: host + ".", Port: srvPort}}, nil
 		},
 	}
-	c := newLeaderClient(disco, "slave-1", "slave1:13420", "")
+	c := newLeaderClient(disco, "worker-1", "worker1:13420", "")
 	assert.Empty(t, c.leaderAddr(), "dns discoverer does not seed the cached address")
 
 	leaderID, err := c.register(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "master-1", leaderID)
+	assert.Equal(t, "coordinator-1", leaderID)
 	assert.Equal(t, "/api/v1/cluster/register", gotPath)
 	assert.Equal(t, net.JoinHostPort(host, portStr), c.leaderAddr(), "leaderAddr reflects the resolved address after register")
 }
 
 func TestLeaderClient_StaticSeedsCachedAddr(t *testing.T) {
-	disco, err := newDiscoverer(DiscoveryConfig{Leader: "master:13420"}, nil)
+	disco, err := newDiscoverer(DiscoveryConfig{Leader: "coordinator:13420"}, nil)
 	require.NoError(t, err)
-	c := newLeaderClient(disco, "slave-1", "", "")
-	assert.Equal(t, "master:13420", c.leaderAddr(), "static discoverer seeds leaderAddr before the first register")
+	c := newLeaderClient(disco, "worker-1", "", "")
+	assert.Equal(t, "coordinator:13420", c.leaderAddr(), "static discoverer seeds leaderAddr before the first register")
 }

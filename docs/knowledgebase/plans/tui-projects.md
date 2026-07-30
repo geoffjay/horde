@@ -97,7 +97,7 @@ projects
   4 agents · 1 idle · 2 busy · 1 blocked
 
 
-                    ● master · n1 · 4 agents  ›  ↑↓ select · enter open · n new  ›  ctrl+p commands
+                    ● coordinator · n1 · 4 agents  ›  ↑↓ select · enter open · n new  ›  ctrl+p commands
 ```
 
 Feeds: `GET /projects` (name, state, team.agents, goal); rollup from
@@ -118,7 +118,7 @@ projects › auth-service
     ▲ reviewer   blocked   #150 mfa-design       2 errors · 1 approval
 
 
-          ● master · n1 · 4 agents  ›  enter invoke · a assign · p pause · f finish  ›  ctrl+p commands
+          ● coordinator · n1 · 4 agents  ›  enter invoke · a assign · p pause · f finish  ›  ctrl+p commands
 ```
 
 Feeds: `GET /projects/{id}` + per-agent `GET /agents/context`. Actions map to
@@ -144,7 +144,7 @@ projects › auth-service › reviewer
 
   note  paused pending human review of MFA design
 
-  live ●                             ● master · n1 · 4 agents  ›  esc back  ›  ctrl+p commands
+  live ●                             ● coordinator · n1 · 4 agents  ›  esc back  ›  ctrl+p commands
 ```
 
 Feeds: `GET /agents/{id}/context/stream` (SSE `event: context`, snapshot then
@@ -173,7 +173,7 @@ projects › auth-service › coder › invoke
   ›_ type a message                                          streaming ●
 
 
-                              ● master · n1 · 4 agents  ›  enter send · esc back  ›  ctrl+p commands
+                              ● coordinator · n1 · 4 agents  ›  enter send · esc back  ›  ctrl+p commands
 ```
 
 Feeds: `POST /agents/{id}/invoke` (proxied SSE). The session banner reflects the
@@ -188,16 +188,16 @@ cluster
 
   leader  n1  (this node)
 
-  ● n1   127.0.0.1:8080   master   4 agents   seen just now
-  ● n2   10.0.0.12:8080   slave    2 agents   seen 3s ago
-  ◐ n3   10.0.0.13:8080   slave    0 agents   seen 41s ago   stale
+  ● n1   127.0.0.1:8080   coordinator   4 agents   seen just now
+  ● n2   10.0.0.12:8080   worker    2 agents   seen 3s ago
+  ◐ n3   10.0.0.13:8080   worker    0 agents   seen 41s ago   stale
 
   remote agents (read-only)
     ● n2 · packager    idle      billing-rewrite  #88
     ▲ n2 · deployer    blocked   billing-rewrite  #90   1 approval
 
 
-                                    ● master · n1 · 4 agents  ›  enter node  ›  ctrl+p commands
+                                    ● coordinator · n1 · 4 agents  ›  enter node  ›  ctrl+p commands
 ```
 
 Feeds: `GET /cluster/nodes` (node_id, addr, agents, last_seen, stale) +

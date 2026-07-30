@@ -3,9 +3,9 @@
 //
 // A node runs in one of two modes:
 //
-//   - master (leader): the central hub. Local agents are managed directly
+//   - coordinator (leader): the central hub. Local agents are managed directly
 //     and the node is the source of truth for the cluster.
-//   - slave: connects to a master node, but is not blocked by that
+//   - worker: connects to a coordinator node, but is not blocked by that
 //     connection for local functionality. Local agents run immediately; the
 //     leader connection is established in the background.
 //
@@ -45,38 +45,38 @@ import (
 type Mode string
 
 const (
-	// ModeMaster is the leader role.
-	ModeMaster Mode = "master"
-	// ModeSlave is the follower role.
-	ModeSlave Mode = "slave"
+	// ModeCoordinator is the leader role.
+	ModeCoordinator Mode = "coordinator"
+	// ModeWorker is the follower role.
+	ModeWorker Mode = "worker"
 )
 
 const (
-	// FailoverOff is the default: the master is statically designated by Mode.
+	// FailoverOff is the default: the coordinator is statically designated by Mode.
 	FailoverOff = "off"
 	// FailoverRaft elects the leader via a raft quorum and replicates
-	// master-only state through the raft log. The elected leader acts as the
-	// master; every other node acts as a slave (dynamic role).
+	// coordinator-only state through the raft log. The elected leader acts as the
+	// coordinator; every other node acts as a worker (dynamic role).
 	FailoverRaft = "raft"
 )
 
 // Config configures a Server.
 type Config struct {
-	// Mode is the node role: master (default) or slave.
+	// Mode is the node role: coordinator (default) or worker.
 	Mode Mode
 	// AgentCommand is the path to the agent binary that the server spawns as
 	// a subprocess for each registered agent. If empty it defaults to the
 	// current executable invoked with the "agent" subcommand, which is how
 	// the horde binary serves as its own agent host.
 	AgentCommand string
-	// Leader is the address of the master node. Only used in slave mode with
+	// Leader is the address of the coordinator node. Only used in worker mode with
 	// the "static" discovery mechanism.
 	Leader string
-	// DiscoveryMechanism selects how a slave finds its leader: "static"
+	// DiscoveryMechanism selects how a worker finds its leader: "static"
 	// (default, via Leader) or "dns" (an SRV lookup of DiscoveryDNSName).
 	// Populated from cluster.discovery_mechanism.
 	DiscoveryMechanism string
-	// DiscoveryDNSName is the SRV name a slave looks up when DiscoveryMechanism
+	// DiscoveryDNSName is the SRV name a worker looks up when DiscoveryMechanism
 	// is "dns". Populated from cluster.discovery_dns_name.
 	DiscoveryDNSName string
 	// GossipBindAddr / GossipAdvertiseAddr are the host:port the gossip
@@ -86,8 +86,8 @@ type Config struct {
 	GossipBindAddr      string
 	GossipAdvertiseAddr string
 	// GossipSeeds are the gossip addresses a node joins to bootstrap ring
-	// membership (from cluster.gossip_seeds, comma-split). A slave needs at
-	// least one; a master is typically the seed itself.
+	// membership (from cluster.gossip_seeds, comma-split). A worker needs at
+	// least one; a coordinator is typically the seed itself.
 	GossipSeeds []string
 	// AuthToken is the shared secret required on node→node cluster calls
 	// (from cluster.auth_token). Empty disables cluster request auth.
@@ -96,8 +96,8 @@ type Config struct {
 	// (from cluster.gossip_encryption_key). Empty leaves gossip unencrypted.
 	GossipEncryptionKey []byte
 	// Failover selects automatic leader failover (from cluster.failover):
-	// FailoverOff (default, static master) or FailoverRaft (a raft quorum elects
-	// the leader and replicates master-only state). Raft failover requires the
+	// FailoverOff (default, static coordinator) or FailoverRaft (a raft quorum elects
+	// the leader and replicates coordinator-only state). Raft failover requires the
 	// gossip discovery mechanism.
 	Failover string
 	// RaftBindAddr / RaftAdvertiseAddr are the host:port the raft transport binds
@@ -124,7 +124,7 @@ type Config struct {
 	NodeID string
 	// AdvertiseAddr is the reachable host:port this node advertises to peers
 	// (from cluster.advertise_addr). Empty falls back to ":<port>", which is
-	// not routable across hosts, so master→slave routing needs it set.
+	// not routable across hosts, so coordinator→worker routing needs it set.
 	AdvertiseAddr string
 	// SocketDir is the directory for agent unix socket files. Defaults to
 	// os.TempDir when empty.
@@ -249,7 +249,7 @@ type AAPUserScope struct {
 }
 
 // Server is the horde node. It owns a set of agent subprocesses and, when
-// Run is called, blocks until the supplied context is canceled. In slave
+// Run is called, blocks until the supplied context is canceled. In worker
 // mode it additionally attempts to connect to a leader in the background.
 type Server struct {
 	cfg Config
@@ -259,7 +259,7 @@ type Server struct {
 	nextID   int
 	running  bool
 	leaderOK bool
-	slaves   map[string]knownSlave
+	workers  map[string]knownWorker
 	bus      *EventBus
 	gossip   *gossipNode
 	raft     *raftNode
@@ -275,13 +275,13 @@ type Server struct {
 	// adapter can resume its prior conversation.
 	resume *resumeStore
 
-	// remoteContexts holds contexts reported by slaves, keyed by
-	// (nodeID, agentID). Only populated on a master.
+	// remoteContexts holds contexts reported by workers, keyed by
+	// (nodeID, agentID). Only populated on a coordinator.
 	remoteContexts map[string]ExecutionContext
 
-	// leader is the HTTP client to the master node, set in slave mode when
+	// leader is the HTTP client to the coordinator node, set in worker mode when
 	// a leader is configured. API handlers use it to forward project reads
-	// and mutations to the master so project state is cluster-wide.
+	// and mutations to the coordinator so project state is cluster-wide.
 	leader *leaderClient
 
 	// aapInvokes tracks active and recently-finished AAP invocations per
@@ -320,7 +320,7 @@ type Server struct {
 	kbWriteLocks map[string]*sync.Mutex
 
 	// now returns the current time. A field so tests can inject a clock when
-	// exercising slave staleness; defaults to time.Now.
+	// exercising worker staleness; defaults to time.Now.
 	now func() time.Time
 }
 
@@ -374,7 +374,7 @@ type agentProc struct {
 }
 
 const (
-	// leaderReconnectInterval is how often a slave retries the leader
+	// leaderReconnectInterval is how often a worker retries the leader
 	// connection (background, never blocks local work).
 	leaderReconnectInterval = 5 * time.Second
 	// raftReconcileInterval is how often the raft leader reconciles its voter
@@ -383,16 +383,16 @@ const (
 	// agentShutdownGrace is how long we wait for an agent subprocess to exit
 	// after signaling it before force-killing.
 	agentShutdownGrace = 5 * time.Second
-	// slaveStaleAfter is how long since a slave's last register/heartbeat
-	// before the master marks it stale in the cluster view. Three missed
+	// workerStaleAfter is how long since a worker's last register/heartbeat
+	// before the coordinator marks it stale in the cluster view. Three missed
 	// heartbeat intervals.
-	slaveStaleAfter = 3 * leaderReconnectInterval
-	// slaveEvictAfter is how long since a slave's last register/heartbeat
-	// before the master drops it from the registry entirely. Longer than
-	// slaveStaleAfter so a node stays visible as "stale" for a window before
+	workerStaleAfter = 3 * leaderReconnectInterval
+	// workerEvictAfter is how long since a worker's last register/heartbeat
+	// before the coordinator drops it from the registry entirely. Longer than
+	// workerStaleAfter so a node stays visible as "stale" for a window before
 	// it is reaped, bounding registry growth without hiding a just-departed
 	// node.
-	slaveEvictAfter = 4 * slaveStaleAfter
+	workerEvictAfter = 4 * workerStaleAfter
 	// defaultServerPort is the default TCP port for the node API listener.
 	defaultServerPort = 13420
 	// idTimeDivisor truncates the UnixNano component of agent ids to keep
@@ -414,12 +414,12 @@ const (
 // local for no real benefit.
 func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 	if cfg.Mode == "" {
-		cfg.Mode = ModeMaster
+		cfg.Mode = ModeCoordinator
 	}
 	switch cfg.Mode {
-	case ModeMaster, ModeSlave:
+	case ModeCoordinator, ModeWorker:
 	default:
-		return nil, fmt.Errorf("invalid mode %q: want master or slave", cfg.Mode)
+		return nil, fmt.Errorf("invalid mode %q: want coordinator or worker", cfg.Mode)
 	}
 	if cfg.AgentCommand == "" {
 		cfg.AgentCommand = defaultAgentCommand()
@@ -468,7 +468,7 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 	s := &Server{
 		cfg:            cfg,
 		procs:          make(map[string]*agentProc),
-		slaves:         make(map[string]knownSlave),
+		workers:        make(map[string]knownWorker),
 		bus:            NewEventBus(),
 		ctxStore:       newContextStore(cfg.ContextRetention),
 		projects:       projects,
@@ -483,7 +483,7 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 	if cfg.Failover == FailoverRaft {
 		raftProjects.apply = s.raftApply
 		s.resume.apply = s.raftApply
-		s.resume.isLeader = s.isMaster
+		s.resume.isLeader = s.isCoordinator
 	}
 
 	// Register KB scope resolvers when sync is enabled. The project scope
@@ -494,7 +494,7 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 
 // generateNodeID returns a stable-per-process cluster id when cluster.node_id
 // is not configured. The docs promise "when empty a generated id is used";
-// without one a slave registers with an empty node_id and the master rejects
+// without one a worker registers with an empty node_id and the coordinator rejects
 // it with 400. The id is "<mode>-<hostname>-<8 hex>" (hostname omitted when
 // unavailable), readable in the cluster view and unique enough to avoid
 // collisions between co-located nodes.
@@ -590,7 +590,7 @@ func (s *Server) Start(ctx context.Context) error {
 // loops. Raft failover starts before gossip so gossip can advertise the raft
 // transport address in its node metadata (the leader's membership reconcile and
 // the raftDiscoverer both read it from the ring). The node started with
-// --mode master bootstraps the raft cluster; the rest join as voters when the
+// --mode coordinator bootstraps the raft cluster; the rest join as voters when the
 // leader's reconcile sees them in the ring. Everything is torn down on ctx
 // cancel (there is no Stop() — teardown is ctx-driven).
 func (s *Server) startCluster(ctx context.Context) error {
@@ -617,14 +617,14 @@ func (s *Server) startRaft(ctx context.Context) (string, error) {
 		BindAddr:      s.cfg.RaftBindAddr,
 		AdvertiseAddr: s.cfg.RaftAdvertiseAddr,
 		DataDir:       s.raftDataDir(),
-		Bootstrap:     s.cfg.Mode == ModeMaster,
+		Bootstrap:     s.cfg.Mode == ModeCoordinator,
 		Handler:       s.raftHandler(),
 	})
 	if err != nil {
 		return "", fmt.Errorf("start raft: %w", err)
 	}
 	s.raft = rn
-	logrus.WithFields(logrus.Fields{"raft_addr": rn.localAddr, "bootstrap": s.cfg.Mode == ModeMaster}).Info("raft failover started")
+	logrus.WithFields(logrus.Fields{"raft_addr": rn.localAddr, "bootstrap": s.cfg.Mode == ModeCoordinator}).Info("raft failover started")
 	go func() {
 		<-ctx.Done()
 		rn.shutdown()
@@ -639,9 +639,9 @@ func (s *Server) startGossip(ctx context.Context, raftAddr string) error {
 	if s.cfg.DiscoveryMechanism != discoveryGossip {
 		return nil
 	}
-	role := roleSlave
-	if s.cfg.Mode == ModeMaster {
-		role = roleMaster
+	role := roleWorker
+	if s.cfg.Mode == ModeCoordinator {
+		role = roleCoordinator
 	}
 	node, err := newGossipNode(gossipConfig{
 		NodeID:        s.cfg.NodeID,
@@ -680,7 +680,7 @@ func (s *Server) startLeaderLoops(ctx context.Context) error {
 		go s.connectLeader(ctx)
 		go s.forwardEvents(ctx)
 		go s.raftReconcileLoop(ctx)
-	case s.cfg.Mode == ModeSlave:
+	case s.cfg.Mode == ModeWorker:
 		// Pass a properly-nil interface when gossip is not running (a nil
 		// *gossipNode wrapped in the interface would be non-nil).
 		var gm gossipMembers
@@ -693,8 +693,8 @@ func (s *Server) startLeaderLoops(ctx context.Context) error {
 			DNSName:   s.cfg.DiscoveryDNSName,
 		}, gm)
 		switch {
-		case errors.Is(err, errStandaloneSlave):
-			logrus.Warn("slave mode without a leader source; running standalone")
+		case errors.Is(err, errStandaloneWorker):
+			logrus.Warn("worker mode without a leader source; running standalone")
 		case err != nil:
 			return fmt.Errorf("configure discovery: %w", err)
 		default:
@@ -706,7 +706,7 @@ func (s *Server) startLeaderLoops(ctx context.Context) error {
 	return nil
 }
 
-// connectLeader attempts to reach the configured master node over the
+// connectLeader attempts to reach the configured coordinator node over the
 // cluster API: it registers, then heartbeats on a ticker. It records
 // connectivity status (leaderOK) without blocking local work. On failure
 // it retries on the next tick.
@@ -715,7 +715,7 @@ func (s *Server) connectLeader(ctx context.Context) {
 	// client here means standalone.
 	client := s.leader
 	if client == nil {
-		logrus.Warn("slave mode without a leader source; running standalone")
+		logrus.Warn("worker mode without a leader source; running standalone")
 		return
 	}
 	discovery := client.disco.Describe()
@@ -729,7 +729,7 @@ func (s *Server) connectLeader(ctx context.Context) {
 	// registerHeartbeat runs one register/heartbeat cycle against the current
 	// leader. On the raft leader itself it is a no-op (nothing to register with).
 	registerHeartbeat := func() {
-		if s.failoverEnabled() && s.isMaster() {
+		if s.failoverEnabled() && s.isCoordinator() {
 			s.mu.Lock()
 			s.leaderOK = true
 			s.mu.Unlock()
@@ -779,10 +779,10 @@ func (s *Server) connectLeader(ctx context.Context) {
 }
 
 // forwardEvents subscribes to the local event bus and forwards each event to
-// the master over the cluster API, so the master's /events/stream is a
-// cluster-wide feed. It runs only in slave mode with a leader client and
+// the coordinator over the cluster API, so the coordinator's /events/stream is a
+// cluster-wide feed. It runs only in worker mode with a leader client and
 // exits when ctx is canceled. Forwarding is best-effort: a failed POST is
-// logged at debug and dropped (the master reconstructs current state from
+// logged at debug and dropped (the coordinator reconstructs current state from
 // heartbeat digests regardless).
 func (s *Server) forwardEvents(ctx context.Context) {
 	client := s.leader
@@ -812,7 +812,7 @@ func (s *Server) forwardEvents(ctx context.Context) {
 }
 
 // localAddr returns this node's reachable address for the register payload —
-// the address the master routes back to. It is the configured advertise
+// the address the coordinator routes back to. It is the configured advertise
 // address when set; otherwise it falls back to ":<port>", which is not
 // routable from another host, so cross-node routing to this node will fail
 // until cluster.advertise_addr is set.
@@ -820,7 +820,7 @@ func (s *Server) localAddr() string {
 	if s.cfg.AdvertiseAddr != "" {
 		return s.cfg.AdvertiseAddr
 	}
-	logrus.Warn("cluster.advertise_addr is not set; advertising \":<port>\" which is not routable across hosts — master→slave routing will not reach this node")
+	logrus.Warn("cluster.advertise_addr is not set; advertising \":<port>\" which is not routable across hosts — coordinator→worker routing will not reach this node")
 	return fmt.Sprintf(":%d", s.cfg.Port)
 }
 
@@ -1172,10 +1172,10 @@ func (s *Server) StopAgent(id string) error {
 	return nil
 }
 
-// LeaderConnected reports whether the slave's leader connection is currently
-// established. Always true for master mode.
+// LeaderConnected reports whether the worker's leader connection is currently
+// established. Always true for coordinator mode.
 func (s *Server) LeaderConnected() bool {
-	if s.isMaster() {
+	if s.isCoordinator() {
 		return true
 	}
 	s.mu.Lock()
@@ -1188,48 +1188,48 @@ func (s *Server) failoverEnabled() bool {
 	return s.cfg.Failover == FailoverRaft && s.raft != nil
 }
 
-// isMaster reports whether this node currently acts as the cluster master.
+// isCoordinator reports whether this node currently acts as the cluster coordinator.
 // Without failover the role is static (Mode). With raft failover the role is
-// dynamic: the current raft leader is the master. Every master-gated method
+// dynamic: the current raft leader is the coordinator. Every coordinator-gated method
 // (registration, heartbeat, placement, cross-node routing) consults this rather
 // than the static Mode so leadership can move between nodes.
-func (s *Server) isMaster() bool {
+func (s *Server) isCoordinator() bool {
 	if s.cfg.Failover == FailoverRaft {
 		return s.raft != nil && s.raft.isLeader()
 	}
-	return s.cfg.Mode == ModeMaster
+	return s.cfg.Mode == ModeCoordinator
 }
 
 // Mode returns the node's effective role. Under raft failover this reflects the
-// live raft leadership (master on the leader, slave elsewhere); otherwise it is
+// live raft leadership (coordinator on the leader, worker elsewhere); otherwise it is
 // the configured Mode.
 func (s *Server) Mode() Mode {
 	if s.cfg.Failover == FailoverRaft {
-		if s.isMaster() {
-			return ModeMaster
+		if s.isCoordinator() {
+			return ModeCoordinator
 		}
-		return ModeSlave
+		return ModeWorker
 	}
 	return s.cfg.Mode
 }
 
 // IsLeader reports whether this node currently holds cluster leadership. Under
-// failover this tracks raft; otherwise a master is always the leader.
-func (s *Server) IsLeader() bool { return s.isMaster() }
+// failover this tracks raft; otherwise a coordinator is always the leader.
+func (s *Server) IsLeader() bool { return s.isCoordinator() }
 
-// LeaderAddr returns the master node's address (host:port) when this node is
-// a slave with a configured leader, or "" otherwise. Used by the API layer to
-// decide whether to forward project requests to the master.
+// LeaderAddr returns the coordinator node's address (host:port) when this node is
+// a worker with a configured leader, or "" otherwise. Used by the API layer to
+// decide whether to forward project requests to the coordinator.
 func (s *Server) LeaderAddr() string {
-	if s.isMaster() || s.leader == nil {
+	if s.isCoordinator() || s.leader == nil {
 		return ""
 	}
 	return s.leader.leaderAddr()
 }
 
-// ForwardProjectRequest proxies a project API request to the master node.
-// It is called by the API handlers when this node is a slave with a leader.
-// forwardedUser is echoed as X-Horde-User so the master can attribute the
+// ForwardProjectRequest proxies a project API request to the coordinator node.
+// It is called by the API handlers when this node is a worker with a leader.
+// forwardedUser is echoed as X-Horde-User so the coordinator can attribute the
 // mutation when per-user auth is enabled (empty for anonymous/auth-disabled).
 // Returns the HTTP status code, response headers, response body, and error.
 //
@@ -1362,8 +1362,8 @@ func (s *Server) publishEvent(typ, agentID, name string) {
 }
 
 // SubscribeEvents returns a channel of cluster-activity events and a cancel
-// func the caller must invoke when done. On the master the stream is
-// cluster-wide: it includes events forwarded from slaves.
+// func the caller must invoke when done. On the coordinator the stream is
+// cluster-wide: it includes events forwarded from workers.
 //
 //nolint:gocritic // unnamedResult: result types are clear
 func (s *Server) SubscribeEvents() (<-chan Event, func()) {
@@ -1371,7 +1371,7 @@ func (s *Server) SubscribeEvents() (<-chan Event, func()) {
 }
 
 // PublishClusterEvent republishes an event received from another node onto
-// this node's bus (master-side fan-in), making /events/stream cluster-wide.
+// this node's bus (coordinator-side fan-in), making /events/stream cluster-wide.
 func (s *Server) PublishClusterEvent(ev Event) {
 	s.bus.Publish(ev)
 }
@@ -1382,17 +1382,17 @@ func (s *Server) PublishClusterEvent(ev Event) {
 // internal/server import cycle.
 func (s *Server) SetRouter(h http.Handler) { s.router = h }
 
-// knownSlave tracks a slave that has registered with this master.
-type knownSlave struct {
+// knownWorker tracks a worker that has registered with this coordinator.
+type knownWorker struct {
 	addr     string
 	agents   []string
 	lastSeen time.Time
 }
 
-// SlaveInfo is a snapshot of a registered slave, as surfaced by the cluster
-// view (GET /api/v1/cluster/nodes). Stale is computed against slaveStaleAfter
+// WorkerInfo is a snapshot of a registered worker, as surfaced by the cluster
+// view (GET /api/v1/cluster/nodes). Stale is computed against workerStaleAfter
 // at snapshot time.
-type SlaveInfo struct {
+type WorkerInfo struct {
 	NodeID   string
 	Addr     string
 	Agents   []string
@@ -1400,39 +1400,39 @@ type SlaveInfo struct {
 	Stale    bool
 }
 
-// RegisterSlave records a slave's registration with this master. Only
-// meaningful in master mode; in slave mode it is a no-op.
-func (s *Server) RegisterSlave(nodeID, addr string) {
-	if !s.isMaster() {
+// RegisterWorker records a worker's registration with this coordinator. Only
+// meaningful in coordinator mode; in worker mode it is a no-op.
+func (s *Server) RegisterWorker(nodeID, addr string) {
+	if !s.isCoordinator() {
 		return
 	}
 	s.mu.Lock()
-	sl := s.slaves[nodeID]
+	sl := s.workers[nodeID]
 	sl.addr = addr
 	sl.lastSeen = s.now()
-	s.slaves[nodeID] = sl
+	s.workers[nodeID] = sl
 	s.mu.Unlock()
-	logrus.WithFields(logrus.Fields{"slave": nodeID, "addr": addr}).Debug("slave registered")
+	logrus.WithFields(logrus.Fields{"worker": nodeID, "addr": addr}).Debug("worker registered")
 }
 
-// Heartbeat records a heartbeat from a slave — refreshing its last-seen time
+// Heartbeat records a heartbeat from a worker — refreshing its last-seen time
 // and reported agents — and returns the leader's node id and connectivity
-// status. Only meaningful in master mode. The contexts payload is the
-// slave's redacted execution context digests, stored in the aggregated
+// status. Only meaningful in coordinator mode. The contexts payload is the
+// worker's redacted execution context digests, stored in the aggregated
 // remote view.
 func (s *Server) Heartbeat(nodeID string, agentList []string, digests []ExecutionContextDigest) (string, bool) {
-	if !s.isMaster() {
+	if !s.isCoordinator() {
 		return "", false
 	}
 	s.mu.Lock()
-	sl := s.slaves[nodeID]
+	sl := s.workers[nodeID]
 	sl.lastSeen = s.now()
 	sl.agents = agentList
-	s.slaves[nodeID] = sl
+	s.workers[nodeID] = sl
 	s.mu.Unlock()
 
 	// Reconcile the aggregated remote view with this node's reported set.
-	// Called unconditionally (even for an empty set) so that agents a slave
+	// Called unconditionally (even for an empty set) so that agents a worker
 	// has dropped are cleared rather than lingering forever.
 	ctxs := make([]ExecutionContext, 0, len(digests))
 	for i := range digests {
@@ -1455,46 +1455,46 @@ func (s *Server) Heartbeat(nodeID string, agentList []string, digests []Executio
 	return s.cfg.NodeID, true
 }
 
-// Slaves returns a snapshot of the slaves registered with this master, each
-// marked stale if its last register/heartbeat is older than slaveStaleAfter.
-// Empty for a slave node (which keeps no registry).
-func (s *Server) Slaves() []SlaveInfo {
+// Workers returns a snapshot of the workers registered with this coordinator, each
+// marked stale if its last register/heartbeat is older than workerStaleAfter.
+// Empty for a worker node (which keeps no registry).
+func (s *Server) Workers() []WorkerInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
-	s.evictStaleSlavesLocked(now)
-	out := make([]SlaveInfo, 0, len(s.slaves))
-	for id, sl := range s.slaves {
-		out = append(out, SlaveInfo{
+	s.evictStaleWorkersLocked(now)
+	out := make([]WorkerInfo, 0, len(s.workers))
+	for id, sl := range s.workers {
+		out = append(out, WorkerInfo{
 			NodeID:   id,
 			Addr:     sl.addr,
 			Agents:   sl.agents,
 			LastSeen: sl.lastSeen,
-			Stale:    now.Sub(sl.lastSeen) > slaveStaleAfter,
+			Stale:    now.Sub(sl.lastSeen) > workerStaleAfter,
 		})
 	}
 	return out
 }
 
-// evictStaleSlavesLocked drops slaves whose last register/heartbeat is older
-// than slaveEvictAfter (well past stale), bounding registry growth. The caller
+// evictStaleWorkersLocked drops workers whose last register/heartbeat is older
+// than workerEvictAfter (well past stale), bounding registry growth. The caller
 // must hold s.mu. Mirrors the reap-on-read pattern of RemoteAgentContexts.
-func (s *Server) evictStaleSlavesLocked(now time.Time) {
-	for id, sl := range s.slaves {
-		if now.Sub(sl.lastSeen) > slaveEvictAfter {
-			delete(s.slaves, id)
+func (s *Server) evictStaleWorkersLocked(now time.Time) {
+	for id, sl := range s.workers {
+		if now.Sub(sl.lastSeen) > workerEvictAfter {
+			delete(s.workers, id)
 		}
 	}
 }
 
-// RemoteAgentNode resolves an agent id to the reachable address of the slave
+// RemoteAgentNode resolves an agent id to the reachable address of the worker
 // hosting it, for cross-node invoke routing. It returns ok=false when the id
 // is not a known remote agent, its node is stale (not routable) or unknown, or
 // the id is ambiguous (reported by more than one node — logged, never
 // misrouted). Local agents are handled before this is consulted, so a local id
 // does not reach here.
 func (s *Server) RemoteAgentNode(agentID string) (string, bool) {
-	if !s.isMaster() {
+	if !s.isCoordinator() {
 		return "", false
 	}
 	s.mu.Lock()
@@ -1522,15 +1522,15 @@ func (s *Server) RemoteAgentNode(agentID string) (string, bool) {
 		return "", false
 	}
 
-	sl, ok := s.slaves[nodeID]
-	if !ok || sl.addr == "" || now.Sub(sl.lastSeen) > slaveStaleAfter {
+	sl, ok := s.workers[nodeID]
+	if !ok || sl.addr == "" || now.Sub(sl.lastSeen) > workerStaleAfter {
 		return "", false
 	}
 	return sl.addr, true
 }
 
 // agentNames returns the names of the currently running local agents, sent to
-// the master on each heartbeat so the cluster view reflects slave workloads.
+// the coordinator on each heartbeat so the cluster view reflects worker workloads.
 func (s *Server) agentNames() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1621,11 +1621,11 @@ func (s *Server) SubscribeAgentContext(id string) (<-chan ExecutionContext, func
 	return s.ctxStore.subscribe(id)
 }
 
-// ReportContexts is called by a slave during heartbeat to report its
-// agents' execution contexts to the master. The master stores them in the
-// aggregated remote view. Only meaningful in master mode.
+// ReportContexts is called by a worker during heartbeat to report its
+// agents' execution contexts to the coordinator. The coordinator stores them in the
+// aggregated remote view. Only meaningful in coordinator mode.
 func (s *Server) ReportContexts(nodeID string, contexts []ExecutionContext) {
-	if !s.isMaster() {
+	if !s.isCoordinator() {
 		return
 	}
 	s.mu.Lock()
@@ -1642,7 +1642,7 @@ func (s *Server) ReportContexts(nodeID string, contexts []ExecutionContext) {
 }
 
 // RemoteAgentContexts returns the aggregated, redacted execution contexts
-// from all slaves. Only non-empty on a master.
+// from all workers. Only non-empty on a coordinator.
 func (s *Server) RemoteAgentContexts() []ExecutionContext {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1655,9 +1655,9 @@ func (s *Server) RemoteAgentContexts() []ExecutionContext {
 		}
 		// Reap contexts from nodes that have gone stale so a node that stops
 		// heartbeating does not linger in the aggregated view. Nodes not (yet)
-		// in the slave registry are kept: a heartbeating node is always
+		// in the worker registry are kept: a heartbeating node is always
 		// registered, so "unknown" means pre-registration, not departed.
-		if sl, ok := s.slaves[nodeID]; ok && now.Sub(sl.lastSeen) > slaveStaleAfter {
+		if sl, ok := s.workers[nodeID]; ok && now.Sub(sl.lastSeen) > workerStaleAfter {
 			delete(s.remoteContexts, key)
 			continue
 		}
@@ -1676,7 +1676,7 @@ func (s *Server) EvictRemoteNode(nodeID string) {
 
 // evictRemoteNodeLocked removes all remote contexts for nodeID. The caller
 // must hold s.mu. The trailing "/" ensures node ids that are prefixes of one
-// another (e.g. "slave-1" vs "slave-10") do not collide.
+// another (e.g. "worker-1" vs "worker-10") do not collide.
 func (s *Server) evictRemoteNodeLocked(nodeID string) {
 	prefix := nodeID + "/"
 	for key := range s.remoteContexts {
@@ -1687,7 +1687,7 @@ func (s *Server) evictRemoteNodeLocked(nodeID string) {
 }
 
 // localContextDigests returns the redacted context digests for all local
-// agents, for inclusion in the heartbeat payload to the master.
+// agents, for inclusion in the heartbeat payload to the coordinator.
 func (s *Server) localContextDigests() []ExecutionContextDigest {
 	all := s.ctxStore.all()
 	out := make([]ExecutionContextDigest, 0, len(all))
@@ -1742,7 +1742,7 @@ func (s *Server) startKBWatcher(ctx context.Context) {
 		return
 	}
 
-	if s.isMaster() {
+	if s.isCoordinator() {
 		s.startKBAuthorityWatcher(ctx)
 	} else if s.cfg.KBSync.WatchLocal {
 		s.startKBParticipantWatcher(ctx)
@@ -1855,7 +1855,7 @@ func (s *Server) kbTreeForWatching(p *Project) (string, error) {
 	if resolver == nil {
 		return "", ErrKBFileNotFound
 	}
-	if s.isMaster() {
+	if s.isCoordinator() {
 		return resolver.AuthorityTree(p.ID)
 	}
 	return resolver.LocalTree(p.ID)
@@ -1866,7 +1866,7 @@ func (s *Server) kbTreeForWatching(p *Project) (string, error) {
 // the local tree (by pulling files), since the tree may not have existed
 // when the watcher started. Idempotent: addTree skips if already watched.
 func (s *Server) kbEnsureWatched(projectID string) {
-	if s.kbWatcher == nil || s.isMaster() {
+	if s.kbWatcher == nil || s.isCoordinator() {
 		return
 	}
 	resolver := s.kbScopes[kbScopeKindProject]
@@ -1891,7 +1891,7 @@ func (s *Server) startKBConvergence(ctx context.Context) {
 	}
 	conv := newKBConverger(s)
 	if conv == nil {
-		return // no leader address (master mode or not yet connected)
+		return // no leader address (coordinator mode or not yet connected)
 	}
 	s.kbConverger = conv
 	go conv.run(ctx)

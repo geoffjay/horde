@@ -15,7 +15,7 @@ func TestSetAuth_SendsBearerOnUnaryRequest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"mode":"master","leader_connected":true,"node_id":"n1","version":"test"}`))
+		_, _ = w.Write([]byte(`{"mode":"coordinator","leader_connected":true,"node_id":"n1","version":"test"}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -31,7 +31,7 @@ func TestSetAuth_EmptyLeavesNoHeader(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"mode":"master","leader_connected":true,"node_id":"n1","version":"test"}`))
+		_, _ = w.Write([]byte(`{"mode":"coordinator","leader_connected":true,"node_id":"n1","version":"test"}`))
 	}))
 	t.Cleanup(srv.Close)
 

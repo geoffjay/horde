@@ -6,7 +6,7 @@ import (
 )
 
 // raftKind tags a replicated command so the FSM can dispatch it to the right
-// sub-applier. The master-only stores replicated through the raft log each get a
+// sub-applier. The coordinator-only stores replicated through the raft log each get a
 // kind (project state now; AAP resume tokens follow).
 type raftKind string
 

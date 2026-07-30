@@ -92,7 +92,7 @@ the client.
   POST /invoke` works.
 * **No port conflicts.** Unix sockets are filesystem paths, not TCP ports.
   Hundreds of agents do not contend for port numbers.
-* **Phase 4 reuse.** When a slave forwards an invocation to a remote agent,
+* **Phase 4 reuse.** When a worker forwards an invocation to a remote agent,
   it is the same reverse-proxy pattern at a different transport level. The
   agent does not care whether its caller is local or remote.
 

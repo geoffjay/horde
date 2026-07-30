@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newKBPushIntegrationEnv sets up a master + participant pair where the
+// newKBPushIntegrationEnv sets up a coordinator + participant pair where the
 // participant has WatchLocal enabled (stage 2). The participant watches its
 // local tree and pushes local edits to the authority.
 func newKBPushIntegrationEnv(t *testing.T) *kbIntegrationEnv {
@@ -24,42 +24,42 @@ func newKBPushIntegrationEnv(t *testing.T) *kbIntegrationEnv {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	// Master: KB sync enabled, serves as the authority.
-	masterWorkspace := t.TempDir()
-	masterStateDir := t.TempDir()
-	masterSrv, err := New(Config{
-		Mode:              ModeMaster,
+	// Coordinator: KB sync enabled, serves as the authority.
+	coordinatorWorkspace := t.TempDir()
+	coordinatorStateDir := t.TempDir()
+	coordinatorSrv, err := New(Config{
+		Mode:              ModeCoordinator,
 		SpawnDefaultAgent: false,
 		KBSync: KBSyncConfig{
 			Enabled:     true,
 			MaxFileSize: 1048576,
 			Ignore:      []string{"*.tmp"},
 		},
-		StateDir:            masterStateDir,
-		ProjectWorkspaceDir: masterWorkspace,
+		StateDir:            coordinatorStateDir,
+		ProjectWorkspaceDir: coordinatorWorkspace,
 		Port:                0,
 	})
 	require.NoError(t, err)
-	require.NoError(t, masterSrv.Start(ctx))
+	require.NoError(t, coordinatorSrv.Start(ctx))
 
-	p, err := masterSrv.CreateProjectForTest(CreateProjectInput{
+	p, err := coordinatorSrv.CreateProjectForTest(CreateProjectInput{
 		Name:       "test-proj",
-		Workspace:  masterWorkspace,
+		Workspace:  coordinatorWorkspace,
 		AgentNames: []string{"greeter"},
 	})
 	require.NoError(t, err)
 
-	// Start an HTTP server on the master to serve KB routes (manifest, file,
+	// Start an HTTP server on the coordinator to serve KB routes (manifest, file,
 	// and now PUT/DELETE for the push path).
-	masterRouter := newKBOnlyRouter(masterSrv)
-	masterHS := httptest.NewServer(masterRouter)
-	t.Cleanup(masterHS.Close)
+	coordinatorRouter := newKBOnlyRouter(coordinatorSrv)
+	coordinatorHS := httptest.NewServer(coordinatorRouter)
+	t.Cleanup(coordinatorHS.Close)
 
 	// Participant: KB sync enabled + WatchLocal (stage 2).
 	partStateDir := t.TempDir()
 	partDataDir := t.TempDir()
 	partSrv, err := New(Config{
-		Mode:              ModeSlave,
+		Mode:              ModeWorker,
 		SpawnDefaultAgent: false,
 		KBSync: KBSyncConfig{
 			Enabled:       true,
@@ -75,7 +75,7 @@ func newKBPushIntegrationEnv(t *testing.T) *kbIntegrationEnv {
 	})
 	require.NoError(t, err)
 
-	partSrv.leader = newLeaderClientForTest(masterHS.Listener.Addr().String(), "", "")
+	partSrv.leader = newLeaderClientForTest(coordinatorHS.Listener.Addr().String(), "", "")
 
 	_, err = partSrv.CreateProjectForTest(CreateProjectInput{
 		Name:       "test-proj",
@@ -86,11 +86,11 @@ func newKBPushIntegrationEnv(t *testing.T) *kbIntegrationEnv {
 	require.NoError(t, partSrv.Start(ctx))
 
 	return &kbIntegrationEnv{
-		masterSrv:    masterSrv,
-		masterRouter: masterRouter,
-		masterAddr:   masterHS.Listener.Addr().String(),
-		partSrv:      partSrv,
-		partStateDir: partStateDir,
+		coordinatorSrv:    coordinatorSrv,
+		coordinatorRouter: coordinatorRouter,
+		coordinatorAddr:   coordinatorHS.Listener.Addr().String(),
+		partSrv:           partSrv,
+		partStateDir:      partStateDir,
 	}
 }
 
@@ -142,7 +142,7 @@ func TestKBPush_LocalEditPropagatesToAuthority(t *testing.T) {
 	deadline = time.After(10 * time.Second)
 	for {
 		// Check the authority's manifest for the new digest.
-		manifest, err := env.masterSrv.KBResolveScope(kbScopeKindProject).
+		manifest, err := env.coordinatorSrv.KBResolveScope(kbScopeKindProject).
 			CachedManifest(KBScopeRef{Kind: "project", ID: projects[0].ID})
 		require.NoError(t, err)
 		for _, e := range manifest.Files {
@@ -191,7 +191,7 @@ func TestKBPush_NewLocalFilePropagates(t *testing.T) {
 	// Wait for it to appear on the authority.
 	deadline = time.After(10 * time.Second)
 	for {
-		manifest, err := env.masterSrv.KBResolveScope(kbScopeKindProject).
+		manifest, err := env.coordinatorSrv.KBResolveScope(kbScopeKindProject).
 			CachedManifest(KBScopeRef{Kind: "project", ID: projects[0].ID})
 		require.NoError(t, err)
 		for _, e := range manifest.Files {
@@ -236,12 +236,12 @@ func TestKBPush_ConcurrentEditProducesOneWinner(t *testing.T) {
 
 	// Edit the file on the authority directly (bypasses CAS — last write
 	// to disk wins on the authority, KSP §6.2).
-	masterResolver := env.masterSrv.KBResolveScope(kbScopeKindProject)
-	masterTree, err := masterResolver.AuthorityTree(projects[0].ID)
+	coordinatorResolver := env.coordinatorSrv.KBResolveScope(kbScopeKindProject)
+	coordinatorTree, err := coordinatorResolver.AuthorityTree(projects[0].ID)
 	require.NoError(t, err)
-	masterContent := []byte("# Authority wins\n")
-	require.NoError(t, os.WriteFile(filepath.Join(masterTree, "index.md"), masterContent, 0o644))
-	masterResolver.InvalidateCache(projects[0].ID)
+	coordinatorContent := []byte("# Authority wins\n")
+	require.NoError(t, os.WriteFile(filepath.Join(coordinatorTree, "index.md"), coordinatorContent, 0o644))
+	coordinatorResolver.InvalidateCache(projects[0].ID)
 
 	// Simultaneously edit the file on the participant. The converger will
 	// try to push with If-Match: syncedDigest, but the authority's digest
@@ -256,7 +256,7 @@ func TestKBPush_ConcurrentEditProducesOneWinner(t *testing.T) {
 	for {
 		data, err := os.ReadFile(filepath.Join(localTree, "index.md"))
 		require.NoError(t, err)
-		if string(data) == string(masterContent) {
+		if string(data) == string(coordinatorContent) {
 			break // converged to the winner
 		}
 		select {
@@ -300,49 +300,49 @@ func TestKBPush_OfflineEditReplaysOnReconnect(t *testing.T) {
 	// convergence goroutine reading it).
 	var offline atomic.Bool
 
-	masterWorkspace := t.TempDir()
-	masterStateDir := t.TempDir()
-	masterSrv, err := New(Config{
-		Mode:              ModeMaster,
+	coordinatorWorkspace := t.TempDir()
+	coordinatorStateDir := t.TempDir()
+	coordinatorSrv, err := New(Config{
+		Mode:              ModeCoordinator,
 		SpawnDefaultAgent: false,
 		KBSync: KBSyncConfig{
 			Enabled:     true,
 			MaxFileSize: 1048576,
 			Ignore:      []string{"*.tmp"},
 		},
-		StateDir:            masterStateDir,
-		ProjectWorkspaceDir: masterWorkspace,
+		StateDir:            coordinatorStateDir,
+		ProjectWorkspaceDir: coordinatorWorkspace,
 		Port:                0,
 	})
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	require.NoError(t, masterSrv.Start(ctx))
+	require.NoError(t, coordinatorSrv.Start(ctx))
 
-	p, err := masterSrv.CreateProjectForTest(CreateProjectInput{
+	p, err := coordinatorSrv.CreateProjectForTest(CreateProjectInput{
 		Name:       "test-proj",
-		Workspace:  masterWorkspace,
+		Workspace:  coordinatorWorkspace,
 		AgentNames: []string{"greeter"},
 	})
 	require.NoError(t, err)
 
-	// Wrap the master's KB router in a toggleable handler.
-	masterRouter := newKBOnlyRouter(masterSrv)
+	// Wrap the coordinator's KB router in a toggleable handler.
+	coordinatorRouter := newKBOnlyRouter(coordinatorSrv)
 	toggleable := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if offline.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		masterRouter.ServeHTTP(w, r)
+		coordinatorRouter.ServeHTTP(w, r)
 	})
-	masterHS := httptest.NewServer(toggleable)
-	t.Cleanup(masterHS.Close)
+	coordinatorHS := httptest.NewServer(toggleable)
+	t.Cleanup(coordinatorHS.Close)
 
 	// Participant: WatchLocal enabled (stage 2).
 	partStateDir := t.TempDir()
 	partDataDir := t.TempDir()
 	partSrv, err := New(Config{
-		Mode:              ModeSlave,
+		Mode:              ModeWorker,
 		SpawnDefaultAgent: false,
 		KBSync: KBSyncConfig{
 			Enabled:       true,
@@ -357,7 +357,7 @@ func TestKBPush_OfflineEditReplaysOnReconnect(t *testing.T) {
 		Port:     0,
 	})
 	require.NoError(t, err)
-	partSrv.leader = newLeaderClientForTest(masterHS.Listener.Addr().String(), "", "")
+	partSrv.leader = newLeaderClientForTest(coordinatorHS.Listener.Addr().String(), "", "")
 
 	_, err = partSrv.CreateProjectForTest(CreateProjectInput{
 		Name:       "test-proj",
@@ -386,7 +386,7 @@ func TestKBPush_OfflineEditReplaysOnReconnect(t *testing.T) {
 		}
 	}
 
-	// Simulate offline: the master returns 503 for all requests.
+	// Simulate offline: the coordinator returns 503 for all requests.
 	offline.Store(true)
 
 	// Edit the file while "offline".
@@ -394,7 +394,7 @@ func TestKBPush_OfflineEditReplaysOnReconnect(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(localTree, "index.md"), offlineContent, 0o644))
 
 	// Wait a bit to ensure the converger tries and fails (503 from the
-	// master means the manifest fetch fails and the poll is skipped).
+	// coordinator means the manifest fetch fails and the poll is skipped).
 	time.Sleep(500 * time.Millisecond)
 
 	// Verify the edit is still on disk (not lost).
@@ -402,13 +402,13 @@ func TestKBPush_OfflineEditReplaysOnReconnect(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, string(offlineContent), string(data))
 
-	// Reconnect: the master is available again.
+	// Reconnect: the coordinator is available again.
 	offline.Store(false)
 
 	// Wait for the converger to reconnect and push the edit.
 	deadline = time.After(10 * time.Second)
 	for {
-		manifest, err := masterSrv.KBResolveScope(kbScopeKindProject).
+		manifest, err := coordinatorSrv.KBResolveScope(kbScopeKindProject).
 			CachedManifest(KBScopeRef{Kind: "project", ID: projects[0].ID})
 		require.NoError(t, err)
 		for _, e := range manifest.Files {
@@ -433,33 +433,33 @@ func TestKBPush_EditPropagatesToThirdNode(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	// Master (authority).
-	masterWorkspace := t.TempDir()
-	masterStateDir := t.TempDir()
-	masterSrv, err := New(Config{
-		Mode:                ModeMaster,
+	// Coordinator (authority).
+	coordinatorWorkspace := t.TempDir()
+	coordinatorStateDir := t.TempDir()
+	coordinatorSrv, err := New(Config{
+		Mode:                ModeCoordinator,
 		SpawnDefaultAgent:   false,
 		KBSync:              KBSyncConfig{Enabled: true, MaxFileSize: 1048576, Ignore: []string{"*.tmp"}},
-		StateDir:            masterStateDir,
-		ProjectWorkspaceDir: masterWorkspace,
+		StateDir:            coordinatorStateDir,
+		ProjectWorkspaceDir: coordinatorWorkspace,
 		Port:                0,
 	})
 	require.NoError(t, err)
-	require.NoError(t, masterSrv.Start(ctx))
+	require.NoError(t, coordinatorSrv.Start(ctx))
 
-	p, err := masterSrv.CreateProjectForTest(CreateProjectInput{
-		Name: "test-proj", Workspace: masterWorkspace, AgentNames: []string{"greeter"},
+	p, err := coordinatorSrv.CreateProjectForTest(CreateProjectInput{
+		Name: "test-proj", Workspace: coordinatorWorkspace, AgentNames: []string{"greeter"},
 	})
 	require.NoError(t, err)
 
-	masterRouter := newKBOnlyRouter(masterSrv)
-	masterHS := httptest.NewServer(masterRouter)
-	t.Cleanup(masterHS.Close)
+	coordinatorRouter := newKBOnlyRouter(coordinatorSrv)
+	coordinatorHS := httptest.NewServer(coordinatorRouter)
+	t.Cleanup(coordinatorHS.Close)
 
 	// Participant 1: WatchLocal enabled (pushes local edits).
 	part1DataDir := t.TempDir()
 	part1Srv, err := New(Config{
-		Mode:              ModeSlave,
+		Mode:              ModeWorker,
 		SpawnDefaultAgent: false,
 		KBSync: KBSyncConfig{
 			Enabled: true, WatchLocal: true, MaxFileSize: 1048576, Ignore: []string{"*.tmp"},
@@ -469,7 +469,7 @@ func TestKBPush_EditPropagatesToThirdNode(t *testing.T) {
 		StateDir: t.TempDir(), DataDir: part1DataDir, Port: 0,
 	})
 	require.NoError(t, err)
-	part1Srv.leader = newLeaderClientForTest(masterHS.Listener.Addr().String(), "", "")
+	part1Srv.leader = newLeaderClientForTest(coordinatorHS.Listener.Addr().String(), "", "")
 	_, err = part1Srv.CreateProjectForTest(CreateProjectInput{
 		Name:       "test-proj",
 		Workspace:  filepath.Join(part1DataDir, "workspaces", "project", p.ID, ".horde"),
@@ -481,7 +481,7 @@ func TestKBPush_EditPropagatesToThirdNode(t *testing.T) {
 	// Participant 2: read-only convergence (stage 1 — no WatchLocal).
 	part2DataDir := t.TempDir()
 	part2Srv, err := New(Config{
-		Mode:              ModeSlave,
+		Mode:              ModeWorker,
 		SpawnDefaultAgent: false,
 		KBSync: KBSyncConfig{
 			Enabled: true, MaxFileSize: 1048576, Ignore: []string{"*.tmp"},
@@ -491,7 +491,7 @@ func TestKBPush_EditPropagatesToThirdNode(t *testing.T) {
 		StateDir: t.TempDir(), DataDir: part2DataDir, Port: 0,
 	})
 	require.NoError(t, err)
-	part2Srv.leader = newLeaderClientForTest(masterHS.Listener.Addr().String(), "", "")
+	part2Srv.leader = newLeaderClientForTest(coordinatorHS.Listener.Addr().String(), "", "")
 	_, err = part2Srv.CreateProjectForTest(CreateProjectInput{
 		Name:       "test-proj",
 		Workspace:  filepath.Join(part2DataDir, "workspaces", "project", p.ID, ".horde"),
@@ -544,40 +544,40 @@ func TestKBPush_EditPropagatesToThirdNode(t *testing.T) {
 }
 
 // TestKBConvergence_ParticipantLearnsProjectFromLeader verifies that a
-// participant whose local project store is empty (the real-slave case —
-// project API requests forward to the master) still converges: the converger
+// participant whose local project store is empty (the real-worker case —
+// project API requests forward to the coordinator) still converges: the converger
 // fetches the project list from the leader and materializes the local tree
 // (KSP §3.2: participants learn projects from the authority).
 func TestKBConvergence_ParticipantLearnsProjectFromLeader(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	// Master (authority) with a scaffolded project.
-	masterWorkspace := t.TempDir()
-	masterSrv, err := New(Config{
-		Mode:                ModeMaster,
+	// Coordinator (authority) with a scaffolded project.
+	coordinatorWorkspace := t.TempDir()
+	coordinatorSrv, err := New(Config{
+		Mode:                ModeCoordinator,
 		SpawnDefaultAgent:   false,
 		KBSync:              KBSyncConfig{Enabled: true, MaxFileSize: 1048576, Ignore: []string{"*.tmp"}},
 		StateDir:            t.TempDir(),
-		ProjectWorkspaceDir: masterWorkspace,
+		ProjectWorkspaceDir: coordinatorWorkspace,
 		Port:                0,
 	})
 	require.NoError(t, err)
-	require.NoError(t, masterSrv.Start(ctx))
+	require.NoError(t, coordinatorSrv.Start(ctx))
 
-	p, err := masterSrv.CreateProjectForTest(CreateProjectInput{
-		Name: "test-proj", Workspace: masterWorkspace, AgentNames: []string{"greeter"},
+	p, err := coordinatorSrv.CreateProjectForTest(CreateProjectInput{
+		Name: "test-proj", Workspace: coordinatorWorkspace, AgentNames: []string{"greeter"},
 	})
 	require.NoError(t, err)
 
-	masterHS := httptest.NewServer(newKBOnlyRouter(masterSrv))
-	t.Cleanup(masterHS.Close)
+	coordinatorHS := httptest.NewServer(newKBOnlyRouter(coordinatorSrv))
+	t.Cleanup(coordinatorHS.Close)
 
 	// Participant: KB sync enabled, but the project is NOT created locally —
-	// it must be learned from the leader (the real-slave scenario).
+	// it must be learned from the leader (the real-worker scenario).
 	partDataDir := t.TempDir()
 	partSrv, err := New(Config{
-		Mode:              ModeSlave,
+		Mode:              ModeWorker,
 		SpawnDefaultAgent: false,
 		KBSync: KBSyncConfig{
 			Enabled: true, MaxFileSize: 1048576, Ignore: []string{"*.tmp"},
@@ -587,7 +587,7 @@ func TestKBConvergence_ParticipantLearnsProjectFromLeader(t *testing.T) {
 		StateDir: t.TempDir(), DataDir: partDataDir, Port: 0,
 	})
 	require.NoError(t, err)
-	partSrv.leader = newLeaderClientForTest(masterHS.Listener.Addr().String(), "", "")
+	partSrv.leader = newLeaderClientForTest(coordinatorHS.Listener.Addr().String(), "", "")
 	require.NoError(t, partSrv.Start(ctx))
 
 	// The participant's local store is empty.

@@ -15,9 +15,9 @@ func TestSplitHostPortDefault(t *testing.T) {
 	assert.Equal(t, 7946, port)
 
 	// A bare host defaults the port.
-	host, port, err = splitHostPortDefault("master", defaultGossipPort)
+	host, port, err = splitHostPortDefault("coordinator", defaultGossipPort)
 	require.NoError(t, err)
-	assert.Equal(t, "master", host)
+	assert.Equal(t, "coordinator", host)
 	assert.Equal(t, defaultGossipPort, port)
 
 	// A non-numeric port is an error.

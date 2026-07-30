@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// leaderClient is a thin HTTP client over the master node's cluster API.
-// A slave uses it in connectLeader to register and then heartbeat. The leader
+// leaderClient is a thin HTTP client over the coordinator node's cluster API.
+// A worker uses it in connectLeader to register and then heartbeat. The leader
 // address is resolved through a Discoverer on each call, so a dns-discovered
 // leader that moves is picked up without a restart; the last resolved address
 // is cached for leaderAddr().
@@ -30,8 +30,8 @@ type leaderClient struct {
 // leaderClientTimeout is the per-request timeout for leader round-trips.
 const leaderClientTimeout = 5 * time.Second
 
-// newLeaderClient constructs a leader client. disco resolves the master
-// address, nodeID is this slave's cluster id, addr is this slave's reachable
+// newLeaderClient constructs a leader client. disco resolves the coordinator
+// address, nodeID is this worker's cluster id, addr is this worker's reachable
 // address (optional, for the register payload). A static discoverer seeds the
 // cached address immediately so leaderAddr() is available before the first
 // register; a dns discoverer resolves lazily in the background (no network in
@@ -64,7 +64,7 @@ func (c *leaderClient) resolve(ctx context.Context) (string, error) {
 	return addr, nil
 }
 
-// register calls POST /api/v1/cluster/register on the master. Returns the
+// register calls POST /api/v1/cluster/register on the coordinator. Returns the
 // leader's node id on success.
 func (c *leaderClient) register(ctx context.Context) (string, error) {
 	leader, err := c.resolve(ctx)
@@ -74,7 +74,7 @@ func (c *leaderClient) register(ctx context.Context) (string, error) {
 
 	body, err := json.Marshal(registerPayload{
 		NodeID: c.nodeID,
-		Mode:   string(ModeSlave),
+		Mode:   string(ModeWorker),
 		Addr:   c.addr,
 	})
 	if err != nil {
@@ -106,8 +106,8 @@ func (c *leaderClient) register(ctx context.Context) (string, error) {
 	return r.LeaderID, nil
 }
 
-// heartbeat calls POST /api/v1/cluster/heartbeat on the master, reporting this
-// slave's node id, its running agents, and their execution context digests.
+// heartbeat calls POST /api/v1/cluster/heartbeat on the coordinator, reporting this
+// worker's node id, its running agents, and their execution context digests.
 func (c *leaderClient) heartbeat(ctx context.Context, agents []string, digests []ExecutionContextDigest) error {
 	leader, err := c.resolve(ctx)
 	if err != nil {
@@ -143,7 +143,7 @@ func (c *leaderClient) heartbeat(ctx context.Context, agents []string, digests [
 	return nil
 }
 
-// leaderAddr returns the last resolved master address (host:port), or empty
+// leaderAddr returns the last resolved coordinator address (host:port), or empty
 // before the first successful resolve (e.g. a dns discoverer that has not yet
 // looked up its SRV record).
 func (c *leaderClient) leaderAddr() string {
@@ -152,11 +152,11 @@ func (c *leaderClient) leaderAddr() string {
 	return c.leader
 }
 
-// forwardRequest forwards an HTTP request to the master node, copying the
-// response status, headers, and body back to the caller. It is used by slave
-// nodes to proxy project reads and mutations to the master so project state
+// forwardRequest forwards an HTTP request to the coordinator node, copying the
+// response status, headers, and body back to the caller. It is used by worker
+// nodes to proxy project reads and mutations to the coordinator so project state
 // is cluster-wide. The method and path are taken from the original request.
-// forwardedUser is echoed as X-Horde-User so the master can attribute the
+// forwardedUser is echoed as X-Horde-User so the coordinator can attribute the
 // mutation when per-user auth is enabled (empty for anonymous/auth-disabled).
 //
 //nolint:gocritic // unnamedResult: result types are clear from context
@@ -210,8 +210,8 @@ type heartbeatPayload struct {
 	Contexts []ExecutionContextDigest `json:"contexts,omitempty"`
 }
 
-// ExecutionContextDigest is the redacted, wire-format context digest a slave
-// sends to the master in the heartbeat payload.
+// ExecutionContextDigest is the redacted, wire-format context digest a worker
+// sends to the coordinator in the heartbeat payload.
 type ExecutionContextDigest struct {
 	AgentID              string        `json:"agent_id"`
 	Project              string        `json:"project,omitempty"`

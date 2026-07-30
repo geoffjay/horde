@@ -103,7 +103,7 @@ func createProject(srv projectAuthView) http.HandlerFunc {
 		}
 
 		// Attribute the project to the resolved user (empty when auth is
-		// disabled — backward compatible). On a forwarded slave request the
+		// disabled — backward compatible). On a forwarded worker request the
 		// X-Horde-User header supplies the originating user's id.
 		owner := resolveOwnerForCreate(srv, r)
 

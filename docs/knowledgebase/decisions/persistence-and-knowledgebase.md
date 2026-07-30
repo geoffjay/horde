@@ -213,7 +213,7 @@ The outline:
   changes propagate to the other project nodes, and remote changes are
   applied locally.
 * **Nodes joining** must reconcile against the current state — either a full
-  sync from the master (or a designated knowledgebase authority) or a
+  sync from the coordinator (or a designated knowledgebase authority) or a
   merge.
 * **Nodes leaving** must not corrupt the shared state; their unpushed changes
   are preserved locally and reconciled on rejoin.

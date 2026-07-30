@@ -14,7 +14,7 @@ subprocess serve the agent and the node proxy invocations to it.
 
 * Transport decision: [HTTP over unix domain sockets for agent invocation](/docs/knowledgebase/decisions/agent-invocation-transport.md)
 * Node API transport: [HTTP + SSE](/docs/knowledgebase/decisions/http-api-transport.md)
-* Topology context: [master/slave model](/docs/knowledgebase/decisions/master-slave-model.md)
+* Topology context: [coordinator/worker model](/docs/knowledgebase/decisions/coordinator-worker-model.md)
 * Sibling path (external agents): [Agent Adapter Protocol (AAP)](/docs/knowledgebase/decisions/agent-adapter-protocol.md)
 
 # Scope boundary

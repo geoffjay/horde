@@ -27,7 +27,7 @@ type Config struct {
 
 var defaults = map[string]any{
     "env":         "development",
-    "mode":        "master",
+    "mode":        "coordinator",
     "server.port": 13420,
     // ...
 }

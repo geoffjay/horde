@@ -108,8 +108,8 @@ validate `Permissions.Mode` when set. Thread into `server.Config` via
   admin ⇒ allow; `own` ⇒ `UserID == p.Owner`; `invoke`/`view` ⇒ owner OR `UserID
   ∈ Team.Users`; else 403. Called in each project mutation handler.
 - **Cross-node identity (chosen approach): echo `X-Horde-User` inside
-  cluster-token-authenticated node→node traffic; enforce on the owning/master
-  node.** Project mutations forward slave→master and invoke reverse-proxies to
+  cluster-token-authenticated node→node traffic; enforce on the owning/coordinator
+  node.** Project mutations forward worker→coordinator and invoke reverse-proxies to
   the owning node, so the authoritative check runs where the project/agent
   lives. The origin sets `X-Horde-User: <userID>` on forwarded requests
   (`projectForwardMiddleware`/`ForwardProjectRequest`; `invokeRemoteAgent`
@@ -117,7 +117,7 @@ validate `Permissions.Mode` when set. Thread into `server.Config` via
   the caller is a node principal** (valid cluster token) and re-derives that
   user's scope from local config. Safe because an external client can't forge it
   without the cluster token. This also delivers per-user tool/scope to the owning
-  node for invoke (which need not traverse the master).
+  node for invoke (which need not traverse the coordinator).
 
 # 4. Ownership + team-membership (mechanical threading)
 
@@ -195,8 +195,8 @@ scope on the session:
   disallowed tool (piped session with `turnUser`); `Client.SetAuth` header;
   `renderUsersView`.
 - **Integration** (`//go:build integration`): auth-enabled node (unauth mutation
-  → 401, owner → ok, member invoke → ok, stranger → 403); cross-node (slave
-  forwards with `X-Horde-User`, master enforces owner; invoke reverse-proxy
+  → 401, owner → ok, member invoke → ok, stranger → 403); cross-node (worker
+  forwards with `X-Horde-User`, coordinator enforces owner; invoke reverse-proxy
   carries user, tool allowlist denies on owning node); **disabled-by-default
   regression** (no `auth.users` ⇒ existing suite unchanged); node→node ingest
   still works with only the cluster token.

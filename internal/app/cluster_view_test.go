@@ -14,7 +14,7 @@ func TestClusterView_LeaderLine(t *testing.T) {
 	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewCluster
-	m.node = client.NodeInfo{Mode: "master", NodeID: "n1"}
+	m.node = client.NodeInfo{Mode: "coordinator", NodeID: "n1"}
 	m.nodes = client.ClusterView{LeaderID: "n1"}
 
 	out := m.renderClusterView()
@@ -27,7 +27,7 @@ func TestClusterView_LeaderFromNodeID(t *testing.T) {
 	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewCluster
-	m.node = client.NodeInfo{Mode: "master", NodeID: "n1"}
+	m.node = client.NodeInfo{Mode: "coordinator", NodeID: "n1"}
 	m.nodes = client.ClusterView{} // no LeaderID set
 
 	out := m.renderClusterView()
@@ -39,7 +39,7 @@ func TestClusterView_NodeRows(t *testing.T) {
 	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewCluster
-	m.node = client.NodeInfo{Mode: "master", NodeID: "n1"}
+	m.node = client.NodeInfo{Mode: "coordinator", NodeID: "n1"}
 	m.agents = []client.Agent{{ID: "a1"}, {ID: "a2"}}
 	m.nodes = client.ClusterView{
 		LeaderID: "n1",
@@ -52,13 +52,13 @@ func TestClusterView_NodeRows(t *testing.T) {
 	out := m.renderClusterView()
 	// Local node
 	assert.Contains(t, out, "n1")
-	assert.Contains(t, out, "master")
+	assert.Contains(t, out, "coordinator")
 	assert.Contains(t, out, "2 agents")
 
-	// Slave nodes
+	// Worker nodes
 	assert.Contains(t, out, "n2")
 	assert.Contains(t, out, "10.0.0.12:8080")
-	assert.Contains(t, out, "slave")
+	assert.Contains(t, out, "worker")
 	assert.Contains(t, out, "10s ago")
 
 	// Stale node
@@ -70,7 +70,7 @@ func TestClusterView_RemoteAgents(t *testing.T) {
 	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewCluster
-	m.node = client.NodeInfo{Mode: "master", NodeID: "n1"}
+	m.node = client.NodeInfo{Mode: "coordinator", NodeID: "n1"}
 	m.nodes = client.ClusterView{LeaderID: "n1"}
 	m.remoteContexts = []client.ExecutionContext{
 		{AgentID: "packager", NodeID: "n2", Activity: client.StateIdle, Project: "billing-rewrite", Issue: "#88"},
@@ -92,11 +92,11 @@ func TestClusterView_EmptyCluster(t *testing.T) {
 	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewCluster
-	m.node = client.NodeInfo{Mode: "master", NodeID: "n1"}
+	m.node = client.NodeInfo{Mode: "coordinator", NodeID: "n1"}
 	m.nodes = client.ClusterView{LeaderID: "n1"}
 
 	out := m.renderClusterView()
-	// Should show the leader and the local node row, but no slaves.
+	// Should show the leader and the local node row, but no workers.
 	assert.Contains(t, out, "leader")
 	assert.Contains(t, out, "n1")
 }
@@ -105,7 +105,7 @@ func TestClusterView_CursorHighlight(t *testing.T) {
 	m := newTestModel("127.0.0.1:1")
 	m.connected = true
 	m.view = viewCluster
-	m.node = client.NodeInfo{Mode: "master", NodeID: "n1"}
+	m.node = client.NodeInfo{Mode: "coordinator", NodeID: "n1"}
 	m.nodes = client.ClusterView{
 		LeaderID: "n1",
 		Nodes: []client.ClusterNode{
@@ -113,7 +113,7 @@ func TestClusterView_CursorHighlight(t *testing.T) {
 		},
 	}
 
-	// Cursor at 0 = local node; cursor at 1 = first slave.
+	// Cursor at 0 = local node; cursor at 1 = first worker.
 	rows := m.clusterNodeRows()
 	require.Len(t, rows, 2)
 	assert.Contains(t, rows[0], "n1")

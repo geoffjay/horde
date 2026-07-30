@@ -36,23 +36,23 @@ environment variable (any extension: `yaml`, `yml`, `json`, `toml`).
 | Key                              | Default             | Env var                                | Description                              |
 |----------------------------------|---------------------|----------------------------------------|------------------------------------------|
 | `env`                            | `development`       | `HORDE_ENV`                            | Environment name.                        |
-| `mode`                           | `master`            | `HORDE_MODE`                           | Node role: `master` or `slave`.          |
+| `mode`                           | `coordinator`            | `HORDE_MODE`                           | Node role: `coordinator` or `worker`.          |
 | `server.port`                    | `13420`             | `HORDE_SERVER_PORT`                    | Node API listen port.                    |
 | `server.agent_command`           | *(current binary)*  | `HORDE_SERVER_AGENT_COMMAND`           | Binary used to host agent subprocesses. |
-| `server.leader`                  | *(empty)*           | `HORDE_SERVER_LEADER`                  | Master address for a slave to connect to.|
+| `server.leader`                  | *(empty)*           | `HORDE_SERVER_LEADER`                  | Coordinator address for a worker to connect to.|
 | `server.read_timeout`            | `30`                | `HORDE_SERVER_READ_TIMEOUT`            | API read timeout (seconds).             |
 | `server.write_timeout`           | `30`                | `HORDE_SERVER_WRITE_TIMEOUT`           | API write timeout (seconds).            |
 | `server.idle_timeout`            | `120`               | `HORDE_SERVER_IDLE_TIMEOUT`            | API idle timeout (seconds).             |
 | `cluster.node_id`                | *(empty)*           | `HORDE_CLUSTER_NODE_ID`                | Unique node id within the cluster.       |
-| `cluster.discovery_mechanism`    | `static`            | `HORDE_CLUSTER_DISCOVERY_MECHANISM`    | How a slave finds its leader: `static` (via `server.leader`), `dns` (an SRV lookup of `cluster.discovery_dns_name`), or `gossip` (a memberlist ring; the master advertises itself). Re-resolved each reconnect. |
-| `cluster.discovery_dns_name`     | *(empty)*           | `HORDE_CLUSTER_DISCOVERY_DNS_NAME`     | SRV name a slave looks up when `discovery_mechanism` is `dns` (e.g. `_horde._tcp.example.com`); the lowest-priority target's `host:port` is the leader. Required for `dns`. |
+| `cluster.discovery_mechanism`    | `static`            | `HORDE_CLUSTER_DISCOVERY_MECHANISM`    | How a worker finds its leader: `static` (via `server.leader`), `dns` (an SRV lookup of `cluster.discovery_dns_name`), or `gossip` (a memberlist ring; the coordinator advertises itself). Re-resolved each reconnect. |
+| `cluster.discovery_dns_name`     | *(empty)*           | `HORDE_CLUSTER_DISCOVERY_DNS_NAME`     | SRV name a worker looks up when `discovery_mechanism` is `dns` (e.g. `_horde._tcp.example.com`); the lowest-priority target's `host:port` is the leader. Required for `dns`. |
 | `cluster.gossip_bind_addr`       | *(empty)*           | `HORDE_CLUSTER_GOSSIP_BIND_ADDR`       | `host:port` the gossip listeners bind when `discovery_mechanism` is `gossip`. Empty uses the memberlist LAN defaults (`0.0.0.0:7946`). |
 | `cluster.gossip_advertise_addr`  | *(empty)*           | `HORDE_CLUSTER_GOSSIP_ADVERTISE_ADDR`  | `host:port` peers use to reach this node's gossip listeners (for NAT/containers). Empty is derived from the bind address. |
-| `cluster.gossip_seeds`           | *(empty)*           | `HORDE_CLUSTER_GOSSIP_SEEDS`           | Comma-separated gossip addresses to join the ring (e.g. `master:7946`). Required on a slave under `gossip`; a master is typically the seed. |
-| `cluster.advertise_addr`         | *(empty)*           | `HORDE_CLUSTER_ADVERTISE_ADDR`         | Reachable `host:port` this node advertises to peers (sent to the master on register; also the HTTP address a `gossip` node gossips, so the master needs it set under `gossip`). Required for the master to route cross-node invokes back to a slave; empty falls back to `:<port>`, which is not routable across hosts. |
-| `cluster.auth_token`             | *(empty)*           | `HORDE_CLUSTER_AUTH_TOKEN`             | Shared secret required on node→node cluster calls (register/heartbeat/events). All nodes must share it; the master rejects unauthenticated calls with 401. Empty disables cluster request auth. |
+| `cluster.gossip_seeds`           | *(empty)*           | `HORDE_CLUSTER_GOSSIP_SEEDS`           | Comma-separated gossip addresses to join the ring (e.g. `coordinator:7946`). Required on a worker under `gossip`; a coordinator is typically the seed. |
+| `cluster.advertise_addr`         | *(empty)*           | `HORDE_CLUSTER_ADVERTISE_ADDR`         | Reachable `host:port` this node advertises to peers (sent to the coordinator on register; also the HTTP address a `gossip` node gossips, so the coordinator needs it set under `gossip`). Required for the coordinator to route cross-node invokes back to a worker; empty falls back to `:<port>`, which is not routable across hosts. |
+| `cluster.auth_token`             | *(empty)*           | `HORDE_CLUSTER_AUTH_TOKEN`             | Shared secret required on node→node cluster calls (register/heartbeat/events). All nodes must share it; the coordinator rejects unauthenticated calls with 401. Empty disables cluster request auth. |
 | `cluster.gossip_encryption_key`  | *(empty)*           | `HORDE_CLUSTER_GOSSIP_ENCRYPTION_KEY`  | Base64-encoded 16/24/32-byte key (AES-128/192/256) that encrypts gossip traffic. All nodes must share it. Empty leaves gossip unencrypted. |
-| `cluster.failover`               | `off`               | `HORDE_CLUSTER_FAILOVER`               | Automatic leader failover: `off` (static master) or `raft` (a hashicorp/raft quorum elects the leader and replicates master-only state through the raft log). `raft` requires `discovery_mechanism` `gossip` and a `raft_advertise_addr`, and needs a ≥3-node quorum to fail over safely. |
+| `cluster.failover`               | `off`               | `HORDE_CLUSTER_FAILOVER`               | Automatic leader failover: `off` (static coordinator) or `raft` (a hashicorp/raft quorum elects the leader and replicates coordinator-only state through the raft log). `raft` requires `discovery_mechanism` `gossip` and a `raft_advertise_addr`, and needs a ≥3-node quorum to fail over safely. |
 | `cluster.raft_bind_addr`         | *(empty)*           | `HORDE_CLUSTER_RAFT_BIND_ADDR`         | `host:port` the raft transport binds when `failover` is `raft`. Empty binds `0.0.0.0:<advertise port or 13421>`. |
 | `cluster.raft_advertise_addr`    | *(empty)*           | `HORDE_CLUSTER_RAFT_ADVERTISE_ADDR`    | Routable `host:port` peers dial to reach this node's raft transport (distinct from the gossip and HTTP addresses). Required when `failover` is `raft`. |
 | `cluster.raft_dir`               | *(empty)*           | `HORDE_CLUSTER_RAFT_DIR`               | Directory for the raft log, stable store, and snapshots. Empty resolves to `<state_dir>/raft`. |
@@ -60,7 +60,7 @@ environment variable (any extension: `yaml`, `yml`, `json`, `toml`).
 | `agent.ready_timeout`            | `5`                 | `HORDE_AGENT_READY_TIMEOUT`            | Seconds to wait for agent ready handshake. |
 | `agent.health_poll_interval`     | `30`                | `HORDE_AGENT_HEALTH_POLL_INTERVAL`     | Seconds between agent health polls.     |
 | `agent.context_retention`        | `300`               | `HORDE_AGENT_CONTEXT_RETENTION`        | Seconds to retain an agent's context after exit. |
-| `agent.context_share`            | `restricted`        | `HORDE_AGENT_CONTEXT_SHARE`             | What a remote (non-loopback) principal sees on this node's own context endpoints: `restricted` (redacted subset + error/approval counts) or `full`. The cross-node master summary is always redacted. |
+| `agent.context_share`            | `restricted`        | `HORDE_AGENT_CONTEXT_SHARE`             | What a remote (non-loopback) principal sees on this node's own context endpoints: `restricted` (redacted subset + error/approval counts) or `full`. The cross-node coordinator summary is always redacted. |
 | `project.workspace_dir`          | `.`                 | `HORDE_PROJECT_WORKSPACE_DIR`           | Default workspace dir for a project whose create request omits `workspace`. |
 | `project.context_retention`      | `0`                 | `HORDE_PROJECT_CONTEXT_RETENTION`       | Seconds to retain a finished project's agent contexts before eviction. `0` inherits `agent.context_retention`. |
 | `auth.users`                    | _(empty list)_      | _(not via env; see `HORDE_USER_TOKEN`)_ | Per-user API tokens (opt-in per-user auth). Empty disables auth — the API stays unauthenticated (current behavior). Each entry has `id`, `token`, `admin` (bool), `allowed_tools` (list, empty = all), and `permissions` (`{mode, writable_paths, deny_paths}`). Users are config-defined and identical on every node (no raft). Example block below. |
@@ -168,7 +168,7 @@ directory and overrides global config. Every project has a knowledgebase at
 ### horde node (`horde serve`)
 
 The long-running process that spawns and manages agent subprocesses. Runs
-in `master` or `slave` mode (see `--mode`). Listens on `server.port`.
+in `coordinator` or `worker` mode (see `--mode`). Listens on `server.port`.
 
 ### horde agent subprocess (`horde agent --name <name> --socket <path>`, hidden)
 
@@ -232,8 +232,8 @@ It does not start a node.
 
 | Service  | Mode    | Port            | Connects to        |
 |---------|---------|-----------------|--------------------|
-| `master` | master  | `13420:13420`   | —                  |
-| `slave1`| slave   | `13421:13420`   | `master:13420`     |
-| `slave2`| slave   | `13422:13420`   | `master:13420`     |
+| `coordinator` | coordinator  | `13420:13420`   | —                  |
+| `worker1`| worker   | `13421:13420`   | `coordinator:13420`     |
+| `worker2`| worker   | `13422:13420`   | `coordinator:13420`     |
 
 Run with: `task docker:up` (or `docker compose -f docker/docker-compose.yml up`).

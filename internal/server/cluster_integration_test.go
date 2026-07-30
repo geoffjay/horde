@@ -20,7 +20,7 @@ import (
 
 // This file exhaustively exercises the Phase 4 distributed features against
 // real in-process nodes (real HTTP + memberlist + subprocess agents on
-// loopback): cross-node invoke, placement, slave→master invoke forwarding,
+// loopback): cross-node invoke, placement, worker→coordinator invoke forwarding,
 // cluster auth, event fan-out, and gossip discovery/encryption. It is the
 // repeatable counterpart to the ad-hoc scripts used during development.
 
@@ -71,9 +71,9 @@ func startNode(t *testing.T, cfg server.Config) (*server.Server, string, *client
 	return srv, addr, c
 }
 
-// requireSlaveRegistered blocks until the master's cluster view lists nodeID as
-// a non-stale slave.
-func requireSlaveRegistered(t *testing.T, mc *client.Client, nodeID string) {
+// requireWorkerRegistered blocks until the coordinator's cluster view lists nodeID as
+// a non-stale worker.
+func requireWorkerRegistered(t *testing.T, mc *client.Client, nodeID string) {
 	t.Helper()
 	require.Eventually(t, func() bool {
 		v, err := mc.ListNodes(context.Background())
@@ -86,7 +86,7 @@ func requireSlaveRegistered(t *testing.T, mc *client.Client, nodeID string) {
 			}
 		}
 		return false
-	}, 15*time.Second, 250*time.Millisecond, "slave %q did not register with the master", nodeID)
+	}, 15*time.Second, 250*time.Millisecond, "worker %q did not register with the coordinator", nodeID)
 }
 
 // assertInvokeReply invokes the agent through c and asserts the greeter reply
@@ -102,25 +102,25 @@ func assertInvokeReply(t *testing.T, c *client.Client, agentID, message string) 
 	assert.Contains(t, got, "Hello from horde", "expected the greeter reply in the invoke stream")
 }
 
-func masterCfg(bin string) server.Config {
-	return server.Config{Mode: server.ModeMaster, NodeID: "master", AgentCommand: bin, SpawnDefaultAgent: false}
+func coordinatorCfg(bin string) server.Config {
+	return server.Config{Mode: server.ModeCoordinator, NodeID: "coordinator", AgentCommand: bin, SpawnDefaultAgent: false}
 }
 
-func slaveCfg(bin, leader string) server.Config {
-	return server.Config{Mode: server.ModeSlave, NodeID: "slave-1", Leader: leader, AgentCommand: bin, SpawnDefaultAgent: false}
+func workerCfg(bin, leader string) server.Config {
+	return server.Config{Mode: server.ModeWorker, NodeID: "worker-1", Leader: leader, AgentCommand: bin, SpawnDefaultAgent: false}
 }
 
-// TestCluster_CrossNodeInvoke: an agent spawned on the slave is invokable
-// through the master (slice 1).
+// TestCluster_CrossNodeInvoke: an agent spawned on the worker is invokable
+// through the coordinator (slice 1).
 func TestCluster_CrossNodeInvoke(t *testing.T) {
 	bin := findHordeBinary(t)
-	_, masterAddr, mc := startNode(t, masterCfg(bin))
-	_, _, sc := startNode(t, slaveCfg(bin, masterAddr))
+	_, coordinatorAddr, mc := startNode(t, coordinatorCfg(bin))
+	_, _, sc := startNode(t, workerCfg(bin, coordinatorAddr))
 
 	a, err := sc.SpawnAgent(context.Background(), "greeter", "")
 	require.NoError(t, err)
 
-	// The master aggregates the slave's agent via heartbeat digests.
+	// The coordinator aggregates the worker's agent via heartbeat digests.
 	require.Eventually(t, func() bool {
 		ctxs, _ := mc.ListRemoteAgentContexts(context.Background(), "")
 		for i := range ctxs {
@@ -129,20 +129,20 @@ func TestCluster_CrossNodeInvoke(t *testing.T) {
 			}
 		}
 		return false
-	}, 15*time.Second, 250*time.Millisecond, "master did not aggregate the slave agent")
+	}, 15*time.Second, 250*time.Millisecond, "coordinator did not aggregate the worker agent")
 
 	assertInvokeReply(t, mc, a.ID, "cross node")
 }
 
-// TestCluster_Placement: the master places a new agent on a chosen slave
+// TestCluster_Placement: the coordinator places a new agent on a chosen worker
 // (slice 2).
 func TestCluster_Placement(t *testing.T) {
 	bin := findHordeBinary(t)
-	_, masterAddr, mc := startNode(t, masterCfg(bin))
-	_, _, sc := startNode(t, slaveCfg(bin, masterAddr))
-	requireSlaveRegistered(t, mc, "slave-1")
+	_, coordinatorAddr, mc := startNode(t, coordinatorCfg(bin))
+	_, _, sc := startNode(t, workerCfg(bin, coordinatorAddr))
+	requireWorkerRegistered(t, mc, "worker-1")
 
-	a, err := mc.SpawnAgent(context.Background(), "greeter", "slave-1")
+	a, err := mc.SpawnAgent(context.Background(), "greeter", "worker-1")
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
@@ -153,60 +153,60 @@ func TestCluster_Placement(t *testing.T) {
 			}
 		}
 		return false
-	}, 5*time.Second, 100*time.Millisecond, "the placed agent should run on the slave")
+	}, 5*time.Second, 100*time.Millisecond, "the placed agent should run on the worker")
 }
 
-// TestCluster_SlaveForwardsInvokeToMaster: any node is a valid invoke entry
-// point — the slave forwards an invoke for an agent it does not host to the
-// master, which serves it.
-func TestCluster_SlaveForwardsInvokeToMaster(t *testing.T) {
+// TestCluster_WorkerForwardsInvokeToCoordinator: any node is a valid invoke entry
+// point — the worker forwards an invoke for an agent it does not host to the
+// coordinator, which serves it.
+func TestCluster_WorkerForwardsInvokeToCoordinator(t *testing.T) {
 	bin := findHordeBinary(t)
-	_, masterAddr, mc := startNode(t, masterCfg(bin))
-	_, _, sc := startNode(t, slaveCfg(bin, masterAddr))
+	_, coordinatorAddr, mc := startNode(t, coordinatorCfg(bin))
+	_, _, sc := startNode(t, workerCfg(bin, coordinatorAddr))
 
 	a, err := mc.SpawnAgent(context.Background(), "greeter", "")
 	require.NoError(t, err)
 
-	// Invoke through the SLAVE; it forwards to the master.
-	assertInvokeReply(t, sc, a.ID, "via slave")
+	// Invoke through the WORKER; it forwards to the coordinator.
+	assertInvokeReply(t, sc, a.ID, "via worker")
 }
 
 // TestCluster_AuthToken: a matching cluster token registers; a wrong token is
-// rejected and the slave never appears in the cluster view.
+// rejected and the worker never appears in the cluster view.
 func TestCluster_AuthToken(t *testing.T) {
 	const token = "s3cret-cluster-token"
-	master := masterCfg("")
-	master.AuthToken = token
-	_, masterAddr, mc := startNode(t, master)
+	coordinator := coordinatorCfg("")
+	coordinator.AuthToken = token
+	_, coordinatorAddr, mc := startNode(t, coordinator)
 
-	good := slaveCfg("", masterAddr)
-	good.NodeID = "slave-ok"
+	good := workerCfg("", coordinatorAddr)
+	good.NodeID = "worker-ok"
 	good.AuthToken = token
 	startNode(t, good)
-	requireSlaveRegistered(t, mc, "slave-ok")
+	requireWorkerRegistered(t, mc, "worker-ok")
 
-	bad := slaveCfg("", masterAddr)
-	bad.NodeID = "slave-bad"
+	bad := workerCfg("", coordinatorAddr)
+	bad.NodeID = "worker-bad"
 	bad.AuthToken = "wrong-token"
 	startNode(t, bad)
 
-	// Give the bad slave time to attempt (and fail) registration, then confirm
+	// Give the bad worker time to attempt (and fail) registration, then confirm
 	// it is absent.
 	time.Sleep(2 * time.Second)
 	v, err := mc.ListNodes(context.Background())
 	require.NoError(t, err)
 	for _, n := range v.Nodes {
-		assert.NotEqual(t, "slave-bad", n.NodeID, "a slave with a wrong token must not register")
+		assert.NotEqual(t, "worker-bad", n.NodeID, "a worker with a wrong token must not register")
 	}
 }
 
-// TestCluster_EventFanOut: a spawn on the slave surfaces on the master's
-// cluster-wide event stream with the slave as origin (slice 4).
+// TestCluster_EventFanOut: a spawn on the worker surfaces on the coordinator's
+// cluster-wide event stream with the worker as origin (slice 4).
 func TestCluster_EventFanOut(t *testing.T) {
 	bin := findHordeBinary(t)
-	_, masterAddr, mc := startNode(t, masterCfg(bin))
-	_, _, sc := startNode(t, slaveCfg(bin, masterAddr))
-	requireSlaveRegistered(t, mc, "slave-1")
+	_, coordinatorAddr, mc := startNode(t, coordinatorCfg(bin))
+	_, _, sc := startNode(t, workerCfg(bin, coordinatorAddr))
+	requireWorkerRegistered(t, mc, "worker-1")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -221,57 +221,57 @@ func TestCluster_EventFanOut(t *testing.T) {
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				t.Fatal("event stream closed before the slave's spawn event arrived")
+				t.Fatal("event stream closed before the worker's spawn event arrived")
 			}
-			if ev.Type == client.EventAgentSpawned && ev.Node == "slave-1" {
+			if ev.Type == client.EventAgentSpawned && ev.Node == "worker-1" {
 				return // success
 			}
 		case <-deadline:
-			t.Fatal("master did not receive the slave's agent.spawned event")
+			t.Fatal("coordinator did not receive the worker's agent.spawned event")
 		}
 	}
 }
 
-// TestCluster_GossipDiscovery: a slave finds the master via gossip (no static
+// TestCluster_GossipDiscovery: a worker finds the coordinator via gossip (no static
 // leader) and registers (slice 5).
 func TestCluster_GossipDiscovery(t *testing.T) {
 	seed := "127.0.0.1:" + strconv.Itoa(freePort(t))
-	master := server.Config{
-		Mode: server.ModeMaster, NodeID: "master", SpawnDefaultAgent: false,
+	coordinator := server.Config{
+		Mode: server.ModeCoordinator, NodeID: "coordinator", SpawnDefaultAgent: false,
 		DiscoveryMechanism: "gossip", GossipBindAddr: seed, GossipAdvertiseAddr: seed,
 	}
-	_, _, mc := startNode(t, master)
+	_, _, mc := startNode(t, coordinator)
 
 	sgossip := "127.0.0.1:" + strconv.Itoa(freePort(t))
-	slave := server.Config{
-		Mode: server.ModeSlave, NodeID: "slave-1", SpawnDefaultAgent: false,
+	worker := server.Config{
+		Mode: server.ModeWorker, NodeID: "worker-1", SpawnDefaultAgent: false,
 		DiscoveryMechanism: "gossip", GossipBindAddr: sgossip, GossipAdvertiseAddr: sgossip,
 		GossipSeeds: []string{seed},
 	}
-	startNode(t, slave)
+	startNode(t, worker)
 
-	requireSlaveRegistered(t, mc, "slave-1")
+	requireWorkerRegistered(t, mc, "worker-1")
 }
 
 // TestCluster_GossipEncryption: gossip with a shared encryption key still
-// converges and the slave registers.
+// converges and the worker registers.
 func TestCluster_GossipEncryption(t *testing.T) {
 	key := make([]byte, 32) // AES-256; all-zero is fine for the test
 	seed := "127.0.0.1:" + strconv.Itoa(freePort(t))
-	master := server.Config{
-		Mode: server.ModeMaster, NodeID: "master", SpawnDefaultAgent: false,
+	coordinator := server.Config{
+		Mode: server.ModeCoordinator, NodeID: "coordinator", SpawnDefaultAgent: false,
 		DiscoveryMechanism: "gossip", GossipBindAddr: seed, GossipAdvertiseAddr: seed,
 		GossipEncryptionKey: key,
 	}
-	_, _, mc := startNode(t, master)
+	_, _, mc := startNode(t, coordinator)
 
 	sgossip := "127.0.0.1:" + strconv.Itoa(freePort(t))
-	slave := server.Config{
-		Mode: server.ModeSlave, NodeID: "slave-1", SpawnDefaultAgent: false,
+	worker := server.Config{
+		Mode: server.ModeWorker, NodeID: "worker-1", SpawnDefaultAgent: false,
 		DiscoveryMechanism: "gossip", GossipBindAddr: sgossip, GossipAdvertiseAddr: sgossip,
 		GossipSeeds: []string{seed}, GossipEncryptionKey: key,
 	}
-	startNode(t, slave)
+	startNode(t, worker)
 
-	requireSlaveRegistered(t, mc, "slave-1")
+	requireWorkerRegistered(t, mc, "worker-1")
 }

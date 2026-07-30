@@ -51,7 +51,7 @@ detect and preserve an unexpected local edit rather than destroy it.
 
 ## Why pull, not event-push
 
-The event bus fans *in*, not out (`forwardEvents` is slave→master; there is no
+The event bus fans *in*, not out (`forwardEvents` is worker→coordinator; there is no
 outbound push). It is lossy by design (drops on a full subscriber channel), safe
 for agent lifecycle events only because heartbeat digests re-derive state. KB
 content is project metadata, not safe to propagate on the closed `server.Event`

@@ -1,8 +1,8 @@
-# Integration environment for horde: one master and two slaves.
+# Integration environment for horde: one coordinator and two workers.
 #
-# All three services use the same image built from the repo Dockerfile. Slaves
-# connect to the master via `HORDE_SERVER_LEADER=master:13420` and run in
-# slave mode; local agent functionality is not blocked while the leader
+# All three services use the same image built from the repo Dockerfile. Workers
+# connect to the coordinator via `HORDE_SERVER_LEADER=coordinator:13420` and run in
+# worker mode; local agent functionality is not blocked while the leader
 # connection is being established.
 #
 # Run:  docker compose -f docker/docker-compose.yml up --build
@@ -12,59 +12,59 @@
 # simultaneously. The container-internal port is always 13420.
 
 services:
-  master:
+  coordinator:
     build:
       context: ..
       dockerfile: Dockerfile
     image: horde:dev
-    container_name: horde-master
-    command: ["serve", "--mode", "master"]
+    container_name: horde-coordinator
+    command: ["serve", "--mode", "coordinator"]
     environment:
-      HORDE_MODE: "master"
+      HORDE_MODE: "coordinator"
       HORDE_ENV: "integration"
       HORDE_LOG_FORMATTER: "json"
       HORDE_LOG_LEVEL: "info"
-      HORDE_CLUSTER_NODE_ID: "master"
+      HORDE_CLUSTER_NODE_ID: "coordinator"
     ports:
       - "13420:13420"
     networks:
       - horde
 
-  slave1:
+  worker1:
     image: horde:dev
-    container_name: horde-slave-1
-    command: ["serve", "--mode", "slave"]
+    container_name: horde-worker-1
+    command: ["serve", "--mode", "worker"]
     environment:
-      HORDE_MODE: "slave"
+      HORDE_MODE: "worker"
       HORDE_ENV: "integration"
       HORDE_LOG_FORMATTER: "json"
       HORDE_LOG_LEVEL: "info"
-      HORDE_SERVER_LEADER: "master:13420"
-      HORDE_CLUSTER_NODE_ID: "slave-1"
-      HORDE_CLUSTER_ADVERTISE_ADDR: "slave1:13420"
+      HORDE_SERVER_LEADER: "coordinator:13420"
+      HORDE_CLUSTER_NODE_ID: "worker-1"
+      HORDE_CLUSTER_ADVERTISE_ADDR: "worker1:13420"
     ports:
       - "13421:13420"
     depends_on:
-      - master
+      - coordinator
     networks:
       - horde
 
-  slave2:
+  worker2:
     image: horde:dev
-    container_name: horde-slave-2
-    command: ["serve", "--mode", "slave"]
+    container_name: horde-worker-2
+    command: ["serve", "--mode", "worker"]
     environment:
-      HORDE_MODE: "slave"
+      HORDE_MODE: "worker"
       HORDE_ENV: "integration"
       HORDE_LOG_FORMATTER: "json"
       HORDE_LOG_LEVEL: "info"
-      HORDE_SERVER_LEADER: "master:13420"
-      HORDE_CLUSTER_NODE_ID: "slave-2"
-      HORDE_CLUSTER_ADVERTISE_ADDR: "slave2:13420"
+      HORDE_SERVER_LEADER: "coordinator:13420"
+      HORDE_CLUSTER_NODE_ID: "worker-2"
+      HORDE_CLUSTER_ADVERTISE_ADDR: "worker2:13420"
     ports:
       - "13422:13420"
     depends_on:
-      - master
+      - coordinator
     networks:
       - horde
 

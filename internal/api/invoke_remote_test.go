@@ -12,17 +12,17 @@ import (
 	"github.com/geoffjay/horde/internal/server"
 )
 
-// TestInvoke_RoutesToOwningNode asserts the master reverse-proxies an invoke
-// for an agent hosted on a slave to that slave and streams its SSE back.
+// TestInvoke_RoutesToOwningNode asserts the coordinator reverse-proxies an invoke
+// for an agent hosted on a worker to that worker and streams its SSE back.
 func TestInvoke_RoutesToOwningNode(t *testing.T) {
-	// A fake slave that serves the agent's invoke as an SSE stream.
+	// A fake worker that serves the agent's invoke as an SSE stream.
 	var gotPath string
-	slave := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fl, _ := w.(http.Flusher)
-		_, _ = io.WriteString(w, "id: 1\nevent: token\ndata: {\"text\":\"from-slave\"}\n\n")
+		_, _ = io.WriteString(w, "id: 1\nevent: token\ndata: {\"text\":\"from-worker\"}\n\n")
 		if fl != nil {
 			fl.Flush()
 		}
@@ -31,12 +31,12 @@ func TestInvoke_RoutesToOwningNode(t *testing.T) {
 			fl.Flush()
 		}
 	}))
-	defer slave.Close()
+	defer worker.Close()
 
-	// Master that knows the slave and that "remote-1" runs on it.
+	// Coordinator that knows the worker and that "remote-1" runs on it.
 	srv := newTestServer(t)
-	srv.RegisterSlave("slave-1", slave.Listener.Addr().String())
-	srv.ReportContexts("slave-1", []server.ExecutionContext{{AgentID: "remote-1"}})
+	srv.RegisterWorker("worker-1", worker.Listener.Addr().String())
+	srv.ReportContexts("worker-1", []server.ExecutionContext{{AgentID: "remote-1"}})
 	h := Router(srv)
 
 	w := do(t, h, http.MethodPost, "/api/v1/agents/remote-1/invoke",
@@ -45,7 +45,7 @@ func TestInvoke_RoutesToOwningNode(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "/api/v1/agents/remote-1/invoke", gotPath, "path is preserved across the hop")
 	body := w.Body.String()
-	assert.Contains(t, body, "from-slave", "the slave's streamed event should come back")
+	assert.Contains(t, body, "from-worker", "the worker's streamed event should come back")
 	assert.Contains(t, body, "event: done")
 }
 
@@ -59,11 +59,11 @@ func TestInvoke_UnknownAgentIs404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// TestInvoke_SlaveForwardsToLeader asserts that a slave receiving an invoke for
-// an agent it does not host forwards it to the master (any node is a valid
+// TestInvoke_WorkerForwardsToLeader asserts that a worker receiving an invoke for
+// an agent it does not host forwards it to the coordinator (any node is a valid
 // invoke entry point).
-func TestInvoke_SlaveForwardsToLeader(t *testing.T) {
-	// Fake master: a mux so the slave's background register/heartbeat POSTs
+func TestInvoke_WorkerForwardsToLeader(t *testing.T) {
+	// Fake coordinator: a mux so the worker's background register/heartbeat POSTs
 	// don't interfere with the invoke-path assertion.
 	var gotPath string
 	mux := http.NewServeMux()
@@ -72,7 +72,7 @@ func TestInvoke_SlaveForwardsToLeader(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fl, _ := w.(http.Flusher)
-		_, _ = io.WriteString(w, "id: 1\nevent: token\ndata: {\"text\":\"from-master\"}\n\n")
+		_, _ = io.WriteString(w, "id: 1\nevent: token\ndata: {\"text\":\"from-coordinator\"}\n\n")
 		if fl != nil {
 			fl.Flush()
 		}
@@ -84,12 +84,12 @@ func TestInvoke_SlaveForwardsToLeader(t *testing.T) {
 	mux.HandleFunc("/api/v1/cluster/", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
-	master := httptest.NewServer(mux)
-	defer master.Close()
+	coordinator := httptest.NewServer(mux)
+	defer coordinator.Close()
 
 	srv, err := server.New(server.Config{
-		Mode:              server.ModeSlave,
-		Leader:            master.Listener.Addr().String(),
+		Mode:              server.ModeWorker,
+		Leader:            coordinator.Listener.Addr().String(),
 		SpawnDefaultAgent: false,
 	})
 	require.NoError(t, err)
@@ -101,5 +101,5 @@ func TestInvoke_SlaveForwardsToLeader(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "/api/v1/agents/ghost/invoke", gotPath, "the invoke is forwarded to the leader unchanged")
-	assert.Contains(t, w.Body.String(), "from-master", "the master's streamed event should come back")
+	assert.Contains(t, w.Body.String(), "from-coordinator", "the coordinator's streamed event should come back")
 }

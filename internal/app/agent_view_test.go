@@ -22,7 +22,7 @@ func sseTestHandler(snapshots []client.ExecutionContext) http.Handler {
 	})
 	mux.HandleFunc("/api/v1/node", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"mode": "master", "leader_connected": true, "node_id": "n1", "version": "test",
+			"mode": "coordinator", "leader_connected": true, "node_id": "n1", "version": "test",
 		})
 	})
 	mux.HandleFunc("/api/v1/agents", func(w http.ResponseWriter, _ *http.Request) {

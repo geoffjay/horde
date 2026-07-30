@@ -47,10 +47,10 @@ type agentView interface {
 	RespondApproval(agentID, requestID string, decision aap.ApprovalDecision) error
 	// ResolveSpawnTarget maps a requested placement node to a concrete
 	// target. local=true means spawn on this node; otherwise addr is the
-	// slave address to forward the spawn to (master → owning node).
+	// worker address to forward the spawn to (coordinator → owning node).
 	ResolveSpawnTarget(requested string) (addr string, local bool, err error)
-	// ForwardSpawn posts a spawn to a slave's agents endpoint and relays its
-	// response (status, headers, body) — including the id the slave assigned.
+	// ForwardSpawn posts a spawn to a worker's agents endpoint and relays its
+	// response (status, headers, body) — including the id the worker assigned.
 	ForwardSpawn(ctx context.Context, addr, name string) (int, http.Header, []byte, error)
 }
 
@@ -58,9 +58,9 @@ type agentView interface {
 type clusterView interface {
 	Mode() server.Mode
 	NodeID() string
-	RegisterSlave(nodeID, addr string)
+	RegisterWorker(nodeID, addr string)
 	Heartbeat(nodeID string, agents []string, digests []server.ExecutionContextDigest) (leaderID string, ok bool)
-	Slaves() []server.SlaveInfo
+	Workers() []server.WorkerInfo
 	RemoteAgentContexts() []server.ExecutionContext
 }
 
@@ -102,10 +102,10 @@ type projectAuthorizer interface {
 }
 
 // projectForwarder is the subset of *server.Server needed to proxy project
-// requests to the master. A slave node with a leader returns a non-empty
+// requests to the coordinator. A worker node with a leader returns a non-empty
 // LeaderAddr; the API layer forwards project reads and mutations to the
-// master via ForwardProjectRequest. forwardedUser carries the resolved user
-// id (X-Horde-User) so the master can attribute mutations when auth is
+// coordinator via ForwardProjectRequest. forwardedUser carries the resolved user
+// id (X-Horde-User) so the coordinator can attribute mutations when auth is
 // enabled; empty when the caller is anonymous or auth disabled.
 type projectForwarder interface {
 	LeaderAddr() string
@@ -143,10 +143,10 @@ type invokeView interface {
 	// for a local/unknown/stale/ambiguous id. Consulted only when the agent
 	// is not local.
 	RemoteAgentNode(agentID string) (string, bool)
-	// Mode reports whether this node is a master or slave. On a slave, an
+	// Mode reports whether this node is a coordinator or worker. On a worker, an
 	// invoke for an agent it does not host is forwarded to the leader.
 	Mode() server.Mode
-	// LeaderAddr is the master's address on a slave with a leader, else empty.
+	// LeaderAddr is the coordinator's address on a worker with a leader, else empty.
 	LeaderAddr() string
 	// ClusterAuthToken is the shared secret attached to forwarded cross-node
 	// requests (empty when cluster auth is disabled).
@@ -154,8 +154,8 @@ type invokeView interface {
 }
 
 // eventView is the subset of *server.Server the cluster event stream needs.
-// streamEvents subscribes to the bus; receiveClusterEvent (master-only)
-// republishes an event forwarded by a slave.
+// streamEvents subscribes to the bus; receiveClusterEvent (coordinator-only)
+// republishes an event forwarded by a worker.
 type eventView interface {
 	Mode() server.Mode
 	SubscribeEvents() (<-chan server.Event, func())

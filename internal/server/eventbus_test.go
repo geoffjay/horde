@@ -12,11 +12,11 @@ func TestEventBus_PublishReachesSubscriber(t *testing.T) {
 	ch, cancel := bus.Subscribe()
 	defer cancel()
 
-	bus.Publish(Event{Type: EventAgentSpawned, Node: "master-1", AgentID: "a1", Name: "greeter"})
+	bus.Publish(Event{Type: EventAgentSpawned, Node: "coordinator-1", AgentID: "a1", Name: "greeter"})
 
 	ev := <-ch
 	assert.Equal(t, EventAgentSpawned, ev.Type)
-	assert.Equal(t, "master-1", ev.Node)
+	assert.Equal(t, "coordinator-1", ev.Node)
 	assert.Equal(t, "a1", ev.AgentID)
 	assert.Equal(t, "greeter", ev.Name)
 }
@@ -62,18 +62,18 @@ func TestEventBus_CancelStopsDelivery(t *testing.T) {
 }
 
 func TestServer_SubscribeEventsReceivesClusterEvent(t *testing.T) {
-	srv, err := New(Config{Mode: ModeMaster, NodeID: "master-1", SpawnDefaultAgent: false})
+	srv, err := New(Config{Mode: ModeCoordinator, NodeID: "coordinator-1", SpawnDefaultAgent: false})
 	require.NoError(t, err)
 
 	ch, cancel := srv.SubscribeEvents()
 	defer cancel()
 
-	// A slave-forwarded event, republished onto the master bus, reaches
+	// A worker-forwarded event, republished onto the coordinator bus, reaches
 	// local subscribers with its origin node preserved.
-	srv.PublishClusterEvent(Event{Type: EventAgentSpawned, Node: "slave-1", AgentID: "a7-42", Name: "greeter"})
+	srv.PublishClusterEvent(Event{Type: EventAgentSpawned, Node: "worker-1", AgentID: "a7-42", Name: "greeter"})
 
 	ev := <-ch
 	assert.Equal(t, EventAgentSpawned, ev.Type)
-	assert.Equal(t, "slave-1", ev.Node, "origin node is preserved across the hop")
+	assert.Equal(t, "worker-1", ev.Node, "origin node is preserved across the hop")
 	assert.Equal(t, "a7-42", ev.AgentID)
 }

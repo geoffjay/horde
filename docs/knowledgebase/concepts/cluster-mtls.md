@@ -59,5 +59,5 @@ when certs are configured (token as fallback), so a cluster can roll over node b
 node. The `Discoverer` abstraction and the existing outbound call sites are the
 seams: switching their scheme to `https` and attaching a client cert is the bulk
 of the change; no change to discovery, register, or routing logic. See the
-[master/slave model](../decisions/master-slave-model.md) decision for the
+[coordinator/worker model](../decisions/coordinator-worker-model.md) decision for the
 topology this secures.

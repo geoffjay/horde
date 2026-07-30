@@ -55,10 +55,10 @@ git clone ssh://aur@aur.archlinux.org/horde-bin.git
 # edit PKGBUILD — update pkgver, sha256sums
 makepkg --printsrcinfo > .SRCINFO
 git commit -am "horde vX.Y.Z"
-git push origin master
+git push origin coordinator
 ```
 
-Note: AUR requires the branch be `master`, not `main`. `makepkg` is not
+Note: AUR requires the branch be `coordinator`, not `main`. `makepkg` is not
 available on macOS — generate `.SRCINFO` manually or on a Linux machine.
 
 # Consequences

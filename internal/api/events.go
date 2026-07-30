@@ -10,8 +10,8 @@ import (
 )
 
 // streamEvents streams cluster-activity events (agent lifecycle transitions)
-// over SSE. On the master the feed is cluster-wide: slaves forward their
-// events to the master (POST /cluster/events), which republishes them here.
+// over SSE. On the coordinator the feed is cluster-wide: workers forward their
+// events to the coordinator (POST /cluster/events), which republishes them here.
 // The stream carries only live events — there is no backlog replay, so
 // Last-Event-ID resume is not offered (the id is for client correlation only).
 func streamEvents(srv eventView) http.HandlerFunc {
@@ -49,13 +49,13 @@ func streamEvents(srv eventView) http.HandlerFunc {
 	}
 }
 
-// receiveClusterEvent accepts an event forwarded by a slave and republishes it
-// onto this node's bus, making the master's /events/stream cluster-wide. It is
-// master-only: a slave (which forwards its own events upward) rejects it.
+// receiveClusterEvent accepts an event forwarded by a worker and republishes it
+// onto this node's bus, making the coordinator's /events/stream cluster-wide. It is
+// coordinator-only: a worker (which forwards its own events upward) rejects it.
 func receiveClusterEvent(srv eventView) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if srv.Mode() != server.ModeMaster {
-			writeJSON(w, http.StatusNotFound, errorResponse{Error: "cluster events are accepted by the master only"})
+		if srv.Mode() != server.ModeCoordinator {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "cluster events are accepted by the coordinator only"})
 			return
 		}
 		var ev server.Event

@@ -1,19 +1,19 @@
 ---
 type: Plan
 title: Phase 2 — Server API
-description: Detailed plan for the node API transport, event streaming, and slave↔master contract.
+description: Detailed plan for the node API transport, event streaming, and worker↔coordinator contract.
 tags: [plan, api, phase-2, server, networking]
 timestamp: 2026-07-09T00:00:00Z
 ---
 
 Phase 2 replaces the two stubs left by Phase 1 — `Server.Run` blocking on
 `<-ctx.Done()` with no listener, and `connectLeader` unconditionally setting
-`leaderOK = true` — with a real HTTP API transport and a real slave↔master
+`leaderOK = true` — with a real HTTP API transport and a real worker↔coordinator
 contract.
 
 * Transport decision: [HTTP + SSE](/docs/knowledgebase/decisions/http-api-transport.md)
 * TUI contract: [TUI consumes the node API](/docs/knowledgebase/decisions/tui-uses-node-api.md)
-* Topology context: [master/slave model](/docs/knowledgebase/decisions/master-slave-model.md)
+* Topology context: [coordinator/worker model](/docs/knowledgebase/decisions/coordinator-worker-model.md)
 
 # Scope
 
@@ -22,8 +22,8 @@ Two logical channels, one transport (HTTP/JSON + SSE), one listener on
 
 | Channel       | Consumers              | Backed by                  |
 |---------------|------------------------|----------------------------|
-| Node control  | TUI, slaves, ops       | `Server` methods directly  |
-| Event stream  | TUI, forwarding slaves | new in-process event bus → SSE |
+| Node control  | TUI, workers, ops       | `Server` methods directly  |
+| Event stream  | TUI, forwarding workers | new in-process event bus → SSE |
 
 All endpoints under `/api/v1`. JSON in/out unless noted. SSE for streaming.
 
@@ -35,8 +35,8 @@ GET    /api/v1/health          {status: "ok"}        — liveness, no deps
 GET    /api/v1/ready           {status: "ready", leader: "ok|degraded"} — readiness
 ```
 
-`/health` is a dumb "process is up" check. `/ready` distinguishes master
-(always ready) from slave (ready when `LeaderConnected()` is true) — this is
+`/health` is a dumb "process is up" check. `/ready` distinguishes coordinator
+(always ready) from worker (ready when `LeaderConnected()` is true) — this is
 what the existing `LeaderConnected()` and `Mode()` methods feed, and it is the
 thing that replaces the fake `leaderOK = true` in `connectLeader`.
 
@@ -98,7 +98,7 @@ func (b *EventBus) Subscribe(invocationID string) <-chan Event  // fan-out, buff
 ```
 
 Why it matters here (not Phase 4): SSE handlers need per-request cancellation
-and per-invocation filtering, and the slave→master forwarder also subscribes
+and per-invocation filtering, and the worker→coordinator forwarder also subscribes
 to forward events upstream. A channels-based in-process bus keeps all of that
 uniform without a broker. Multiple SSE clients watching the same invocation
 is just multiple subscribers.
@@ -106,20 +106,20 @@ is just multiple subscribers.
 See the [transport decision](/docs/knowledgebase/decisions/http-api-transport.md)
 for why a brokerless messaging lib (ZeroMQ / nng) is deferred to Phase 4.
 
-# Slave ↔ master
+# Worker ↔ coordinator
 
 Replaces `connectLeader`'s `leaderOK = true` lie with real round-trips. Same
-HTTP API — the master is just another node, so a slave reuses the same client
+HTTP API — the coordinator is just another node, so a worker reuses the same client
 code:
 
 ```
-POST   /api/v1/cluster/register     slave→master on connect:
-                                 {node_id, mode:"slave", addr:"..."}
+POST   /api/v1/cluster/register     worker→coordinator on connect:
+                                 {node_id, mode:"worker", addr:"..."}
                                  → {ok, node_id, leader_id}
-POST   /api/v1/cluster/heartbeat    slave→master every N s:
+POST   /api/v1/cluster/heartbeat    worker→coordinator every N s:
                                  {node_id, agents:[...]}
                                  → {ok, leader_id}
-GET    /api/v1/cluster/nodes        master's cluster view:
+GET    /api/v1/cluster/nodes        coordinator's cluster view:
                                  → {leader_id, nodes:[{node_id, addr,
                                     agents, last_seen, stale}]}
 ```
@@ -127,19 +127,19 @@ GET    /api/v1/cluster/nodes        master's cluster view:
 As shipped, heartbeat is a `POST` with a JSON body (it carries the `agents`
 list, so a GET-with-body was dropped in favour of POST). `/cluster/nodes`
 makes the otherwise write-only registry observable: register/heartbeat feed an
-in-memory registry, and this endpoint reads it back (slaves marked `stale`
+in-memory registry, and this endpoint reads it back (workers marked `stale`
 after three missed heartbeat intervals).
 
 `connectLeader` becomes a real client: dial `s.cfg.Leader`, call
 `/cluster/register`, set `leaderOK` from the response, then loop on
 `/cluster/heartbeat`. Keep the 5s ticker + non-blocking, background contract.
 
-**`TestStart_SlaveBecomesLeaderConnected` must change.** Today it constructs a
-slave with `Leader: "master:13420"` and passes *only because* `connectLeader`
+**`TestStart_WorkerBecomesLeaderConnected` must change.** Today it constructs a
+worker with `Leader: "coordinator:13420"` and passes *only because* `connectLeader`
 sets `leaderOK = true` unconditionally, with no network call. Once
 `connectLeader` performs a real `/cluster/register`, that call cannot succeed
 against a non-existent host, so `LeaderConnected()` stays false and the test
-fails. The test must be reworked to register against an `httptest` master stub
+fails. The test must be reworked to register against an `httptest` coordinator stub
 (or the leader-client must be injectable so the test can supply a fake). This
 is a test rewrite, not a contract to preserve — do not treat the current
 unconditional-true behaviour as the spec.
@@ -164,7 +164,7 @@ unconditional-true behaviour as the spec.
   `Mode` / `AgentCommand` / `Leader` / `SpawnDefaultAgent` — no port, no
   timeouts. Those fields must be added to `server.Config` and populated from
   `config.ServerConfig` before `Run` can bind a listener.
-* Slave client — `internal/server/leaderclient.go` (or `internal/api/client`),
+* Worker client — `internal/server/leaderclient.go` (or `internal/api/client`),
   a thin HTTP client over `s.cfg.Leader`. `connectLeader` calls it.
 
 ## `agents/` (Phase 3 really, but the wire shape matters now)
@@ -184,7 +184,7 @@ for the register/heartbeat payloads.
 
 * `internal/api` — HTTP adapter: handlers, routes, request/response types.
   Calls into `internal/server`; never owns agent state itself. This keeps
-  `internal/server` as the node core and makes the slave's leader-client
+  `internal/server` as the node core and makes the worker's leader-client
   reusable from the same package.
 * `internal/server` — node core: the `Server`, `agentProc`, `EventBus`,
   `connectLeader`, `leaderclient`. Unchanged in role, gains the missing

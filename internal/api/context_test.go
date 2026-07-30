@@ -65,10 +65,10 @@ func TestListRemoteAgentContexts_WithFilter(t *testing.T) {
 	srv := newTestServer(t)
 	h := Router(srv)
 
-	// Report some remote contexts via the master.
-	srv.ReportContexts("slave-1", []server.ExecutionContext{
-		{AgentID: "a-1", NodeID: "slave-1", Issue: "bug-42", Project: "p1"},
-		{AgentID: "a-2", NodeID: "slave-1", Issue: "bug-99", Project: "p1"},
+	// Report some remote contexts via the coordinator.
+	srv.ReportContexts("worker-1", []server.ExecutionContext{
+		{AgentID: "a-1", NodeID: "worker-1", Issue: "bug-42", Project: "p1"},
+		{AgentID: "a-2", NodeID: "worker-1", Issue: "bug-99", Project: "p1"},
 	})
 
 	w := do(t, h, http.MethodGet, "/api/v1/cluster/agents/context?issue=bug-42", nil)
@@ -85,10 +85,10 @@ func TestListRemoteAgentContexts_Redacted(t *testing.T) {
 	h := Router(srv)
 
 	// Report a context with sensitive fields.
-	srv.ReportContexts("slave-1", []server.ExecutionContext{
+	srv.ReportContexts("worker-1", []server.ExecutionContext{
 		{
 			AgentID:       "a-1",
-			NodeID:        "slave-1",
+			NodeID:        "worker-1",
 			Blocked:       true,
 			BlockedReason: "sensitive",
 			Note:          "secret note",
@@ -112,8 +112,8 @@ func TestListRemoteAgentContexts_Counts(t *testing.T) {
 	srv := newTestServer(t)
 	h := Router(srv)
 
-	srv.ReportContexts("slave-1", []server.ExecutionContext{
-		{AgentID: "a-1", NodeID: "slave-1", ErrorCount: 2, PendingApprovalCount: 1},
+	srv.ReportContexts("worker-1", []server.ExecutionContext{
+		{AgentID: "a-1", NodeID: "worker-1", ErrorCount: 2, PendingApprovalCount: 1},
 	})
 
 	w := do(t, h, http.MethodGet, "/api/v1/cluster/agents/context", nil)
@@ -173,13 +173,13 @@ func TestHeartbeat_WithContexts(t *testing.T) {
 
 	// Register first.
 	w := do(t, h, http.MethodPost, "/api/v1/cluster/register", registerRequest{
-		NodeID: "slave-1", Mode: "slave", Addr: "slave1:13420",
+		NodeID: "worker-1", Mode: "worker", Addr: "worker1:13420",
 	})
 	require.Equal(t, http.StatusOK, w.Code)
 
 	now := time.Now().UTC()
 	w = do(t, h, http.MethodPost, "/api/v1/cluster/heartbeat", heartbeatRequest{
-		NodeID: "slave-1",
+		NodeID: "worker-1",
 		Agents: []string{"greeter"},
 		Contexts: []server.ExecutionContextDigest{
 			{
@@ -211,8 +211,8 @@ func TestStreamAgentContext_Snapshot(t *testing.T) {
 	h := Router(srv)
 
 	// Report a context so the endpoint has something to stream.
-	srv.ReportContexts("slave-1", []server.ExecutionContext{
-		{AgentID: "a-1", NodeID: "slave-1"},
+	srv.ReportContexts("worker-1", []server.ExecutionContext{
+		{AgentID: "a-1", NodeID: "worker-1"},
 	})
 
 	// Verify the stream endpoint returns 404 for unknown local agents

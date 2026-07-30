@@ -39,27 +39,27 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/horde serve --mode master
+ExecStart=/usr/bin/horde serve --mode coordinator
 Restart=on-failure
 RestartSec=5
 
 # Optional: override config via environment.
 # Environment=HORDE_SERVER_PORT=13420
-# Environment=HORDE_MODE=master
+# Environment=HORDE_MODE=coordinator
 # Environment=HORDE_LOG_LEVEL=info
 
 [Install]
 WantedBy=default.target
 ```
 
-### Slave mode
+### Worker mode
 
-For a slave node, change the `ExecStart` line and set the leader address:
+For a worker node, change the `ExecStart` line and set the leader address:
 
 ```ini
-ExecStart=/usr/bin/horde serve --mode slave
-Environment=HORDE_SERVER_LEADER=master-host:13420
-Environment=HORDE_CLUSTER_NODE_ID=slave-1
+ExecStart=/usr/bin/horde serve --mode worker
+Environment=HORDE_SERVER_LEADER=coordinator-host:13420
+Environment=HORDE_CLUSTER_NODE_ID=worker-1
 ```
 
 ## 2. Enable lingering (so the service runs without an active login session)

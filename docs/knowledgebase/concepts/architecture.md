@@ -1,7 +1,7 @@
 ---
 type: Concept
 title: Architecture
-description: The horde node, master/slave modes, and agent subprocess model.
+description: The horde node, coordinator/worker modes, and agent subprocess model.
 tags: [architecture, core]
 timestamp: 2026-07-08T00:00:00Z
 ---
@@ -12,9 +12,9 @@ field and the `horde serve --mode` flag.
 
 # Modes
 
-* **master** (default) — the central hub. The node is the source of truth for
+* **coordinator** (default) — the central hub. The node is the source of truth for
   the cluster and manages local agents directly.
-* **slave** — connects to a master node but is *not blocked* by that
+* **worker** — connects to a coordinator node but is *not blocked* by that
   connection for local functionality. Local agents run immediately; the
   leader connection is established in the background.
 
@@ -50,7 +50,7 @@ always consumes this API (see
 
 `internal/api` is the HTTP adapter (chi router + handlers) that calls into
 `internal/server`; `internal/client` is the matching HTTP client used by the
-TUI and reusable by the slave leader-client. `Server.Run` starts an
+TUI and reusable by the worker leader-client. `Server.Run` starts an
 `http.Server` on `server.port` (using an injected `http.Handler` to keep the
 `internal/api` → `internal/server` dependency direction clean) and serves
 until ctx canceled. A fatal listener error (e.g. the port is already in use)
@@ -59,19 +59,19 @@ never stays up with a dead API.
 
 # Cluster & readiness
 
-A slave registers with its master (`POST /api/v1/cluster/register`) and then
-heartbeats on a ticker (`POST /api/v1/cluster/heartbeat`, carrying the slave's
-node id and the names of its running agents); the master tracks registered
-slaves in an in-memory registry initialized at construction, so a heartbeat
-that arrives before any register — e.g. after a master restart while a slave
+A worker registers with its coordinator (`POST /api/v1/cluster/register`) and then
+heartbeats on a ticker (`POST /api/v1/cluster/heartbeat`, carrying the worker's
+node id and the names of its running agents); the coordinator tracks registered
+workers in an in-memory registry initialized at construction, so a heartbeat
+that arrives before any register — e.g. after a coordinator restart while a worker
 still believes it is connected — is handled without panicking and self-heals
-on the next register. Each register/heartbeat refreshes the slave's last-seen
-time; a slave not seen within three heartbeat intervals is marked stale.
+on the next register. Each register/heartbeat refreshes the worker's last-seen
+time; a worker not seen within three heartbeat intervals is marked stale.
 
 The registry is observable via `GET /api/v1/cluster/nodes`, which returns the
-leader id plus every registered slave (`node_id`, `addr`, `agents`,
-`last_seen`, `stale`). On a slave node the registry is empty. The slave
-leader-client (`internal/server/leaderclient.go`) and the master handlers
+leader id plus every registered worker (`node_id`, `addr`, `agents`,
+`last_seen`, `stale`). On a worker node the registry is empty. The worker
+leader-client (`internal/server/leaderclient.go`) and the coordinator handlers
 (`internal/api/cluster.go`) hand-mirror the register/heartbeat request and
 response structs; an integration test
 (`internal/server/integration_test.go`) drives the real leader-client against
@@ -79,16 +79,16 @@ the real `api.Router` to catch drift between the two.
 
 Beyond the periodic heartbeat snapshot, the cluster has a live activity feed:
 each node publishes agent lifecycle events (`agent.spawned`/`exiting`/`exited`)
-on an in-process bus, served over SSE at `GET /api/v1/events/stream`. A slave
-pushes its events to the master (`POST /api/v1/cluster/events`), which
-republishes them, so the master's stream is a cluster-wide feed with each
-event's origin node preserved — the same slave→master direction the heartbeat
+on an in-process bus, served over SSE at `GET /api/v1/events/stream`. A worker
+pushes its events to the coordinator (`POST /api/v1/cluster/events`), which
+republishes them, so the coordinator's stream is a cluster-wide feed with each
+event's origin node preserved — the same worker→coordinator direction the heartbeat
 digests flow, no new transport.
 
-Readiness reflects this: `GET /api/v1/ready` returns 200 for a master (always
-ready) and for a connected slave, but **503** for a slave whose leader
+Readiness reflects this: `GET /api/v1/ready` returns 200 for a coordinator (always
+ready) and for a connected worker, but **503** for a worker whose leader
 connection is not established (`{status:"degraded", leader:"degraded"}`), so
-orchestrators that gate on HTTP status pull a leaderless slave from rotation.
+orchestrators that gate on HTTP status pull a leaderless worker from rotation.
 `GET /api/v1/health` remains a dumb liveness check (always 200 when the process
 is up).
 

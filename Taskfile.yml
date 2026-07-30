@@ -72,7 +72,7 @@ tasks:
       - docker build -t horde:dev .
 
   docker:up:
-    desc: Start the integration environment (master + 2 slaves)
+    desc: Start the integration environment (coordinator + 2 workers)
     cmds:
       - docker compose -f docker/docker-compose.yml up --build -d
 

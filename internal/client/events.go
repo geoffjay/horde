@@ -10,7 +10,7 @@ import (
 )
 
 // Event is one cluster-activity event from the node event stream: an agent
-// lifecycle transition on some node. On the master the stream is cluster-wide.
+// lifecycle transition on some node. On the coordinator the stream is cluster-wide.
 type Event struct {
 	Type    string `json:"type"`
 	Node    string `json:"node"`

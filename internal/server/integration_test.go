@@ -15,43 +15,43 @@ import (
 	"github.com/geoffjay/horde/internal/server"
 )
 
-// TestSlaveRegistersWithRealMasterAPI wires a real slave leader-client (via
-// connectLeader) against the real internal/api router backed by a master
+// TestWorkerRegistersWithRealCoordinatorAPI wires a real worker leader-client (via
+// connectLeader) against the real internal/api router backed by a coordinator
 // Server. It is the seam that catches drift between the hand-mirrored
 // register/heartbeat request+response structs in internal/api and
 // internal/server: if a JSON tag diverges, register or heartbeat fails here.
-func TestSlaveRegistersWithRealMasterAPI(t *testing.T) {
+func TestWorkerRegistersWithRealCoordinatorAPI(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	master, err := server.New(server.Config{
-		Mode:              server.ModeMaster,
-		NodeID:            "master-1",
+	coordinator, err := server.New(server.Config{
+		Mode:              server.ModeCoordinator,
+		NodeID:            "coordinator-1",
 		SpawnDefaultAgent: false,
 	})
 	require.NoError(t, err)
-	require.NoError(t, master.Start(ctx))
+	require.NoError(t, coordinator.Start(ctx))
 
-	ts := httptest.NewServer(api.Router(master))
+	ts := httptest.NewServer(api.Router(coordinator))
 	defer ts.Close()
 
-	slave, err := server.New(server.Config{
-		Mode:              server.ModeSlave,
+	worker, err := server.New(server.Config{
+		Mode:              server.ModeWorker,
 		Leader:            ts.URL, // the leader client strips the scheme
-		NodeID:            "slave-1",
+		NodeID:            "worker-1",
 		SpawnDefaultAgent: false,
 	})
 	require.NoError(t, err)
-	require.NoError(t, slave.Start(ctx))
+	require.NoError(t, worker.Start(ctx))
 
-	// register succeeds over the real API → the slave reports connected.
-	require.Eventually(t, slave.LeaderConnected, 5*time.Second, 20*time.Millisecond)
+	// register succeeds over the real API → the worker reports connected.
+	require.Eventually(t, worker.LeaderConnected, 5*time.Second, 20*time.Millisecond)
 
-	// The master's cluster view reflects the slave via the real register/
+	// The coordinator's cluster view reflects the worker via the real register/
 	// heartbeat round trip.
 	require.Eventually(t, func() bool {
-		for _, s := range master.Slaves() {
-			if s.NodeID == "slave-1" {
+		for _, s := range coordinator.Workers() {
+			if s.NodeID == "worker-1" {
 				return true
 			}
 		}
@@ -59,10 +59,10 @@ func TestSlaveRegistersWithRealMasterAPI(t *testing.T) {
 	}, 5*time.Second, 20*time.Millisecond)
 
 	found := false
-	for _, s := range master.Slaves() {
-		if s.NodeID == "slave-1" {
+	for _, s := range coordinator.Workers() {
+		if s.NodeID == "worker-1" {
 			found = true
-			assert.False(t, s.Stale, "freshly registered slave should not be stale")
+			assert.False(t, s.Stale, "freshly registered worker should not be stale")
 		}
 	}
 	require.True(t, found)

@@ -62,8 +62,8 @@ Execution context spans the same layering as the rest of the agent stack:
    (bool), waiting-model, lifecycle, plus **counts** of errors/approvals — but
    not the sensitive detail (blocked reason, note, error text, approval
    payloads, turn id). Redaction is applied at the source (the heartbeat digest
-   carries only the subset + counts) and again by the master on read
-   (defense-in-depth). The master's aggregated summary is always redacted; a
+   carries only the subset + counts) and again by the coordinator on read
+   (defense-in-depth). The coordinator's aggregated summary is always redacted; a
    node may additionally expose full context to remote callers on **its own**
    endpoints via `agent.context_share = "full"`.
 

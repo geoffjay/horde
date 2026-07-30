@@ -109,7 +109,7 @@ func nodeStatusBlock() StatusBlock {
 }
 
 // nodeSummary formats the connected node's mode, id, and agent count as a
-// separator-joined string (e.g. "master · n1 · 2 agents").
+// separator-joined string (e.g. "coordinator · n1 · 2 agents").
 func nodeSummary(m *Model) string {
 	parts := []string{m.node.Mode}
 	if m.node.NodeID != "" {

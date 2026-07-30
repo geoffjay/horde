@@ -3,9 +3,9 @@ package server
 import "sync"
 
 // Event is a discrete cluster-activity event: an agent lifecycle transition on
-// some node. Events fan out over the node's EventBus. In a cluster, slaves
-// forward their events to the master (POST /api/v1/cluster/events), which
-// republishes them, so the master's /events/stream is a cluster-wide feed.
+// some node. Events fan out over the node's EventBus. In a cluster, workers
+// forward their events to the coordinator (POST /api/v1/cluster/events), which
+// republishes them, so the coordinator's /events/stream is a cluster-wide feed.
 // Events carry no sensitive payload — an agent id, the origin node, and the
 // operator-chosen agent name only — so they are safe to propagate across nodes.
 type Event struct {

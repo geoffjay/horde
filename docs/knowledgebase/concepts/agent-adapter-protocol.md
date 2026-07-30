@@ -67,7 +67,7 @@ with the host's tool-approval authority.
 
 AAP itself carries **no** notion of remote users or nodes. Multi-user,
 cross-node, and remote-principal authorization live in horde's node +
-[cluster layer](/docs/knowledgebase/decisions/master-slave-model.md) above AAP;
+[cluster layer](/docs/knowledgebase/decisions/coordinator-worker-model.md) above AAP;
 the node enforces write-gating at the AAP boundary by being the sole approval
 authority.
 

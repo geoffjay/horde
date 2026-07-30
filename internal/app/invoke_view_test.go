@@ -22,7 +22,7 @@ func invokeTestHandler(tokens []string) http.Handler {
 	})
 	mux.HandleFunc("/api/v1/node", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"mode": "master", "leader_connected": true, "node_id": "n1", "version": "test",
+			"mode": "coordinator", "leader_connected": true, "node_id": "n1", "version": "test",
 		})
 	})
 	mux.HandleFunc("/api/v1/agents", func(w http.ResponseWriter, _ *http.Request) {
@@ -128,7 +128,7 @@ func TestSendInvoke_409SetsError(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("/api/v1/node", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"mode": "master", "leader_connected": true, "node_id": "n1"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"mode": "coordinator", "leader_connected": true, "node_id": "n1"})
 	})
 	mux.HandleFunc("/api/v1/agents", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode([]client.Agent{{ID: "a1", Name: "greeter"}})

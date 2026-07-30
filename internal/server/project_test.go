@@ -178,7 +178,7 @@ func TestServer_SessionKey_NoProject(t *testing.T) {
 }
 
 func TestServer_CreateProject_SpawnFailureRollsBack(t *testing.T) {
-	srv, err := New(Config{Mode: ModeMaster, SpawnDefaultAgent: false})
+	srv, err := New(Config{Mode: ModeCoordinator, SpawnDefaultAgent: false})
 	require.NoError(t, err)
 
 	// "ghost" is not a registered agent, so it fails to spawn. Creation must

@@ -15,15 +15,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// kbIntegrationEnv sets up a master + participant pair for KB convergence
-// integration tests. The master serves KB routes; the participant runs the
-// convergence loop against the master.
+// kbIntegrationEnv sets up a coordinator + participant pair for KB convergence
+// integration tests. The coordinator serves KB routes; the participant runs the
+// convergence loop against the coordinator.
 type kbIntegrationEnv struct {
-	masterSrv    *Server
-	masterRouter http.Handler
-	masterAddr   string
-	partSrv      *Server
-	partStateDir string
+	coordinatorSrv    *Server
+	coordinatorRouter http.Handler
+	coordinatorAddr   string
+	partSrv           *Server
+	partStateDir      string
 }
 
 func newKBIntegrationEnv(t *testing.T) *kbIntegrationEnv {
@@ -31,42 +31,42 @@ func newKBIntegrationEnv(t *testing.T) *kbIntegrationEnv {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	// Master: KB sync enabled, serves as the authority.
-	masterWorkspace := t.TempDir()
-	masterStateDir := t.TempDir()
-	masterSrv, err := New(Config{
-		Mode:              ModeMaster,
+	// Coordinator: KB sync enabled, serves as the authority.
+	coordinatorWorkspace := t.TempDir()
+	coordinatorStateDir := t.TempDir()
+	coordinatorSrv, err := New(Config{
+		Mode:              ModeCoordinator,
 		SpawnDefaultAgent: false,
 		KBSync: KBSyncConfig{
 			Enabled:     true,
 			MaxFileSize: 1048576,
 			Ignore:      []string{"*.tmp"},
 		},
-		StateDir:            masterStateDir,
-		ProjectWorkspaceDir: masterWorkspace,
+		StateDir:            coordinatorStateDir,
+		ProjectWorkspaceDir: coordinatorWorkspace,
 		Port:                0, // not listening
 	})
 	require.NoError(t, err)
-	require.NoError(t, masterSrv.Start(ctx))
+	require.NoError(t, coordinatorSrv.Start(ctx))
 
-	// Create a project on the master with a scaffolded KB.
-	p, err := masterSrv.CreateProjectForTest(CreateProjectInput{
+	// Create a project on the coordinator with a scaffolded KB.
+	p, err := coordinatorSrv.CreateProjectForTest(CreateProjectInput{
 		Name:       "test-proj",
-		Workspace:  masterWorkspace,
+		Workspace:  coordinatorWorkspace,
 		AgentNames: []string{"greeter"},
 	})
 	require.NoError(t, err)
 
-	// Start an HTTP server on the master to serve KB routes.
-	masterRouter := newKBOnlyRouter(masterSrv)
-	masterHS := httptest.NewServer(masterRouter)
-	t.Cleanup(masterHS.Close)
+	// Start an HTTP server on the coordinator to serve KB routes.
+	coordinatorRouter := newKBOnlyRouter(coordinatorSrv)
+	coordinatorHS := httptest.NewServer(coordinatorRouter)
+	t.Cleanup(coordinatorHS.Close)
 
-	// Participant: KB sync enabled, converges against the master.
+	// Participant: KB sync enabled, converges against the coordinator.
 	partStateDir := t.TempDir()
 	partDataDir := t.TempDir()
 	partSrv, err := New(Config{
-		Mode:              ModeSlave,
+		Mode:              ModeWorker,
 		SpawnDefaultAgent: false,
 		KBSync: KBSyncConfig{
 			Enabled:       true,
@@ -81,9 +81,9 @@ func newKBIntegrationEnv(t *testing.T) *kbIntegrationEnv {
 	})
 	require.NoError(t, err)
 
-	// Wire the leader address so the converger can reach the master.
+	// Wire the leader address so the converger can reach the coordinator.
 	// We use a fake leader client that resolves to the test server.
-	partSrv.leader = newLeaderClientForTest(masterHS.Listener.Addr().String(), "", "")
+	partSrv.leader = newLeaderClientForTest(coordinatorHS.Listener.Addr().String(), "", "")
 
 	// Create the same project on the participant (so it appears in the
 	// project list and the converger picks it up).
@@ -96,11 +96,11 @@ func newKBIntegrationEnv(t *testing.T) *kbIntegrationEnv {
 	require.NoError(t, partSrv.Start(ctx))
 
 	return &kbIntegrationEnv{
-		masterSrv:    masterSrv,
-		masterRouter: masterRouter,
-		masterAddr:   masterHS.Listener.Addr().String(),
-		partSrv:      partSrv,
-		partStateDir: partStateDir,
+		coordinatorSrv:    coordinatorSrv,
+		coordinatorRouter: coordinatorRouter,
+		coordinatorAddr:   coordinatorHS.Listener.Addr().String(),
+		partSrv:           partSrv,
+		partStateDir:      partStateDir,
 	}
 }
 
@@ -110,18 +110,18 @@ func newKBIntegrationEnv(t *testing.T) *kbIntegrationEnv {
 func TestKBConvergence_EditOnAuthorityAppearsOnParticipant(t *testing.T) {
 	env := newKBIntegrationEnv(t)
 
-	// Get the project on the master.
-	projects := env.masterSrv.ListProjects("")
+	// Get the project on the coordinator.
+	projects := env.coordinatorSrv.ListProjects("")
 	require.Len(t, projects, 1)
 	projectID := projects[0].ID
 
 	// Edit a file on the authority's canonical tree.
-	authorityTree, err := env.masterSrv.kbCanonicalTreePtr(&projects[0])
+	authorityTree, err := env.coordinatorSrv.kbCanonicalTreePtr(&projects[0])
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(authorityTree, "index.md"), []byte("# Authority Edit\n"), 0o644))
 
-	// Invalidate the master's cache so the manifest reflects the edit.
-	env.masterSrv.KBResolveScope("project").InvalidateCache(projectID)
+	// Invalidate the coordinator's cache so the manifest reflects the edit.
+	env.coordinatorSrv.KBResolveScope("project").InvalidateCache(projectID)
 
 	// Wait for the participant to converge.
 	deadline := time.After(5 * time.Second)
@@ -151,14 +151,14 @@ func TestKBConvergence_EditOnAuthorityAppearsOnParticipant(t *testing.T) {
 func TestKBConvergence_DeleteByAbsence(t *testing.T) {
 	env := newKBIntegrationEnv(t)
 
-	projects := env.masterSrv.ListProjects("")
+	projects := env.coordinatorSrv.ListProjects("")
 	require.Len(t, projects, 1)
 	projectID := projects[0].ID
 
 	// First, let the initial content converge to the participant.
-	authorityTree, err := env.masterSrv.kbCanonicalTreePtr(&projects[0])
+	authorityTree, err := env.coordinatorSrv.kbCanonicalTreePtr(&projects[0])
 	require.NoError(t, err)
-	env.masterSrv.KBResolveScope("project").InvalidateCache(projectID)
+	env.coordinatorSrv.KBResolveScope("project").InvalidateCache(projectID)
 
 	// Wait for initial convergence.
 	deadline := time.After(5 * time.Second)
@@ -181,7 +181,7 @@ func TestKBConvergence_DeleteByAbsence(t *testing.T) {
 
 	// Delete a file on the authority.
 	require.NoError(t, os.Remove(filepath.Join(authorityTree, "index.md")))
-	env.masterSrv.KBResolveScope("project").InvalidateCache(projectID)
+	env.coordinatorSrv.KBResolveScope("project").InvalidateCache(projectID)
 
 	// Wait for the deletion to propagate.
 	deadline = time.After(5 * time.Second)
@@ -208,16 +208,16 @@ func TestKBConvergence_DeleteByAbsence(t *testing.T) {
 func TestKBConvergence_CatchUpFromEmpty(t *testing.T) {
 	env := newKBIntegrationEnv(t)
 
-	projects := env.masterSrv.ListProjects("")
+	projects := env.coordinatorSrv.ListProjects("")
 	require.Len(t, projects, 1)
 
 	// Add multiple files on the authority.
-	authorityTree, err := env.masterSrv.kbCanonicalTreePtr(&projects[0])
+	authorityTree, err := env.coordinatorSrv.kbCanonicalTreePtr(&projects[0])
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Join(authorityTree, "concepts"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(authorityTree, "index.md"), []byte("# Index\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(authorityTree, "concepts", "intro.md"), []byte("# Intro\n"), 0o644))
-	env.masterSrv.KBResolveScope("project").InvalidateCache(projects[0].ID)
+	env.coordinatorSrv.KBResolveScope("project").InvalidateCache(projects[0].ID)
 
 	// Wait for the participant to converge all files.
 	deadline := time.After(5 * time.Second)
@@ -248,14 +248,14 @@ func TestKBConvergence_CatchUpFromEmpty(t *testing.T) {
 func TestKBConvergence_DirtyLocalFilePreserved(t *testing.T) {
 	env := newKBIntegrationEnv(t)
 
-	projects := env.masterSrv.ListProjects("")
+	projects := env.coordinatorSrv.ListProjects("")
 	require.Len(t, projects, 1)
 	projectID := projects[0].ID
 
 	// Wait for initial convergence.
-	authorityTree, err := env.masterSrv.kbCanonicalTreePtr(&projects[0])
+	authorityTree, err := env.coordinatorSrv.kbCanonicalTreePtr(&projects[0])
 	require.NoError(t, err)
-	env.masterSrv.KBResolveScope("project").InvalidateCache(projectID)
+	env.coordinatorSrv.KBResolveScope("project").InvalidateCache(projectID)
 
 	deadline := time.After(5 * time.Second)
 	for {
@@ -284,7 +284,7 @@ func TestKBConvergence_DirtyLocalFilePreserved(t *testing.T) {
 
 	// Also edit on the authority (so the convergence sees a conflict).
 	require.NoError(t, os.WriteFile(filepath.Join(authorityTree, "index.md"), []byte("# Authority Edit\n"), 0o644))
-	env.masterSrv.KBResolveScope("project").InvalidateCache(projectID)
+	env.coordinatorSrv.KBResolveScope("project").InvalidateCache(projectID)
 
 	// Wait for convergence to run.
 	deadline = time.After(5 * time.Second)
@@ -318,25 +318,25 @@ func TestKBConvergence_DirtyLocalFilePreserved(t *testing.T) {
 func TestKBConvergence_ScopeMismatchRejected(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	masterWorkspace := t.TempDir()
-	masterSrv, err := New(Config{
-		Mode:                ModeMaster,
+	coordinatorWorkspace := t.TempDir()
+	coordinatorSrv, err := New(Config{
+		Mode:                ModeCoordinator,
 		SpawnDefaultAgent:   false,
 		KBSync:              KBSyncConfig{Enabled: true, MaxFileSize: 1048576},
-		ProjectWorkspaceDir: masterWorkspace,
+		ProjectWorkspaceDir: coordinatorWorkspace,
 		Port:                0,
 	})
 	require.NoError(t, err)
-	require.NoError(t, masterSrv.Start(ctx))
+	require.NoError(t, coordinatorSrv.Start(ctx))
 
-	p, err := masterSrv.CreateProjectForTest(CreateProjectInput{
+	p, err := coordinatorSrv.CreateProjectForTest(CreateProjectInput{
 		Name:       "proj-a",
-		Workspace:  masterWorkspace,
+		Workspace:  coordinatorWorkspace,
 		AgentNames: []string{"greeter"},
 	})
 	require.NoError(t, err)
 
-	router := newKBOnlyRouter(masterSrv)
+	router := newKBOnlyRouter(coordinatorSrv)
 	hs := httptest.NewServer(router)
 	t.Cleanup(hs.Close)
 

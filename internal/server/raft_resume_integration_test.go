@@ -35,9 +35,9 @@ func startRaftServer(t *testing.T, nodeID string, bootstrap bool, seeds []string
 	t.Helper()
 	gossipAddr := freeLoopbackAddr(t)
 	raftAddr := freeLoopbackAddr(t)
-	mode := ModeSlave
+	mode := ModeWorker
 	if bootstrap {
-		mode = ModeMaster
+		mode = ModeCoordinator
 	}
 	s, err := New(Config{
 		Mode:                mode,
