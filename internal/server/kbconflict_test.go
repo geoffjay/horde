@@ -90,3 +90,48 @@ func TestEscapePath(t *testing.T) {
 	assert.Equal(t, "a_b_c", escapePath("a/b/c"))
 	assert.Equal(t, "flat.md", escapePath("flat.md"))
 }
+
+func TestKBConflictArea_List(t *testing.T) {
+	dataDir := t.TempDir()
+	ca := newKBConflictArea(dataDir)
+
+	localDir := t.TempDir()
+	scope := KBScopeRef{Kind: "project", ID: "p-1"}
+
+	// Preserve two conflicts at different paths.
+	require.NoError(t, os.WriteFile(filepath.Join(localDir, "a.md"), []byte("content-a"), 0o644))
+	_, err := ca.Preserve(scope, "concepts/a.md", filepath.Join(localDir, "a.md"))
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(filepath.Join(localDir, "b.md"), []byte("content-b"), 0o644))
+	_, err = ca.Preserve(scope, "decisions/b.md", filepath.Join(localDir, "b.md"))
+	require.NoError(t, err)
+
+	// List should return both.
+	entries, err := ca.List(scope)
+	require.NoError(t, err)
+	assert.Len(t, entries, 2)
+
+	// Each entry should have the scope and a non-empty path.
+	paths := make(map[string]bool)
+	for _, e := range entries {
+		assert.Equal(t, scope, e.Scope)
+		assert.NotEmpty(t, e.Path)
+		assert.NotEmpty(t, e.Digest)
+		paths[e.Path] = true
+	}
+	assert.True(t, paths["concepts/a.md"], "should list concepts/a.md")
+	assert.True(t, paths["decisions/b.md"], "should list decisions/b.md")
+
+	// A different scope should have no entries.
+	other := KBScopeRef{Kind: "project", ID: "p-2"}
+	otherEntries, err := ca.List(other)
+	require.NoError(t, err)
+	assert.Empty(t, otherEntries)
+
+	// Disabled conflict area returns nil.
+	disabled := newKBConflictArea("")
+	disabledEntries, err := disabled.List(scope)
+	require.NoError(t, err)
+	assert.Nil(t, disabledEntries)
+}

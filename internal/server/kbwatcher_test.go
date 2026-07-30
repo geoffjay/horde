@@ -136,7 +136,7 @@ func TestKBWatcher_AddRemoveTree(t *testing.T) {
 	require.NoError(t, os.MkdirAll(kbRoot, 0o755))
 
 	cache := newKBManifestCache()
-	w, err := newKBWatcher(cache, 50*time.Millisecond)
+	w, err := newKBWatcher(cache.invalidate, 50*time.Millisecond)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.fsw.Close() })
 

@@ -232,10 +232,11 @@ elected leader comes up current. Default (static-master) behaviour is unchanged.
 is available as an opt-in mode. Requirements background: the
 [cluster leader failover](../concepts/cluster-failover.md) concept doc.
 
-# Phase 6 — Knowledgebase sync (the distributed shared brain) (planned)
+# Phase 6 — Knowledgebase sync (the distributed shared brain) (complete)
 
 Detailed plan: [Knowledgebase sync](knowledgebase-sync.md).
 Spec: [Knowledgebase Sync Protocol v1](/docs/spec/knowledgebase-sync-protocol-v1.md).
+Decision: [Knowledgebase sync — authority-serialized multi-writer](../decisions/knowledgebase-sync.md).
 
 horde's central differentiator: every project has a per-project OKF
 knowledgebase, and this phase makes it a **cluster-shared** brain rather than a
@@ -248,6 +249,9 @@ only project/team metadata + AAP resume tokens (raft), never file content. The
 
 * Goal: **symmetric multi-writer** — every participating node watches its own
   `.horde/knowledgebase/`, and an edit on *any* node propagates to the others.
+  **Achieved in stage 2**: a participant with `watch_local: true` watches its
+  local tree and pushes local edits via CAS; a 412 conflict preserves the
+  local content to the conflict area before converging to canonical.
 * Opt-in `knowledgebase.sync` config; disabled ⇒ byte-for-byte current (local,
   git-backed) behavior.
 * **Scope-parameterized, project scope only.** The replicated unit is a scope
@@ -270,11 +274,12 @@ only project/team metadata + AAP resume tokens (raft), never file content. The
   deletion is absence from the manifest (no tombstones); a write conflict is an
   explicit `412`, never a silent merge or an arbitrary tiebreak.
 * Delivered in **two stages on one wire protocol** — a stage-2 watcher calls the
-  same CAS endpoint a stage-1 API client calls. *Stage 1*: (1) the scope seam +
-  authority manifest + read API; (2) authority watcher; (3) participant convergence — the
-  KB becomes shared across hosts; (4) CAS writes from any node. *Stage 2*: (5)
-  participant watcher + push — local file edits propagate, the goal; (6) offline
-  replay queue + conflict area. Then (7) docs/KB.
+  same CAS endpoint a stage-1 API client calls. *Stage 1* (complete): (1) the
+  scope seam + authority manifest + read API; (2) authority watcher; (3)
+  participant convergence — the KB becomes shared across hosts; (4) CAS writes
+  from any node. *Stage 2* (complete): (5) participant watcher + push — local
+  file edits propagate, the goal; (6) offline replay via persisted sync records
+  + conflict area with operator surfacing (`GET …/conflicts`). Then (7) docs/KB.
 * **Pull, not event-push**, deliberately: the event bus fans *in* not out
   (`forwardEvents` is slave→master; there is no outbound push), it drops on slow
   subscribers by design, and `server.Event` is a closed struct whose "carries no
@@ -285,6 +290,7 @@ only project/team metadata + AAP resume tokens (raft), never file content. The
   area outside the tree. That is intrinsic to file-granular sync; only
   structured/CRDT merge avoids it.
 
+**Phase 6 complete.** Both stages have landed; symmetric multi-writer
+knowledgebase sync is available as an opt-in mode. The KSP v1 spec is finalized.
 Not blocked by (and does not block) mTLS or OS-level sandboxing; it does unblock
-external agents *participating in* a shared knowledgebase, which is why it comes
-before deepening the external-agent path.
+external agents *participating in* a shared knowledgebase.

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -20,6 +22,14 @@ import (
 // kbClientTimeout is the HTTP timeout for KB client reads (file bytes, not
 // JSON, so a longer timeout than the leader client).
 const kbClientTimeout = 10 * time.Second
+
+// kbLogFieldGot is the logrus field name for a computed/observed digest that
+// didn't match the expected one (digest mismatch warnings).
+const kbLogFieldGot = "got"
+
+// kbLogFieldExpected is the logrus field name for the expected digest in a
+// digest mismatch warning.
+const kbLogFieldExpected = "expected"
 
 // kbClient is the convergence-side HTTP client for fetching the authority's
 // manifest and file bytes (KSP §4.1, §4.2). It uses the cluster token for
@@ -115,16 +125,91 @@ func (c *kbClient) fetchFile(ctx context.Context, addr string, scope KBScopeRef,
 	return data, nil
 }
 
+// putFile pushes a local file to the authority via CAS (KSP §4.3, stage 2
+// push row). If-Match is the synced_digest the edit was based on; If-None-Match:
+// * creates a new file. Returns the new digest from the ETag header on
+// success, the HTTP status, and an error. A 412 means the CAS precondition
+// failed — the authority's current digest is in the ETag response header.
+//
+//nolint:gocritic // unnamedResult: results are clear from context (etag, status, error)
+func (c *kbClient) putFile(ctx context.Context, addr string, scope KBScopeRef, relPath string, data []byte, ifMatch, ifNoneMatch string) (string, int, error) {
+	q := url.Values{}
+	q.Set("path", relPath)
+	u := fmt.Sprintf("http://%s/api/v1/kb/%s/%s/file?%s", addr, scope.Kind, scope.ID, q.Encode())
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(data))
+	if err != nil {
+		return "", 0, err
+	}
+	SetClusterAuth(req.Header, c.token)
+	if ifMatch != "" {
+		req.Header.Set("If-Match", ifMatch)
+	}
+	if ifNoneMatch != "" {
+		req.Header.Set("If-None-Match", ifNoneMatch)
+	}
+
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return "", 0, fmt.Errorf("push file: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	etag := strings.Trim(resp.Header.Get("ETag"), "\"")
+	return etag, resp.StatusCode, nil
+}
+
+// deleteFile pushes a delete to the authority via CAS (KSP §4.4, stage 2
+// push-delete row). If-Match is the synced_digest the delete was based on.
+// Returns the HTTP status and error. A 412 means the CAS precondition failed;
+// 404 means the file is already gone upstream.
+func (c *kbClient) deleteFile(ctx context.Context, addr string, scope KBScopeRef, relPath, ifMatch string) (int, error) {
+	q := url.Values{}
+	q.Set("path", relPath)
+	u := fmt.Sprintf("http://%s/api/v1/kb/%s/%s/file?%s", addr, scope.Kind, scope.ID, q.Encode())
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, http.NoBody)
+	if err != nil {
+		return 0, err
+	}
+	SetClusterAuth(req.Header, c.token)
+	if ifMatch != "" {
+		req.Header.Set("If-Match", ifMatch)
+	}
+
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("push delete: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	return resp.StatusCode, nil
+}
+
 // kbConverger runs the periodic convergence loop on a participant node (KSP
 // §5.3). It polls the authority's manifest, classifies each path via the
-// three-way comparison (§5.1), and pulls/deletes/preserves as needed. A
-// non-pushing participant does not push (§5.2): local edits are preserved to
-// the conflict area and the authority's version is pulled.
+// three-way comparison (§5.1), and pulls/deletes/preserves as needed. When
+// pushing (WatchLocal enabled, stage 2), it also pushes local edits to the
+// authority using synced_digest as the If-Match base; a 412 conflict
+// preserves the local content to the conflict area before converging (§6).
+// A non-pushing participant does not push (§5.2): local edits are preserved
+// to the conflict area and the authority's version is pulled.
 type kbConverger struct {
 	srv      *Server
 	client   *kbClient
 	syncMgr  *kbSyncStoreManager
 	conflict *kbConflictArea
+	// pushing is true when WatchLocal is enabled (stage 2). A pushing node
+	// executes the push rows of KSP §5.1; a non-pushing node maps them to
+	// conflicts (§5.2).
+	pushing bool
+	// earlyPoll is signaled by the participant watcher to trigger an
+	// immediate convergence pass (KSP §5.3: a change signal triggers an
+	// early poll; strictly a latency optimization — correctness does not
+	// depend on it). Non-blocking: the converger coalesces rapid signals.
+	earlyPoll chan struct{}
 }
 
 // newKBConverger creates a convergence loop bound to the server. Returns nil
@@ -136,10 +221,12 @@ func newKBConverger(srv *Server) *kbConverger {
 		return nil
 	}
 	return &kbConverger{
-		srv:      srv,
-		client:   newKBClient(srv.cfg.AuthToken),
-		syncMgr:  srv.kbSyncMgr,
-		conflict: srv.kbConflict,
+		srv:       srv,
+		client:    newKBClient(srv.cfg.AuthToken),
+		syncMgr:   srv.kbSyncMgr,
+		conflict:  srv.kbConflict,
+		pushing:   srv.cfg.KBSync.WatchLocal,
+		earlyPoll: make(chan struct{}, 1),
 	}
 }
 
@@ -150,6 +237,17 @@ func (c *kbConverger) leaderAddr() string {
 		return ""
 	}
 	return c.srv.leader.leaderAddr()
+}
+
+// triggerEarlyPoll signals the convergence loop to run an immediate pass
+// (KSP §5.3). Called by the participant watcher when a local file change is
+// detected. Non-blocking: if a pass is already pending, the signal is
+// coalesced (buffered channel of 1).
+func (c *kbConverger) triggerEarlyPoll() {
+	select {
+	case c.earlyPoll <- struct{}{}:
+	default:
+	}
 }
 
 // run is the periodic convergence loop (KSP §5.3). It polls the authority's
@@ -170,6 +268,16 @@ func (c *kbConverger) run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-c.earlyPoll:
+			// The participant watcher signaled a local tree change —
+			// run an immediate convergence pass to push the edit (KSP
+			// §5.3: a change signal triggers an early poll). Drain any
+			// extra signals (coalesce rapid events).
+			select {
+			case <-c.earlyPoll:
+			default:
+			}
+			c.convergeAll(ctx)
 		case <-ticker.C:
 			c.convergeAll(ctx)
 		}
@@ -213,6 +321,8 @@ func (c *kbConverger) convergeAll(ctx context.Context) {
 }
 
 // convergeScope converges one project scope against the authority.
+//
+//nolint:gocyclo,funlen // KSP §5.1 convergence — the 304-reuse path adds branches
 func (c *kbConverger) convergeScope(ctx context.Context, resolver ScopeResolver, scope KBScopeRef, addr string) error {
 	syncStore := c.syncMgr.Get(scope.Kind, scope.ID)
 
@@ -225,16 +335,43 @@ func (c *kbConverger) convergeScope(ctx context.Context, resolver ScopeResolver,
 		return fmt.Errorf("fetch manifest: %w", err)
 	}
 	if status == http.StatusNotModified {
-		return nil // nothing changed since last poll
+		// The authority's manifest hasn't changed. A non-pushing node has
+		// nothing to do (no remote changes, local edits are preserved not
+		// pushed — KSP §5.2). A pushing node (stage 2) still needs to
+		// classify local edits against the last-known manifest to push
+		// them. Use the cached manifest entries from the sync records.
+		if !c.pushing {
+			return nil
+		}
+		// Reconstruct the authority's entries from the last sync records:
+		// every path with a synced_digest was in the last manifest. This is
+		// an approximation (the manifest may have had entries the node
+		// never synced), but it is sufficient for push classification — a
+		// path with S set and D ≠ S will classify as push regardless of A.
+		manifest = nil // will build from sync records below
+	} else {
+		// Persist the new manifest digest for the next poll's If-None-Match.
+		syncStore.Set("", manifest.ManifestDigest)
 	}
 
-	// Persist the new manifest digest for the next poll's If-None-Match.
-	syncStore.Set("", manifest.ManifestDigest)
-
-	// Build the authority's path→digest map from the manifest entries.
-	authorityEntries := make(map[string]string, len(manifest.Files))
-	for _, e := range manifest.Files {
-		authorityEntries[e.Path] = e.Digest
+	// Build the authority's path→digest map from the manifest entries, or
+	// from sync records when the manifest was a 304 (pushing node reuse).
+	authorityEntries := make(map[string]string)
+	if manifest != nil {
+		for _, e := range manifest.Files {
+			authorityEntries[e.Path] = e.Digest
+		}
+	} else {
+		// 304 on a pushing node: reconstruct from sync records. A path with
+		// a synced_digest was in the last manifest at that digest. This is
+		// a safe lower bound for classification: A=S for known paths, and
+		// any D ≠ S triggers a push.
+		for p, d := range syncStore.All() {
+			if p == "" {
+				continue // skip the manifest-digest record
+			}
+			authorityEntries[p] = d
+		}
 	}
 
 	// Scan the local tree using the authority's published policy (KSP §5.4:
@@ -244,7 +381,11 @@ func (c *kbConverger) convergeScope(ctx context.Context, resolver ScopeResolver,
 	if err != nil {
 		return fmt.Errorf("resolve local tree: %w", err)
 	}
-	localDigests, err := scanLocalDigests(localTree, manifest.Policy)
+	var policy KBScopePolicy
+	if manifest != nil {
+		policy = manifest.Policy
+	}
+	localDigests, err := scanLocalDigests(localTree, policy)
 	if err != nil {
 		return fmt.Errorf("scan local tree: %w", err)
 	}
@@ -272,6 +413,9 @@ func (c *kbConverger) convergeScope(ctx context.Context, resolver ScopeResolver,
 		d := localDigests[path]     // "" if not on disk
 
 		result := classifyStage1(a, s, d)
+		if c.pushing {
+			result = classifyStage2(a, s, d)
+		}
 		if err := c.applyConvergence(ctx, scope, syncStore, path, result, localTree, addr); err != nil {
 			logrus.WithError(err).WithFields(logrus.Fields{
 				logKeyProject: scope.ID,
@@ -281,10 +425,15 @@ func (c *kbConverger) convergeScope(ctx context.Context, resolver ScopeResolver,
 		}
 	}
 
+	// Ensure the participant's local tree is being watched now that it
+	// may have been created by the first pull (stage 2). Idempotent.
+	c.srv.kbEnsureWatched(scope.ID)
 	return nil
 }
 
 // applyConvergence executes the convergence action for one path.
+//
+//nolint:gocyclo // KSP §5.1 action dispatch — one case per action
 func (c *kbConverger) applyConvergence(ctx context.Context, scope KBScopeRef, syncStore *kbSyncRecordStore, path string, result kbClassifyResult, localTree, addr string) error {
 	switch result.Action {
 	case kbActNone:
@@ -310,9 +459,9 @@ func (c *kbConverger) applyConvergence(ctx context.Context, scope KBScopeRef, sy
 			dataDigest := sha256Hex(data)
 			if dataDigest != result.AuthorityDigest {
 				logrus.WithFields(logrus.Fields{
-					logKeyPath: path,
-					"expected": result.AuthorityDigest,
-					"got":      dataDigest,
+					logKeyPath:         path,
+					kbLogFieldExpected: result.AuthorityDigest,
+					kbLogFieldGot:      dataDigest,
 				}).Warn("kb convergence: pulled file digest mismatch, discarding")
 				return nil // discard, do not write or set sync record
 			}
@@ -339,6 +488,23 @@ func (c *kbConverger) applyConvergence(ctx context.Context, scope KBScopeRef, sy
 
 	case kbActConflict:
 		return c.applyConflict(ctx, scope, syncStore, path, result, localTree, addr)
+
+	case kbActPush:
+		// Local edit only, clean upstream — push If-Match: S (KSP §5.1,
+		// stage 2). On 200, set S to the new digest. On 412, the authority
+		// moved: preserve local content to the conflict area, then converge
+		// to canonical (§6).
+		return c.applyPush(ctx, scope, syncStore, path, result, localTree, addr)
+
+	case kbActPushNew:
+		// New local file — push If-None-Match: * (KSP §5.1, stage 2).
+		return c.applyPushNew(ctx, scope, syncStore, path, result, localTree, addr)
+
+	case kbActPushDelete:
+		// Deleted locally, exists upstream — push DELETE If-Match: S
+		// (KSP §5.1, stage 2). On 200, drop the sync record. On 412, the
+		// authority moved: pull the authority's current version.
+		return c.applyPushDelete(ctx, scope, syncStore, path, result, localTree, addr)
 
 	default:
 		return nil
@@ -380,9 +546,9 @@ func (c *kbConverger) applyConflict(ctx context.Context, scope KBScopeRef, syncS
 		dataDigest := sha256Hex(data)
 		if dataDigest != result.AuthorityDigest {
 			logrus.WithFields(logrus.Fields{
-				logKeyPath: path,
-				"expected": result.AuthorityDigest,
-				"got":      dataDigest,
+				logKeyPath:         path,
+				kbLogFieldExpected: result.AuthorityDigest,
+				kbLogFieldGot:      dataDigest,
 			}).Warn("kb convergence: post-conflict pull digest mismatch, discarding")
 			return nil
 		}
@@ -397,6 +563,114 @@ func (c *kbConverger) applyConflict(ctx context.Context, scope KBScopeRef, syncS
 		syncStore.Delete(path)
 	}
 	return nil
+}
+
+// applyPush pushes a locally-edited file to the authority via CAS (KSP §5.1
+// push row, stage 2). Uses synced_digest as the If-Match base. On 200, sets
+// S to the new digest. On 412, the authority moved: preserve the local content
+// to the conflict area, then converge to canonical (§6). On a transient
+// error, the local edit stays on disk and will be retried on the next poll.
+func (c *kbConverger) applyPush(ctx context.Context, scope KBScopeRef, syncStore *kbSyncRecordStore, path string, result kbClassifyResult, localTree, addr string) error {
+	full := filepath.Join(localTree, path)
+	data, err := os.ReadFile(full) //#nosec G304 // localPath is within the node's KB tree
+	if err != nil {
+		return fmt.Errorf("read local file for push: %w", err)
+	}
+	newDigest, status, err := c.client.putFile(ctx, addr, scope, path, data, result.SyncedDigest, "")
+	if err != nil {
+		return fmt.Errorf("push file: %w", err)
+	}
+	switch status {
+	case http.StatusOK:
+		syncStore.Set(path, newDigest)
+		return nil
+	case http.StatusPreconditionFailed:
+		// 412: another write landed first. Preserve local content to the
+		// conflict area, then converge to canonical (KSP §6).
+		return c.applyConflict(ctx, scope, syncStore, path, result, localTree, addr)
+	default:
+		return fmt.Errorf("push file: unexpected status %d", status)
+	}
+}
+
+// applyPushNew pushes a new local file to the authority via CAS (KSP §5.1
+// push-new row, stage 2). Uses If-None-Match: * (create only). On 200 or 201,
+// sets S to the new digest. On 409 (path exists upstream), converge to
+// canonical (pull the authority's version). On 412, treat as a conflict.
+func (c *kbConverger) applyPushNew(ctx context.Context, scope KBScopeRef, syncStore *kbSyncRecordStore, path string, result kbClassifyResult, localTree, addr string) error {
+	full := filepath.Join(localTree, path)
+	data, err := os.ReadFile(full) //#nosec G304 // localPath is within the node's KB tree
+	if err != nil {
+		return fmt.Errorf("read local file for push: %w", err)
+	}
+	newDigest, status, err := c.client.putFile(ctx, addr, scope, path, data, "", "*")
+	if err != nil {
+		return fmt.Errorf("push new file: %w", err)
+	}
+	switch status {
+	case http.StatusOK:
+		syncStore.Set(path, newDigest)
+		return nil
+	case http.StatusConflict:
+		// Path exists upstream — converge to canonical (pull it).
+		return c.applyConflict(ctx, scope, syncStore, path, result, localTree, addr)
+	case http.StatusPreconditionFailed:
+		return c.applyConflict(ctx, scope, syncStore, path, result, localTree, addr)
+	default:
+		return fmt.Errorf("push new file: unexpected status %d", status)
+	}
+}
+
+// applyPushDelete pushes a local deletion to the authority via CAS (KSP §5.1
+// push-delete row, stage 2). Uses If-Match: synced_digest. On 200, drops the
+// sync record. On 412, the authority moved: re-materialize the authority's
+// current version (pull it back). On 404, the file is already gone upstream —
+// drop the sync record.
+func (c *kbConverger) applyPushDelete(ctx context.Context, scope KBScopeRef, syncStore *kbSyncRecordStore, path string, result kbClassifyResult, localTree, addr string) error {
+	status, err := c.client.deleteFile(ctx, addr, scope, path, result.SyncedDigest)
+	if err != nil {
+		return fmt.Errorf("push delete: %w", err)
+	}
+	switch status {
+	case http.StatusOK:
+		syncStore.Delete(path)
+		return nil
+	case http.StatusNotFound:
+		// Already gone upstream — drop the stale record.
+		syncStore.Delete(path)
+		return nil
+	case http.StatusPreconditionFailed:
+		// 412: the authority's version changed. Re-materialize from the
+		// authority (pull the current version back).
+		if _, err := ValidateKBPath(path); err != nil {
+			logrus.WithError(err).WithField(logKeyPath, path).
+				Warn("kb convergence: rejecting invalid authority path")
+			return nil
+		}
+		data, err := c.client.fetchFile(ctx, addr, scope, path)
+		if err != nil {
+			return fmt.Errorf("pull file after push-delete 412: %w", err)
+		}
+		if result.AuthorityDigest != "" {
+			dataDigest := sha256Hex(data)
+			if dataDigest != result.AuthorityDigest {
+				logrus.WithFields(logrus.Fields{
+					logKeyPath:         path,
+					kbLogFieldExpected: result.AuthorityDigest,
+					kbLogFieldGot:      dataDigest,
+				}).Warn("kb convergence: post-push-delete pull digest mismatch, discarding")
+				return nil
+			}
+		}
+		full := filepath.Join(localTree, path)
+		if err := atomicWriteFile(full, data); err != nil {
+			return fmt.Errorf("write file after push-delete: %w", err)
+		}
+		syncStore.Set(path, result.AuthorityDigest)
+		return nil
+	default:
+		return fmt.Errorf("push delete: unexpected status %d", status)
+	}
 }
 
 // scanLocalDigests walks a local tree and returns path→digest for each regular

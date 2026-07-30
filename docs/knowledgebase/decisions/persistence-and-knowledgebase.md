@@ -198,7 +198,15 @@ shared knowledgebase, and AI agents execute against it. When a node is
 registered to a project, its local `.horde/knowledgebase/` is **synchronized**
 with the other nodes on that project.
 
-This is the hardest problem in this decision and is not fully specified here.
+**This is now built** — [Phase 6](../plans/roadmap.md) delivers it via the
+[Knowledgebase Sync Protocol v1](/docs/spec/knowledgebase-sync-protocol-v1.md),
+with a dedicated [decision doc](knowledgebase-sync.md) and
+[plan](../plans/knowledgebase-sync.md). The design is authority-serialized
+multi-writer with content-digest identity, three-way convergence, and
+compare-and-swap — reaching symmetric multi-writer (every node's tree watched)
+in two stages on one wire protocol. The outline below is preserved as the
+original specification of the problem.
+
 The outline:
 
 * **While connected and registered** to a project, a node's knowledgebase
@@ -223,9 +231,9 @@ The outline:
 
 Slice B creates the knowledgebase directory with a new project (seeds
 `index.md`, `log.md`, and the category directories). It does **not** implement
-sync — that is a later phase. But the store interface and the project model
-must account for the knowledgebase from the start, so sync can be added
-without reshaping the project model.
+sync — that is a later phase (now Phase 6, complete). But the store interface
+and the project model must account for the knowledgebase from the start, so
+sync can be added without reshaping the project model.
 
 # 5. Store interfaces
 

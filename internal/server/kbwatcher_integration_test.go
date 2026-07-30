@@ -33,7 +33,7 @@ func TestKBWatcher_RealEditInvalidatesCache(t *testing.T) {
 	digest1 := manifest1.ManifestDigest
 
 	// Start the watcher with a short debounce for the test.
-	w, err := newKBWatcher(cache, 50*time.Millisecond)
+	w, err := newKBWatcher(cache.invalidate, 50*time.Millisecond)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.fsw.Close() })
 
@@ -87,7 +87,7 @@ func TestKBWatcher_NewFileAppearsInManifest(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, manifest1.Files, 1)
 
-	w, err := newKBWatcher(cache, 50*time.Millisecond)
+	w, err := newKBWatcher(cache.invalidate, 50*time.Millisecond)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.fsw.Close() })
 
@@ -135,7 +135,7 @@ func TestKBWatcher_EditorWriteTempRename(t *testing.T) {
 	require.NoError(t, err)
 	digest1 := manifest1.ManifestDigest
 
-	w, err := newKBWatcher(cache, 100*time.Millisecond)
+	w, err := newKBWatcher(cache.invalidate, 100*time.Millisecond)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.fsw.Close() })
 
@@ -191,7 +191,7 @@ func TestKBWatcher_FileDeletionInvalidatesCache(t *testing.T) {
 	assert.Len(t, manifest1.Files, 2)
 	digest1 := manifest1.ManifestDigest
 
-	w, err := newKBWatcher(cache, 50*time.Millisecond)
+	w, err := newKBWatcher(cache.invalidate, 50*time.Millisecond)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.fsw.Close() })
 
@@ -238,7 +238,7 @@ func TestKBWatcher_NewSubdirWatched(t *testing.T) {
 	require.NoError(t, err)
 	digest1 := manifest1.ManifestDigest
 
-	w, err := newKBWatcher(cache, 50*time.Millisecond)
+	w, err := newKBWatcher(cache.invalidate, 50*time.Millisecond)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.fsw.Close() })
 
@@ -294,7 +294,7 @@ func TestKBWatcher_RemoveTreeStopsWatching(t *testing.T) {
 	require.NoError(t, err)
 	digest1 := manifest1.ManifestDigest
 
-	w, err := newKBWatcher(cache, 50*time.Millisecond)
+	w, err := newKBWatcher(cache.invalidate, 50*time.Millisecond)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.fsw.Close() })
 
@@ -341,7 +341,7 @@ func TestKBWatcher_CtxCancelClosesWatcher(t *testing.T) {
 	require.NoError(t, os.MkdirAll(kbRoot, 0o755))
 
 	cache := newKBManifestCache()
-	w, err := newKBWatcher(cache, 50*time.Millisecond)
+	w, err := newKBWatcher(cache.invalidate, 50*time.Millisecond)
 	require.NoError(t, err)
 
 	w.addTree(kbRoot)

@@ -12,21 +12,18 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// kbWatcher watches the canonical KB trees on the authority node for filesystem
-// changes, debounces rapid events (editor write-temp-rename, bulk writes), and
-// invalidates the manifest cache so the read API serves fresh data without a
-// manual InvalidateCache call.
-//
-// The watcher makes editing a file on the authority show up through the API
-// immediately (within the debounce window) rather than waiting for the next
-// poll-driven mtime check. The same component is reused for local-edit
-// propagation on the participant's tree (KSP §11).
+// kbWatcher watches KB trees for filesystem changes, debounces rapid events
+// (editor write-temp-rename, bulk writes), and invokes a callback when a
+// debounced window expires. On the authority, the callback invalidates the
+// manifest cache so the read API serves fresh data. On a participant with
+// WatchLocal enabled (stage 2), the callback triggers an early convergence
+// pass so the local edit is pushed (KSP §11).
 //
 // Lifecycle is ctx-driven (no Stop()): the goroutine started by run exits when
 // ctx is canceled, closing the underlying fsnotify watcher and freeing its fds.
 type kbWatcher struct {
 	fsw      *fsnotify.Watcher
-	cache    *kbManifestCache
+	onChange func(root string)
 	debounce time.Duration
 
 	// mu guards watched. The fsnotify watcher's own add/remove are goroutine-safe
@@ -36,11 +33,11 @@ type kbWatcher struct {
 	watched map[string]bool // root → watched
 }
 
-// newKBWatcher creates a watcher that invalidates the given manifest cache on
-// tree changes. The debounce duration coalesces rapid events from the same
-// tree (e.g. an editor that writes a temp file then renames it over the target
-// produces two events within milliseconds).
-func newKBWatcher(cache *kbManifestCache, debounce time.Duration) (*kbWatcher, error) {
+// newKBWatcher creates a watcher that invokes onChange when a debounced tree
+// change is detected. The debounce duration coalesces rapid events from the
+// same tree (e.g. an editor that writes a temp file then renames it over the
+// target produces two events within milliseconds).
+func newKBWatcher(onChange func(root string), debounce time.Duration) (*kbWatcher, error) {
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -50,7 +47,7 @@ func newKBWatcher(cache *kbManifestCache, debounce time.Duration) (*kbWatcher, e
 	}
 	return &kbWatcher{
 		fsw:      fsw,
-		cache:    cache,
+		onChange: onChange,
 		debounce: debounce,
 		watched:  make(map[string]bool),
 	}, nil
@@ -140,8 +137,10 @@ func (w *kbWatcher) run(ctx context.Context) {
 		pendingMu.Lock()
 		delete(pending, root)
 		pendingMu.Unlock()
-		w.cache.invalidate(root)
-		logrus.WithField("kb_root", root).Debug("kb watcher: invalidated cache after tree change")
+		if w.onChange != nil {
+			w.onChange(root)
+		}
+		logrus.WithField("kb_root", root).Debug("kb watcher: tree change processed")
 	}
 
 	// scheduleDebounce (re)starts the debounce timer for a root.

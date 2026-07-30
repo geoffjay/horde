@@ -106,6 +106,7 @@ func Router(srv *server.Server) http.Handler {
 			r.Get("/{kind}/{id}/file", getKBFile(srv))
 			r.Put("/{kind}/{id}/file", putKBFile(srv))
 			r.Delete("/{kind}/{id}/file", deleteKBFile(srv))
+			r.Get("/{kind}/{id}/conflicts", getKBConflicts(srv))
 		})
 	})
 

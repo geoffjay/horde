@@ -172,6 +172,8 @@ type kbView interface {
 	NodeID() string
 	LeaderAddr() string
 	ForwardKBRequest(ctx context.Context, method, path string, body []byte, headers http.Header, forwardedUser string) (int, http.Header, []byte, error)
+	// KBConflicts returns preserved conflict copies for a scope (KSP §6.1).
+	KBConflicts(kind, id string) ([]server.KBConflictEntry, error)
 }
 
 // compile-time: *server.Server satisfies the handler interfaces.

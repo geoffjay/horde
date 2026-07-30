@@ -1,6 +1,6 @@
 # Knowledgebase Sync Protocol (KSP) — v1
 
-Status: **Draft**
+Status: **Final**
 Protocol version: **1**
 Canonical home: **horde** (`github.com/geoffjay/horde`)
 Implementation plan: [Knowledgebase sync](/docs/knowledgebase/plans/knowledgebase-sync.md)
@@ -240,6 +240,14 @@ it" using its own `synced_digest` (§5.1), not cluster-wide history.
 
 Deleting a path in one scope never affects an identically-named path in another
 (§2.1).
+
+### 4.5 `GET /api/v1/kb/{kind}/{id}/conflicts`
+
+Lists preserved conflict copies for the scope (KSP §6.1: conflicts MUST be
+surfaced to the operator). The conflict area is node-local; this endpoint is
+always served from the local node, never forwarded. Returns a JSON array of
+conflict entries, each with the conflicted path, creation timestamp, short
+digest, and filename. Authorization requires the kind's view authority (§9).
 
 ## 5. Convergence
 

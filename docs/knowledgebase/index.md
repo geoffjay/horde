@@ -74,6 +74,7 @@ every edit.
 * [Project, team, and user model](decisions/project-team-user-model.md) - what a project, team, and user are; how they relate; the 3.5a/3.5b split (3.5a deferred per-user auth; 3.5b landed it).
 * [Per-user API-token auth, ownership, and permissions](decisions/per-user-token-auth.md) - opt-in per-user API tokens; project ownership + owner/team authz; the per-user AAP tool allowlist; the X-Horde-User cross-node echo-trust seam; no replicated user store; advisory-only filesystem scope at initialize.
 * [Data persistence and per-project knowledgebase](decisions/persistence-and-knowledgebase.md) - XDG on-disk layout, JSON KV / database / per-project split, and the OKF knowledgebase as a project's synchronized shared brain.
+* [Knowledgebase sync — authority-serialized multi-writer](decisions/knowledgebase-sync.md) - share each project's KB across the cluster with authority-serialized writes, content-digest identity, three-way convergence, and CAS; pull-based, not event-push; scope-parameterized while only project ships; two stages on one wire protocol.
 * [AUR packaging for Arch Linux](decisions/aur-packaging.md) - distribute via AUR `horde-bin`, automated by goreleaser.
 
 ## Patterns
@@ -98,8 +99,7 @@ every edit.
 * [Distributed project management](plans/distributed-project-management.md) - forward project mutations from slave to master, and add a `horde project` CLI subcommand.
 * [AAP host — driving external coding agents](plans/aap-host.md) - Phase 3.6: the node spawns AAP adapters over stdio, bridges turns to the invoke SSE stream, wires node-as-approval-authority, and consumes context/error/approval frames at full fidelity.
 * [Phase 4 — Distributed](plans/phase-4-distributed.md) - making a cluster act across nodes, in slices; **complete**: cross-node invoke routing (1), agent placement (2), dns discovery (3), cross-node event fan-out (4), and gossip discovery (5). Automatic leader failover landed as Phase 5 — see [leader failover](plans/leader-failover.md).
-* [Leader failover](plans/leader-failover.md) - Phase 5 (**complete**): opt-in raft election on the gossip ring, master-only state replicated through the raft log, and a stable entry point that survives a leader change.
-* [Knowledgebase sync](plans/knowledgebase-sync.md) - Phase 6 (planned): share each project's `.horde/knowledgebase/` across the cluster, reaching **symmetric multi-writer** (every node's tree watched) in two stages — authority-serialized writes, content-digest identity, three-way convergence (`synced_digest` vs disk), and compare-and-swap. Scope-parameterized: `project` ships, `team`/`user`/`cluster` are later registrations (team blocked on first-class teams, user on selective participation). Opt-in; wire format in [KSP v1](/docs/spec/knowledgebase-sync-protocol-v1.md).
+* [Knowledgebase sync](plans/knowledgebase-sync.md) - Phase 6 (**complete**): share each project's `.horde/knowledgebase/` across the cluster, reaching **symmetric multi-writer** (every node's tree watched) in two stages — authority-serialized writes, content-digest identity, three-way convergence (`synced_digest` vs disk), and compare-and-swap. Scope-parameterized: `project` ships, `team`/`user`/`cluster` are later registrations (team blocked on first-class teams, user on selective participation). Opt-in; disabled ⇒ byte-for-byte current behavior. Spec: [KSP v1](/docs/spec/knowledgebase-sync-protocol-v1.md) (Final). Decision: [knowledgebase-sync](decisions/knowledgebase-sync.md).
 
 ## References
 

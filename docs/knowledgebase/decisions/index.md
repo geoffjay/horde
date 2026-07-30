@@ -14,4 +14,5 @@ Records of significant decisions and their rationale.
 * [Project, team, and user model](project-team-user-model.md) - what a project, team, and user are; how they relate; the 3.5a/3.5b split (3.5a deferred per-user auth; 3.5b landed it).
 * [Per-user API-token auth, ownership, and permissions](per-user-token-auth.md) - opt-in per-user API tokens; project ownership + owner/team authz; the per-user AAP tool allowlist; the X-Horde-User cross-node echo-trust seam; no replicated user store; advisory-only filesystem scope at initialize.
 * [Data persistence and per-project knowledgebase](persistence-and-knowledgebase.md) - XDG on-disk layout, JSON KV / database / per-project split, and the OKF knowledgebase as a project's synchronized shared brain.
+* [Knowledgebase sync — authority-serialized multi-writer](knowledgebase-sync.md) - share each project's KB across the cluster; authority-serialized writes, content-digest identity, three-way convergence, CAS; pull-based, scope-parameterized, two stages on one wire protocol.
 * [AUR packaging for Arch Linux](aur-packaging.md) - distribute via AUR `horde-bin`, automated by goreleaser.

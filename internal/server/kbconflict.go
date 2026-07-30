@@ -83,3 +83,89 @@ func (ca *kbConflictArea) PreserveMissing(_ KBScopeRef, _ string) {
 func escapePath(p string) string {
 	return strings.ReplaceAll(p, "/", "_")
 }
+
+// KBConflictEntry describes one preserved conflict copy.
+type KBConflictEntry struct {
+	Scope   KBScopeRef `json:"scope"`
+	Path    string     `json:"path"`    // the KB-relative path that conflicted
+	Created time.Time  `json:"created"` // when the conflict copy was preserved
+	Digest  string     `json:"digest"`  // short digest from the filename
+	File    string     `json:"file"`    // the conflict copy filename
+}
+
+// List returns all preserved conflict copies for a scope (KSP §6.1: conflicts
+// MUST be surfaced to the operator). Walks the scope's subdirectory under the
+// conflict area. Returns nil when the conflict area is disabled.
+func (ca *kbConflictArea) List(scope KBScopeRef) ([]KBConflictEntry, error) {
+	if ca.dir == "" {
+		return nil, nil
+	}
+	scopeDir := filepath.Join(ca.dir, scope.Kind, scope.ID)
+	entries, err := os.ReadDir(scopeDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read conflict dir: %w", err)
+	}
+	var result []KBConflictEntry
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		ce := parseConflictFilename(e.Name(), scope, info.ModTime())
+		if ce != nil {
+			result = append(result, *ce)
+		}
+	}
+	return result, nil
+}
+
+// parseConflictFilename parses a conflict copy filename back into an entry.
+// The filename format is: <kind>_<id>_<escaped-path>_<timestamp>_<shortdigest>.
+func parseConflictFilename(name string, scope KBScopeRef, modTime time.Time) *KBConflictEntry {
+	// The kind and id are the first two underscore-separated fields. The
+	// rest is escaped-path_timestamp_digest, where the timestamp is
+	// RFC3339-ish (20060102T150405Z) and the digest is 8 hex chars.
+	rest := name
+	// Strip the leading "<kind>_<id>_" prefix.
+	prefix := scope.Kind + "_" + scope.ID + "_"
+	if !strings.HasPrefix(rest, prefix) {
+		return nil
+	}
+	rest = strings.TrimPrefix(rest, prefix)
+	// The remaining is <escaped-path>_<timestamp>_<digest>. Split from the
+	// right: the last field is the digest, the second-to-last is the
+	// timestamp, and everything before is the escaped path.
+	parts := strings.Split(rest, "_")
+	if len(parts) < 3 { //nolint:mnd // min fields: escaped-path + timestamp + digest
+		return nil
+	}
+	digest := parts[len(parts)-1]
+	ts := parts[len(parts)-2]
+	escapedPath := strings.Join(parts[:len(parts)-2], "_")
+	// Unescape the path (underscores back to slashes).
+	relPath := unescapePath(escapedPath)
+	created, err := time.Parse("20060102T150405Z", ts)
+	if err != nil {
+		created = modTime // fall back to file mtime
+	}
+	return &KBConflictEntry{
+		Scope:   scope,
+		Path:    relPath,
+		Created: created,
+		Digest:  digest,
+		File:    name,
+	}
+}
+
+// unescapePath reverses escapePath, converting underscores back to slashes.
+// This is lossy if the original path contained underscores, but the conflict
+// copy is a preserved artifact, not a canonical record.
+func unescapePath(p string) string {
+	return strings.ReplaceAll(p, "_", "/")
+}
