@@ -19,6 +19,19 @@ import (
 // internal/api/kb.go:getKBManifest and getKBFile.
 func newKBOnlyRouter(srv *Server) http.Handler {
 	mux := http.NewServeMux()
+	// Serve the leader's project list so a participant's converger can learn
+	// participating projects from the authority (KSP §3.2). Mirrors
+	// internal/api/projects.go:listProjects (active projects only).
+	mux.HandleFunc("/api/v1/projects", func(w http.ResponseWriter, r *http.Request) {
+		projects := srv.ListProjects("")
+		out := make([]kbLeaderProject, 0, len(projects))
+		for i := range projects {
+			out = append(out, kbLeaderProject{ID: projects[i].ID, State: string(projects[i].State)})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(out)
+	})
 	mux.HandleFunc("/api/v1/kb/", func(w http.ResponseWriter, r *http.Request) {
 		// Parse /api/v1/kb/{kind}/{id}/{manifest|file}
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/kb/"), "/")

@@ -140,12 +140,25 @@ func (ps *projectScope) Kind() string { return kbScopeKindProject }
 
 // Validate checks whether the id is a known project. Returns a sentinel error
 // the handler maps to 404.
+//
+// On the authority the local project store is the source of truth. On a
+// participant the local store is empty (project API requests forward to the
+// master), so a scope is "known" once convergence has materialized its local
+// tree on disk — which is exactly when the participant can serve local reads
+// (KSP §3.2, §4.1).
 func (ps *projectScope) Validate(id string) error {
 	_, err := ps.srv.projects.Get(id)
-	if err != nil {
-		return err
+	if err == nil {
+		return nil
 	}
-	return nil
+	if !ps.IsAuthority(id) {
+		if tree, terr := ps.LocalTree(id); terr == nil {
+			if fi, serr := os.Stat(tree); serr == nil && fi.IsDir() {
+				return nil
+			}
+		}
+	}
+	return err
 }
 
 // IsAuthority reports whether this node is the cluster leader (the project

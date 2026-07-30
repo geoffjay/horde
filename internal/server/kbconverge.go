@@ -125,6 +125,46 @@ func (c *kbClient) fetchFile(ctx context.Context, addr string, scope KBScopeRef,
 	return data, nil
 }
 
+// kbLeaderProject is the minimal project shape the converger needs from the
+// leader's project list: the id and lifecycle state. It mirrors the fields of
+// the API's projectDTO that convergence cares about.
+type kbLeaderProject struct {
+	ID    string `json:"id"`
+	State string `json:"state"`
+}
+
+// listProjects fetches the project list from the leader (the authority is the
+// source of truth). A participant's own project store is empty — project API
+// requests forward to the master (projectForwardMiddleware) and never populate
+// the local store — so the converger MUST learn participating projects from
+// the leader rather than reading its local store (KSP §3.2: participants learn
+// projects from the authority).
+func (c *kbClient) listProjects(ctx context.Context, addr string) ([]kbLeaderProject, error) {
+	u := fmt.Sprintf("http://%s/api/v1/projects", addr)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
+	if err != nil {
+		return nil, err
+	}
+	SetClusterAuth(req.Header, c.token)
+
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list projects: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list projects: status %d: %s", resp.StatusCode, body)
+	}
+
+	var projects []kbLeaderProject
+	if err := json.NewDecoder(resp.Body).Decode(&projects); err != nil {
+		return nil, fmt.Errorf("decode projects: %w", err)
+	}
+	return projects, nil
+}
+
 // putFile pushes a local file to the authority via CAS (KSP §4.3, stage 2
 // push row). If-Match is the synced_digest the edit was based on; If-None-Match:
 // * creates a new file. Returns the new digest from the ETag header on
@@ -310,12 +350,29 @@ func (c *kbConverger) convergeAll(ctx context.Context) {
 		return
 	}
 
-	projects := c.srv.ListProjects("")
-	for i := range projects {
-		p := &projects[i]
-		scope := KBScopeRef{Kind: kbScopeKindProject, ID: p.ID}
+	// Collect participating project IDs. A real slave's local store is empty
+	// (project API requests forward to the master), so the leader's list is
+	// the source of truth (KSP §3.2). Union with the local store so the
+	// in-process/raft cases (where the store is populated) also work.
+	ids := make(map[string]struct{})
+	local := c.srv.ListProjects(string(ProjectActive))
+	for i := range local {
+		ids[local[i].ID] = struct{}{}
+	}
+	if leaderProjects, err := c.client.listProjects(ctx, addr); err != nil {
+		logrus.WithError(err).Debug("kb convergence: list leader projects failed; using local store only")
+	} else {
+		for _, p := range leaderProjects {
+			if p.State == "" || p.State == string(ProjectActive) {
+				ids[p.ID] = struct{}{}
+			}
+		}
+	}
+
+	for id := range ids {
+		scope := KBScopeRef{Kind: kbScopeKindProject, ID: id}
 		if err := c.convergeScope(ctx, resolver, scope, addr); err != nil {
-			logrus.WithError(err).WithField(logKeyProject, p.ID).Warn("kb convergence: scope failed")
+			logrus.WithError(err).WithField(logKeyProject, id).Warn("kb convergence: scope failed")
 		}
 	}
 }

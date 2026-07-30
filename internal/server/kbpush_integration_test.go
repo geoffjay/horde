@@ -542,3 +542,71 @@ func TestKBPush_EditPropagatesToThirdNode(t *testing.T) {
 		}
 	}
 }
+
+// TestKBConvergence_ParticipantLearnsProjectFromLeader verifies that a
+// participant whose local project store is empty (the real-slave case —
+// project API requests forward to the master) still converges: the converger
+// fetches the project list from the leader and materializes the local tree
+// (KSP §3.2: participants learn projects from the authority).
+func TestKBConvergence_ParticipantLearnsProjectFromLeader(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	// Master (authority) with a scaffolded project.
+	masterWorkspace := t.TempDir()
+	masterSrv, err := New(Config{
+		Mode:                ModeMaster,
+		SpawnDefaultAgent:   false,
+		KBSync:              KBSyncConfig{Enabled: true, MaxFileSize: 1048576, Ignore: []string{"*.tmp"}},
+		StateDir:            t.TempDir(),
+		ProjectWorkspaceDir: masterWorkspace,
+		Port:                0,
+	})
+	require.NoError(t, err)
+	require.NoError(t, masterSrv.Start(ctx))
+
+	p, err := masterSrv.CreateProjectForTest(CreateProjectInput{
+		Name: "test-proj", Workspace: masterWorkspace, AgentNames: []string{"greeter"},
+	})
+	require.NoError(t, err)
+
+	masterHS := httptest.NewServer(newKBOnlyRouter(masterSrv))
+	t.Cleanup(masterHS.Close)
+
+	// Participant: KB sync enabled, but the project is NOT created locally —
+	// it must be learned from the leader (the real-slave scenario).
+	partDataDir := t.TempDir()
+	partSrv, err := New(Config{
+		Mode:              ModeSlave,
+		SpawnDefaultAgent: false,
+		KBSync: KBSyncConfig{
+			Enabled: true, MaxFileSize: 1048576, Ignore: []string{"*.tmp"},
+			PollInterval:  200 * time.Millisecond,
+			WorkspaceRoot: filepath.Join(partDataDir, "workspaces"),
+		},
+		StateDir: t.TempDir(), DataDir: partDataDir, Port: 0,
+	})
+	require.NoError(t, err)
+	partSrv.leader = newLeaderClientForTest(masterHS.Listener.Addr().String(), "", "")
+	require.NoError(t, partSrv.Start(ctx))
+
+	// The participant's local store is empty.
+	require.Empty(t, partSrv.ListProjects(""), "participant local store should be empty")
+
+	// Convergence should still materialize the project's KB tree, learned
+	// from the leader's project list.
+	resolver := partSrv.KBResolveScope(kbScopeKindProject)
+	localTree, err := resolver.LocalTree(p.ID)
+	require.NoError(t, err)
+	deadline := time.After(10 * time.Second)
+	for {
+		if data, rerr := os.ReadFile(filepath.Join(localTree, "index.md")); rerr == nil && len(data) > 0 {
+			return // the participant materialized the tree from the leader's project list
+		}
+		select {
+		case <-deadline:
+			t.Fatal("participant did not learn project from leader and materialize within 10s")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
