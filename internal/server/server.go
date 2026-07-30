@@ -19,7 +19,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -425,6 +427,9 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 	if cfg.Port == 0 {
 		cfg.Port = defaultServerPort
 	}
+	if cfg.NodeID == "" {
+		cfg.NodeID = generateNodeID(cfg.Mode)
+	}
 	if cfg.ReadyTimeout == 0 {
 		cfg.ReadyTimeout = defaultReadyTimeout
 	}
@@ -485,6 +490,25 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 	// is the only kind registered in v1; an unregistered kind returns 404.
 	s.setupKBSync(cfg)
 	return s, nil
+}
+
+// generateNodeID returns a stable-per-process cluster id when cluster.node_id
+// is not configured. The docs promise "when empty a generated id is used";
+// without one a slave registers with an empty node_id and the master rejects
+// it with 400. The id is "<mode>-<hostname>-<8 hex>" (hostname omitted when
+// unavailable), readable in the cluster view and unique enough to avoid
+// collisions between co-located nodes.
+func generateNodeID(mode Mode) string {
+	var buf [4]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// crypto/rand should not fail; fall back to a time-based suffix.
+		return fmt.Sprintf("%s-%d", mode, time.Now().UnixNano())
+	}
+	suffix := hex.EncodeToString(buf[:])
+	if host, err := os.Hostname(); err == nil && host != "" {
+		return fmt.Sprintf("%s-%s-%s", mode, host, suffix)
+	}
+	return fmt.Sprintf("%s-%s", mode, suffix)
 }
 
 // setupKBSync wires the KB scope resolver, manifest cache, sync record store,
