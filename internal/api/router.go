@@ -96,6 +96,17 @@ func Router(srv *server.Server) http.Handler {
 				r.Delete("/{id}/users/{userID}", removeProjectUser(srv))
 			})
 		})
+
+		// Knowledgebase sync (KSP v1). Scope-keyed routes sit outside the
+		// forwarded /projects group by construction: a participant serves
+		// its local copy rather than forwarding to the leader. Disabled
+		// (the default) ⇒ 501 with X-KSP-Enabled: false.
+		r.Route("/kb", func(r chi.Router) {
+			r.Get("/{kind}/{id}/manifest", getKBManifest(srv))
+			r.Get("/{kind}/{id}/file", getKBFile(srv))
+			r.Put("/{kind}/{id}/file", putKBFile(srv))
+			r.Delete("/{kind}/{id}/file", deleteKBFile(srv))
+		})
 	})
 
 	return r

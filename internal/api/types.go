@@ -162,6 +162,18 @@ type eventView interface {
 	PublishClusterEvent(ev server.Event)
 }
 
+// kbView is the subset of *server.Server the KB handlers need: the sync-enabled
+// flag, the scope resolver, the node id for the authority label, and write
+// forwarding for participants (PUT/DELETE forward to the authority with CAS
+// headers preserved — KSP §4.3, §4.4).
+type kbView interface {
+	KBSyncEnabled() bool
+	KBResolveScope(kind string) server.ScopeResolver
+	NodeID() string
+	LeaderAddr() string
+	ForwardKBRequest(ctx context.Context, method, path string, body []byte, headers http.Header, forwardedUser string) (int, http.Header, []byte, error)
+}
+
 // compile-time: *server.Server satisfies the handler interfaces.
 var (
 	_ nodeView          = (*server.Server)(nil)
@@ -173,4 +185,5 @@ var (
 	_ invokeView        = (*server.Server)(nil)
 	_ eventView         = (*server.Server)(nil)
 	_ authView          = (*server.Server)(nil)
+	_ kbView            = (*server.Server)(nil)
 )

@@ -103,6 +103,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		ProjectWorkspaceDir: cfg.Project.WorkspaceDir,
 		AgentDefs:           buildServerAgentDefs(cfg.Agents),
 		Users:               buildServerUsers(cfg.Auth.Users),
+		KBSync:              buildServerKBSync(cfg.Knowledgebase.Sync),
 	})
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
@@ -187,6 +188,38 @@ func buildServerUsers(users []config.UserDef) []server.UserAuth {
 		out = append(out, ua)
 	}
 	return out
+}
+
+// buildServerKBSync maps the config-layer knowledgebase sync block into the
+// server's value-type KBSyncConfig, parsing the poll_interval string into a
+// Duration and debounce_ms into a Duration. Returns a zero value (disabled)
+// when the config block is not enabled.
+//
+//nolint:gocritic // hugeParam: mirrors buildServerUsers pattern
+func buildServerKBSync(s config.KBSyncConfig) server.KBSyncConfig {
+	if !s.Enabled {
+		return server.KBSyncConfig{}
+	}
+	//nolint:mnd // 30s is the default poll interval
+	poll := 30 * time.Second
+	if s.PollInterval != "" {
+		if d, err := time.ParseDuration(s.PollInterval); err == nil {
+			poll = d
+		}
+	}
+	ignore := s.Ignore
+	if ignore == nil {
+		ignore = []string{}
+	}
+	return server.KBSyncConfig{
+		Enabled:       true,
+		WatchLocal:    s.WatchLocal,
+		WorkspaceRoot: s.WorkspaceRoot,
+		PollInterval:  poll,
+		Debounce:      time.Duration(s.DebounceMS) * time.Millisecond,
+		MaxFileSize:   s.MaxFileSize,
+		Ignore:        ignore,
+	}
 }
 
 // decodeGossipKey base64-decodes the gossip encryption key into the raw bytes

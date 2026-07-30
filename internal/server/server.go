@@ -17,6 +17,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -157,6 +158,10 @@ type Config struct {
 	// disables auth (the API stays unauthenticated). Populated from config
 	// by cmd/serve.go via buildServerUsers.
 	Users []UserAuth
+	// KBSync configures knowledgebase synchronization (KSP v1). When
+	// KBSync.Enabled is false (the default) the knowledgebase stays purely
+	// local. Populated from config by cmd/serve.go.
+	KBSync KBSyncConfig
 }
 
 // UserAuth is the server-layer per-user authentication identity. Mirrors
@@ -283,6 +288,26 @@ type Server struct {
 	// AAP agents use this; ADK agents keep their buffer in the agentapi
 	// subprocess.
 	aapInvokes *aapInvocationRegistry
+	// kbScopes holds the registered KB scope resolvers, keyed by kind.
+	// Populated in New when sync is enabled; nil when disabled.
+	kbScopes map[string]ScopeResolver
+	// kbManifestCache caches KB manifest scans per tree root, invalidated by
+	// mtime. Makes the steady-state poll nearly free.
+	kbManifestCache *kbManifestCache
+	// kbWatcher watches the canonical KB trees on the authority for filesystem
+	// changes and invalidates the manifest cache on edits. nil when
+	// sync is disabled or this node is not the authority.
+	kbWatcher *kbWatcher
+	// kbSyncMgr manages per-scope sync record stores (synced_digest, KSP §2.4).
+	// Populated in New when sync is enabled; nil when disabled.
+	kbSyncMgr *kbSyncStoreManager
+	// kbConflict is the node-local conflict area for preserving dirty local
+	// files before convergence overwrites them (KSP §6.1). nil when disabled.
+	kbConflict *kbConflictArea
+	// kbWriteMutex serializes concurrent writes per path on the authority
+	// (KSP §4.3). Keyed by "<kind>/<id>/<path>".
+	kbWriteMu    sync.Mutex // guards kbWriteLocks map
+	kbWriteLocks map[string]*sync.Mutex
 
 	// now returns the current time. A field so tests can inject a clock when
 	// exercising slave staleness; defaults to time.Now.
@@ -307,6 +332,9 @@ const logKeyAgent = "agent"
 
 // logKeyProject is the logrus field key for a project id.
 const logKeyProject = "project"
+
+// logKeyPath is the logrus field key for a KB path.
+const logKeyPath = "path"
 
 // AgentState is the lifecycle state of a spawned agent subprocess.
 type AgentState string
@@ -444,7 +472,27 @@ func New(cfg Config) (*Server, error) { //nolint:gocritic // hugeParam
 		s.resume.apply = s.raftApply
 		s.resume.isLeader = s.isMaster
 	}
+
+	// Register KB scope resolvers when sync is enabled. The project scope
+	// is the only kind registered in v1; an unregistered kind returns 404.
+	s.setupKBSync(cfg)
 	return s, nil
+}
+
+// setupKBSync wires the KB scope resolver, manifest cache, sync record store,
+// and conflict area when KB sync is enabled (KSP v1). The project scope is the
+// only kind registered in v1; an unregistered kind returns 404.
+func (s *Server) setupKBSync(cfg Config) { //nolint:gocritic // hugeParam: matches New's value-receiver convention
+	if !cfg.KBSync.Enabled {
+		return
+	}
+	s.kbScopes = map[string]ScopeResolver{
+		kbScopeKindProject: newProjectScope(s),
+	}
+	s.kbManifestCache = newKBManifestCache()
+	s.kbSyncMgr = newKBSyncStoreManager(cfg.StateDir)
+	s.kbConflict = newKBConflictArea(cfg.DataDir)
+	s.kbWriteLocks = make(map[string]*sync.Mutex)
 }
 
 // raftApply replicates a command through this node's raft log and returns the
@@ -488,6 +536,17 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Start background health polling for agent subprocesses.
 	s.startHealthPolling(ctx)
+
+	// Start the KB tree watcher on the authority. The watcher
+	// invalidates the manifest cache on tree changes so the read API serves
+	// fresh data without a manual invalidate call. No-op when sync is
+	// disabled or on a participant (no canonical tree to watch locally).
+	s.startKBWatcher(ctx)
+
+	// Start the KB convergence loop on participants. A participant
+	// polls the authority's manifest and converges its local tree. No-op on
+	// the authority (it IS the canonical state) or when sync is disabled.
+	s.startKBConvergence(ctx)
 
 	return nil
 }
@@ -1147,6 +1206,50 @@ func (s *Server) ForwardProjectRequest(ctx context.Context, method, path string,
 	return s.leader.forwardRequest(ctx, method, path, body, forwardedUser)
 }
 
+// ForwardKBRequest forwards a KB API request (PUT/DELETE) to the authority node,
+// carrying the CAS headers (If-Match, If-None-Match, Content-Digest) and the
+// body content-type. Unlike ForwardProjectRequest (which hardcodes
+// Content-Type: application/json), this passes through the original headers so
+// CAS semantics are preserved across the forward (KSP §4.3, §4.4).
+//
+//nolint:gocritic // unnamedResult: result types are clear from context
+func (s *Server) ForwardKBRequest(ctx context.Context, method, path string, body []byte, headers http.Header, forwardedUser string) (int, http.Header, []byte, error) {
+	if s.leader == nil {
+		return 0, nil, nil, fmt.Errorf("no leader configured")
+	}
+	leader, err := s.leader.resolve(ctx)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("resolve leader: %w", err)
+	}
+	url := fmt.Sprintf("http://%s%s", leader, path)
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	// Copy CAS and content headers from the original request.
+	for _, h := range []string{"If-Match", "If-None-Match", "Content-Digest", "Content-Type"} {
+		if v := headers.Get(h); v != "" {
+			req.Header.Set(h, v)
+		}
+	}
+	SetClusterAuth(req.Header, s.cfg.AuthToken)
+	if forwardedUser != "" {
+		req.Header.Set("X-Horde-User", forwardedUser)
+	}
+
+	resp, err := s.leader.client.Do(req)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("forward KB request to leader: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("read leader response: %w", err)
+	}
+	return resp.StatusCode, resp.Header, respBody, nil
+}
+
 // Port returns the TCP port the node API listens on.
 func (s *Server) Port() int { return s.cfg.Port }
 
@@ -1164,6 +1267,11 @@ func (s *Server) SetClusterAuthTokenForTest(token string) { s.cfg.AuthToken = to
 // AuthEnabled reports whether per-user API-token auth is enabled. Auth is
 // opt-in: no configured users ⇒ auth disabled, the API stays unauthenticated.
 func (s *Server) AuthEnabled() bool { return len(s.cfg.Users) > 0 }
+
+// KBSyncEnabled reports whether knowledgebase sync (KSP v1) is enabled. Sync
+// is opt-in: Knowledgebase.Sync.Enabled must be set true (the default is
+// false). When disabled, KB routes return 501 and no watcher/convergence runs.
+func (s *Server) KBSyncEnabled() bool { return s.cfg.KBSync.Enabled }
 
 // Users returns the configured user identities (id + admin + tools + scope)
 // for the read-only /users endpoint and the TUI users view. Tokens are
@@ -1576,6 +1684,118 @@ func (s *Server) startHealthPolling(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// startKBWatcher starts the KB tree watcher when sync is enabled
+// and this node is the authority. The watcher observes canonical KB trees for
+// all active projects, debounces filesystem events, and invalidates the
+// manifest cache so the read API serves fresh data. It exits on ctx cancel,
+// closing the underlying fsnotify watcher and freeing its fds.
+func (s *Server) startKBWatcher(ctx context.Context) {
+	if !s.cfg.KBSync.Enabled || s.kbManifestCache == nil {
+		return
+	}
+	// Only the authority watches the canonical tree. A participant has no
+	// canonical tree to watch locally until local-edit propagation is enabled.
+	if !s.isMaster() {
+		return
+	}
+	w, err := newKBWatcher(s.kbManifestCache, s.cfg.KBSync.Debounce)
+	if err != nil {
+		logrus.WithError(err).Warn("kb watcher: failed to create; edits will rely on mtime cache")
+		return
+	}
+	s.kbWatcher = w
+
+	// Watch the canonical tree of every active project. Only the authority
+	// has the canonical tree; a participant watches its local tree for local-edit propagation.
+	if s.isMaster() {
+		projects := s.projects.List(ProjectActive)
+		for i := range projects {
+			root, err := s.kbCanonicalTreePtr(&projects[i])
+			if err != nil {
+				logrus.WithError(err).WithField(logKeyProject, projects[i].ID).
+					Warn("kb watcher: resolve canonical tree failed")
+				continue
+			}
+			w.addTree(root)
+		}
+	}
+
+	go w.run(ctx)
+	logrus.WithField("authority", s.isMaster()).Debug("kb watcher started")
+}
+
+// kbCanonicalTreePtr returns the canonical KB tree path for a project (the
+// authority's serving tree): <workspace>/.horde/knowledgebase/.
+func (s *Server) kbCanonicalTreePtr(p *Project) (string, error) {
+	resolver := s.kbScopes[kbScopeKindProject]
+	if resolver == nil {
+		return "", ErrKBFileNotFound
+	}
+	return resolver.AuthorityTree(p.ID)
+}
+
+// kbWatchProject adds the project's canonical KB tree to the watcher. Called
+// after a project is created (on the authority). No-op when the watcher is
+// not running (sync disabled or participant).
+func (s *Server) kbWatchProject(p *Project) {
+	if s.kbWatcher == nil || !s.isMaster() {
+		return
+	}
+	root, err := s.kbCanonicalTreePtr(p)
+	if err != nil {
+		logrus.WithError(err).WithField(logKeyProject, p.ID).
+			Warn("kb watcher: add watch failed")
+		return
+	}
+	s.kbWatcher.addTree(root)
+}
+
+// kbUnwatchProject removes the project's canonical KB tree from the watcher.
+// Called when a project is finished or deleted. No-op when the watcher is
+// not running.
+func (s *Server) kbUnwatchProject(p *Project) {
+	if s.kbWatcher == nil {
+		return
+	}
+	root, err := s.kbCanonicalTreePtr(p)
+	if err != nil {
+		return
+	}
+	s.kbWatcher.removeTree(root)
+}
+
+// startKBConvergence starts the periodic KB convergence loop on participants.
+// A participant polls the authority's manifest and converges its local tree:
+// pulls remote changes, deletes locally when upstream deletes,
+// and preserves dirty local files to the conflict area before overwriting
+// (KSP §5.1, §5.2). No-op on the authority or when sync is disabled.
+func (s *Server) startKBConvergence(ctx context.Context) {
+	if !s.cfg.KBSync.Enabled {
+		return
+	}
+	conv := newKBConverger(s)
+	if conv == nil {
+		return // no leader address (master mode or not yet connected)
+	}
+	go conv.run(ctx)
+	logrus.Debug("kb convergence loop started")
+}
+
+// kbWriteLock returns the per-path mutex for serializing concurrent writes on
+// the authority (KSP §4.3). The lock is keyed by "<kind>/<id>/<path>" and
+// lazily created; it is never removed (paths are bounded by the KB tree).
+func (s *Server) KBWriteLock(kind, id, path string) *sync.Mutex {
+	key := fmt.Sprintf("%s/%s/%s", kind, id, path)
+	s.kbWriteMu.Lock()
+	defer s.kbWriteMu.Unlock()
+	mu, ok := s.kbWriteLocks[key]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.kbWriteLocks[key] = mu
+	}
+	return mu
 }
 
 // pollAgentHealths polls every running agent's /health endpoint.

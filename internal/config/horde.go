@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"sync"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -108,6 +109,45 @@ type ProjectConfig struct {
 	// retained before eviction, in seconds. Zero inherits the agent
 	// context_retention value.
 	ContextRetention int `mapstructure:"context_retention"`
+}
+
+// KnowledgebaseConfig configures the per-project OKF knowledgebase and its
+// optional cluster-wide synchronization (KSP v1). Sync is opt-in: when
+// Knowledgebase.Sync.Enabled is false (the default) the knowledgebase stays
+// purely local — byte-for-byte the pre-KSP behavior.
+type KnowledgebaseConfig struct {
+	// Sync configures cross-node knowledgebase synchronization (KSP v1).
+	Sync KBSyncConfig `mapstructure:"sync"`
+}
+
+// KBSyncConfig configures knowledgebase sync (KSP v1). These are the
+// cross-kind defaults: poll interval, debounce, size cap, ignore globs, and
+// the participant workspace root. A later scope kind adds its own sub-block
+// for kind-specific enablement/participation rather than reshaping this one.
+type KBSyncConfig struct {
+	// Enabled is the opt-in switch for KSP synchronization. Default false:
+	// the knowledgebase stays purely local.
+	Enabled bool `mapstructure:"enabled"`
+	// WatchLocal is the local-edit switch: when true a participant watches
+	// its own tree and pushes local file edits to the authority. Default
+	// false (a read-only participant converges and reads only).
+	WatchLocal bool `mapstructure:"watch_local"`
+	// WorkspaceRoot is the node-local root under which a participant
+	// materializes synced scopes: <root>/<kind>/<id>/.horde/knowledgebase/.
+	// Empty defaults to <data_dir>/workspaces.
+	WorkspaceRoot string `mapstructure:"workspace_root"`
+	// PollInterval is how often a participant polls the authority's manifest.
+	// Default "30s".
+	PollInterval string `mapstructure:"poll_interval"`
+	// DebounceMS is the watcher debounce window in milliseconds. Default 500.
+	DebounceMS int `mapstructure:"debounce_ms"`
+	// MaxFileSize is the per-file size cap in bytes. Default 1 MiB. The
+	// authority enforces it on accept; local caps govern only what a node
+	// itself originates.
+	MaxFileSize int64 `mapstructure:"max_file_size"`
+	// Ignore are KB-root-relative globs to skip (e.g. "*.tmp", ".git/**").
+	// The authority's ignore policy is published on the manifest.
+	Ignore []string `mapstructure:"ignore"`
 }
 
 // AgentKind is the kind of an agent definition: a registry-built native ADK
@@ -240,13 +280,14 @@ type DataPaths struct {
 // It embeds the generic config pieces (Log, Service) and adds horde-specific
 // sections. This follows the same extension pattern as plantd/identity.
 type Config struct {
-	Env     string        `mapstructure:"env"`
-	Mode    string        `mapstructure:"mode"`
-	Server  ServerConfig  `mapstructure:"server"`
-	Cluster ClusterConfig `mapstructure:"cluster"`
-	Agent   AgentConfig   `mapstructure:"agent"`
-	Project ProjectConfig `mapstructure:"project"`
-	Auth    AuthConfig    `mapstructure:"auth"`
+	Env           string              `mapstructure:"env"`
+	Mode          string              `mapstructure:"mode"`
+	Server        ServerConfig        `mapstructure:"server"`
+	Cluster       ClusterConfig       `mapstructure:"cluster"`
+	Agent         AgentConfig         `mapstructure:"agent"`
+	Project       ProjectConfig       `mapstructure:"project"`
+	Auth          AuthConfig          `mapstructure:"auth"`
+	Knowledgebase KnowledgebaseConfig `mapstructure:"knowledgebase"`
 	// Agents declares named agents. Native ADK agents (greeter, repeater) are
 	// registry-built and need no entry here; an entry with Kind "aap"
 	// configures an external AAP adapter. The map is keyed by agent name.
@@ -274,6 +315,10 @@ const (
 	defaultAgentContextShare       = "restricted"
 
 	defaultProjectWorkspaceDir = "."
+
+	defaultKBSyncPollInterval = "30s"
+	defaultKBSyncDebounceMS   = 500
+	defaultKBSyncMaxFileSize  = 1048576 // 1 MiB
 
 	// maxPort is the largest valid TCP port number.
 	maxPort = 65535
@@ -317,6 +362,16 @@ var defaults = map[string]any{
 	// Project defaults
 	"project.workspace_dir":     defaultProjectWorkspaceDir,
 	"project.context_retention": 0, // 0 inherits agent.context_retention
+
+	// Knowledgebase sync (KSP v1) defaults. Sync is opt-in; every key must
+	// be registered here so HORDE_KNOWLEDGEBASE_SYNC_* env overrides resolve.
+	"knowledgebase.sync.enabled":        false,
+	"knowledgebase.sync.watch_local":    false,
+	"knowledgebase.sync.workspace_root": "",
+	"knowledgebase.sync.poll_interval":  defaultKBSyncPollInterval,
+	"knowledgebase.sync.debounce_ms":    defaultKBSyncDebounceMS,
+	"knowledgebase.sync.max_file_size":  defaultKBSyncMaxFileSize,
+	"knowledgebase.sync.ignore":         []string{},
 
 	// Data paths (XDG); empty means resolve from home dir at load time.
 	"paths.config_dir": "",
@@ -414,12 +469,41 @@ func (c *Config) Validate() error {
 	if err := c.validateCluster(); err != nil {
 		return err
 	}
+	if err := c.validateKnowledgebase(); err != nil {
+		return err
+	}
 	return c.validateAuth()
 }
 
 // AuthEnabled reports whether per-user API-token auth is enabled. Auth is
 // opt-in: no configured users ⇒ auth disabled, the API stays unauthenticated.
 func (c *Config) AuthEnabled() bool { return len(c.Auth.Users) > 0 }
+
+// KBSyncEnabled reports whether knowledgebase sync (KSP v1) is enabled. Sync
+// is opt-in: Knowledgebase.Sync.Enabled must be explicitly set true.
+func (c *Config) KBSyncEnabled() bool { return c.Knowledgebase.Sync.Enabled }
+
+// validateKnowledgebase validates the knowledgebase.sync block. Split from
+// Validate for cyclomatic complexity, like validateAuth/validateCluster. When
+// sync is disabled (the default) it returns nil.
+func (c *Config) validateKnowledgebase() error {
+	s := c.Knowledgebase.Sync
+	if !s.Enabled {
+		return nil
+	}
+	if s.PollInterval != "" {
+		if _, err := time.ParseDuration(s.PollInterval); err != nil {
+			return fmt.Errorf("knowledgebase.sync.poll_interval: invalid duration %q: %w", s.PollInterval, err)
+		}
+	}
+	if s.DebounceMS < 0 {
+		return fmt.Errorf("knowledgebase.sync.debounce_ms must not be negative, got %d", s.DebounceMS)
+	}
+	if s.MaxFileSize < 0 {
+		return fmt.Errorf("knowledgebase.sync.max_file_size must not be negative, got %d", s.MaxFileSize)
+	}
+	return nil
+}
 
 // validateAuth validates the auth.users block. Split from Validate to keep
 // each function's cyclomatic complexity within lint bounds. When auth is
