@@ -38,14 +38,16 @@ const kbLogFieldExpected = "expected"
 // different timeout requirements (file bytes, not JSON) and different header
 // handling (ETag, If-None-Match).
 type kbClient struct {
-	token string // cluster auth token
-	hc    *http.Client
+	token    string // cluster auth token
+	pushUser string // X-Horde-User echoed on push writes (KSP §9 attribution)
+	hc       *http.Client
 }
 
-func newKBClient(token string) *kbClient {
+func newKBClient(token, pushUser string) *kbClient {
 	return &kbClient{
-		token: token,
-		hc:    &http.Client{Timeout: kbClientTimeout},
+		token:    token,
+		pushUser: pushUser,
+		hc:       &http.Client{Timeout: kbClientTimeout},
 	}
 }
 
@@ -182,6 +184,9 @@ func (c *kbClient) putFile(ctx context.Context, addr string, scope KBScopeRef, r
 		return "", 0, err
 	}
 	SetClusterAuth(req.Header, c.token)
+	if c.pushUser != "" {
+		req.Header.Set(kbForwardedUserHeader, c.pushUser)
+	}
 	if ifMatch != "" {
 		req.Header.Set("If-Match", ifMatch)
 	}
@@ -214,6 +219,9 @@ func (c *kbClient) deleteFile(ctx context.Context, addr string, scope KBScopeRef
 		return 0, err
 	}
 	SetClusterAuth(req.Header, c.token)
+	if c.pushUser != "" {
+		req.Header.Set(kbForwardedUserHeader, c.pushUser)
+	}
 	if ifMatch != "" {
 		req.Header.Set("If-Match", ifMatch)
 	}
@@ -262,7 +270,7 @@ func newKBConverger(srv *Server) *kbConverger {
 	}
 	return &kbConverger{
 		srv:       srv,
-		client:    newKBClient(srv.cfg.AuthToken),
+		client:    newKBClient(srv.cfg.AuthToken, srv.cfg.KBSync.PushUser),
 		syncMgr:   srv.kbSyncMgr,
 		conflict:  srv.kbConflict,
 		pushing:   srv.cfg.KBSync.WatchLocal,

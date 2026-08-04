@@ -340,7 +340,7 @@ func TestKBConvergence_ScopeMismatchRejected(t *testing.T) {
 	hs := httptest.NewServer(router)
 	t.Cleanup(hs.Close)
 
-	client := newKBClient("")
+	client := newKBClient("", "")
 
 	// Fetch manifest for the correct scope — should succeed.
 	scope := KBScopeRef{Kind: "project", ID: p.ID}
