@@ -31,6 +31,12 @@ type KBSyncConfig struct {
 	MaxFileSize int64
 	// Ignore are KB-root-relative globs to skip.
 	Ignore []string
+	// PushUser is the horde user id a stage-2 watcher push is attributed to
+	// when the edit has no originating API user (a filesystem edit has no
+	// logged-in user). Echoed as X-Horde-User on the push so the authority
+	// applies the scope's write authority (KSP §9). Empty ⇒ machine pushes
+	// carry no write identity and fail closed once per-user auth is enabled.
+	PushUser string
 }
 
 // KB scope kinds registered by the host. v1 registers only "project"; reserved
@@ -39,6 +45,12 @@ type KBSyncConfig struct {
 const (
 	kbScopeKindProject = "project"
 )
+
+// kbForwardedUserHeader is the cross-node identity echo honored on a node
+// principal's KB write (KSP §9). Mirrors internal/api's xHordeUserHeader; a
+// node principal only resolves when the cluster token matched, so an external
+// client cannot forge it.
+const kbForwardedUserHeader = "X-Horde-User"
 
 // DefaultKBMaxFileSize is the default per-file size cap (1 MiB) when the
 // config does not set one.
@@ -210,9 +222,12 @@ func (ps *projectScope) Participates(_ string) bool {
 // cannot be redacted (KSP §9). Two paths:
 //   - User principal: reads require project view authority (owner/admin/team
 //     member); writes require project write authority.
-//   - Node principal (cluster token): permitted to read the manifest and files
-//     without a per-user identity — convergence is machine-initiated (KSP §9).
-//     A node principal MUST NOT get write access on this path.
+//   - Node principal (cluster token): reads (convergence) are permitted with
+//     no per-user identity — machine-initiated (KSP §9). A write must be
+//     attributed: a participant API forward echoes the originating user, and a
+//     stage-2 watcher push echoes its configured PushUser, via X-Horde-User.
+//     The echoed id is re-derived against local config and subject to the
+//     scope's write authority; a node write with no echoed user fails closed.
 //
 // When auth is disabled (no auth.users) authorization is a no-op, matching the
 // rest of the API.
@@ -235,12 +250,26 @@ func (ps *projectScope) Authorize(r *http.Request, id string, w bool) error {
 
 	switch prin.Kind {
 	case KBPrincipalKindNode:
-		// A node principal performing convergence may read without a user
-		// identity (KSP §9). Writes are never permitted on this path.
-		if w {
+		// Reads (convergence) need no per-user identity (KSP §9).
+		if !w {
+			return nil
+		}
+		// A write is attributed via X-Horde-User: a participant API forward
+		// carries the originating user; a stage-2 watcher push carries its
+		// configured PushUser. Honoring the header is safe — a node principal
+		// only resolves when the cluster token matched, so an external client
+		// cannot forge it (mirrors the project-mutation forward model). The
+		// id is re-derived against local config and subject to the scope's
+		// write authority; no echoed user ⇒ no write identity ⇒ 403.
+		uid := strings.TrimSpace(r.Header.Get(kbForwardedUserHeader))
+		if uid == "" {
 			return ErrKBForbidden
 		}
-		return nil
+		u, ok := ps.srv.userByID(uid)
+		if !ok {
+			return ErrKBForbidden
+		}
+		return authorizeKBWrite(ps.srv, id, u.ID, u.Admin)
 	case KBPrincipalKindUser:
 		if w {
 			return authorizeKBWrite(ps.srv, id, prin.UserID, prin.Admin)

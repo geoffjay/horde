@@ -148,6 +148,12 @@ type KBSyncConfig struct {
 	// Ignore are KB-root-relative globs to skip (e.g. "*.tmp", ".git/**").
 	// The authority's ignore policy is published on the manifest.
 	Ignore []string `mapstructure:"ignore"`
+	// PushUser is the horde user id a stage-2 watcher push is attributed to
+	// (echoed as X-Horde-User) when the local edit has no originating API
+	// user. Must be a user with write authority on the synced scopes (owner
+	// or admin) once per-user auth is enabled; empty ⇒ machine pushes fail
+	// closed under auth (KSP §9).
+	PushUser string `mapstructure:"push_user"`
 }
 
 // AgentKind is the kind of an agent definition: a registry-built native ADK
@@ -368,6 +374,7 @@ var defaults = map[string]any{
 	"knowledgebase.sync.enabled":        false,
 	"knowledgebase.sync.watch_local":    false,
 	"knowledgebase.sync.workspace_root": "",
+	"knowledgebase.sync.push_user":      "",
 	"knowledgebase.sync.poll_interval":  defaultKBSyncPollInterval,
 	"knowledgebase.sync.debounce_ms":    defaultKBSyncDebounceMS,
 	"knowledgebase.sync.max_file_size":  defaultKBSyncMaxFileSize,

@@ -1346,6 +1346,20 @@ func (s *Server) ResolveUser(token string) (UserAuth, bool) {
 	return UserAuth{}, false
 }
 
+// userByID returns the configured user with the given id and true, or
+// zero-value + false when no user matches. Used to re-derive a node-attributed
+// KB writer's write authority (owner/admin) from local config when a node
+// principal echoes X-Horde-User (KSP §9). The user table is config-defined and
+// identical cluster-wide, so an id resolves the same on every node.
+func (s *Server) userByID(id string) (UserAuth, bool) {
+	for _, u := range s.cfg.Users {
+		if u.ID == id {
+			return u, true
+		}
+	}
+	return UserAuth{}, false
+}
+
 // SetClusterAuth adds the shared cluster bearer token to a request header when
 // the token is non-empty. Applied to every node→node call so the receiver's
 // requireClusterAuth middleware accepts it.

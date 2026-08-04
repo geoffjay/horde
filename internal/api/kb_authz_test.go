@@ -177,13 +177,46 @@ func TestKBAuthz_Put_NonTeam_403(t *testing.T) {
 }
 
 func TestKBAuthz_Put_NodePrincipal_403(t *testing.T) {
-	// A node principal MUST NOT get write access on the KB path (KSP §9).
+	// A node principal with no echoed X-Horde-User has no write identity and
+	// is denied — fail closed (KSP §9).
 	_, h, pid := newKBAuthTestServer(t)
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/kb/project/"+pid+"/file?path=concepts/test.md",
 		bytes.NewReader([]byte("# test")))
 	r.Header.Set("Content-Type", "text/plain")
 	r.Header.Set("If-None-Match", "*")
 	r.Header.Set("Authorization", "Bearer cluster-secret")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestKBAuthz_Put_NodePrincipal_AttributedOwner_200(t *testing.T) {
+	// A node forward (participant API write or a stage-2 watcher push) echoes
+	// the writing user via X-Horde-User. The authority re-derives that user's
+	// write authority from local config (KSP §9). alice owns the project.
+	_, h, pid := newKBAuthTestServer(t)
+	r := httptest.NewRequest(http.MethodPut, "/api/v1/kb/project/"+pid+"/file?path=concepts/attr.md",
+		bytes.NewReader([]byte("# attributed")))
+	r.Header.Set("Content-Type", "text/plain")
+	r.Header.Set("If-None-Match", "*")
+	r.Header.Set("Authorization", "Bearer cluster-secret")
+	r.Header.Set("X-Horde-User", "alice")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestKBAuthz_Put_NodePrincipal_AttributedNonTeam_403(t *testing.T) {
+	// A node forward attributed to a user without write authority is denied:
+	// the echoed identity is subject to the scope's write authority, never
+	// blanket-trusted (KSP §9). bob is not the owner/admin.
+	_, h, pid := newKBAuthTestServer(t)
+	r := httptest.NewRequest(http.MethodPut, "/api/v1/kb/project/"+pid+"/file?path=concepts/nope.md",
+		bytes.NewReader([]byte("# nope")))
+	r.Header.Set("Content-Type", "text/plain")
+	r.Header.Set("If-None-Match", "*")
+	r.Header.Set("Authorization", "Bearer cluster-secret")
+	r.Header.Set("X-Horde-User", "bob")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	assert.Equal(t, http.StatusForbidden, w.Code)

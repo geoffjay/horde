@@ -219,6 +219,7 @@ func buildServerKBSync(s config.KBSyncConfig) server.KBSyncConfig {
 		Debounce:      time.Duration(s.DebounceMS) * time.Millisecond,
 		MaxFileSize:   s.MaxFileSize,
 		Ignore:        ignore,
+		PushUser:      s.PushUser,
 	}
 }
 
